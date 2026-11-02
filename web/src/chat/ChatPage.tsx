@@ -6,7 +6,7 @@ import { useApp } from '../app/context';
 import { Avatar, Button, confirmDialog, Dialog, IconButton, Input, Spinner, toastError } from '../components/ui';
 import { api } from '../lib/api';
 import { usePhone } from '../lib/device';
-import { queryClient, useMembers } from '../lib/queries';
+import { queryClient, useMembers, usePermissions } from '../lib/queries';
 import { SidebarIcon } from '../notifications/Notifications';
 import { type ChatDetail, type ChatKind, type ChatSummary, useChat, useChats } from './chatApi';
 import { ChatView } from './ChatView';
@@ -34,6 +34,7 @@ const preview = (body: string | null) =>
     .split('\n')[0];
 
 export function ChatPage() {
+  const may = usePermissions();
   const { workspace, sidebarOpen, toggleSidebar } = useApp();
   const { chatId } = useParams();
   const navigate = useNavigate();
@@ -67,8 +68,8 @@ export function ChatPage() {
             <p>No chats yet.</p>
             <div className="mt-3 flex flex-col gap-1.5">
               <Button onClick={() => setMaking('direct')}>Message someone</Button>
-              <Button onClick={() => setMaking('group')}>Make a group</Button>
-              <Button onClick={() => setMaking('team')}>Make a team</Button>
+              {may('create_chats') && <Button onClick={() => setMaking('group')}>Make a group</Button>}
+              {may('create_chats') && <Button onClick={() => setMaking('team')}>Make a team</Button>}
             </div>
           </div>
         )}
@@ -183,6 +184,7 @@ function OpenChat({ chatId, onBack }: { chatId: string; onBack: () => void }) {
 }
 
 function NewChatDialog({ kind, onClose, onMade }: { kind: ChatKind | null; onClose: () => void; onMade: (id: string) => void }) {
+  const may = usePermissions();
   const { workspace } = useApp();
   const [type, setType] = useState<ChatKind>('direct');
   const [name, setName] = useState('');
@@ -215,7 +217,7 @@ function NewChatDialog({ kind, onClose, onMade }: { kind: ChatKind | null; onClo
     <Dialog open={!!kind} onClose={onClose} title="New chat" width={460} maxHeight="88vh">
       <form onSubmit={submit} className="space-y-3 px-5 pb-5">
         <div className="grid grid-cols-3 gap-1 rounded-lg bg-hover p-1 text-sm">
-          {(['direct', 'group', 'team'] as const).map((k) => (
+          {(may('create_chats') ? (['direct', 'group', 'team'] as const) : (['direct'] as const)).map((k) => (
             <button key={k} type="button" onClick={() => { setType(k); if (k === 'direct') setPeople(people.slice(0, 1)); }} className={clsx('rounded-md py-1.5', type === k ? 'bg-surface font-medium shadow-sm' : 'text-muted')}>
               {KIND_LABEL[k]}
             </button>

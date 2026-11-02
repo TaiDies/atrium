@@ -84,3 +84,9 @@ export async function chooseServer(server: string): Promise<{ ok: boolean; error
 export async function forgetServer() {
   await fetch('/__app/server', { method: 'DELETE' });
 }
+
+/** Calls one of the app's own commands (only in the Windows and Android apps). */
+export function nativeInvoke<T>(cmd: string, args?: unknown): Promise<T> {
+  if (!tauri) return Promise.reject(new Error('Not in the app'));
+  return tauri.invoke(cmd, args) as Promise<T>;
+}

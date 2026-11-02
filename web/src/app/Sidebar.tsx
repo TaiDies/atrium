@@ -26,7 +26,7 @@ import { ConnectionBadge } from '../components/ConnectionBadge';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { type Anchor, Avatar, Button, Dialog, IconButton, Input, Menu, MenuDivider, MenuItem, MenuLabel, toastError } from '../components/ui';
 import { api, PAGE_TYPES, pageTitle, type Workspace } from '../lib/api';
-import { keys, queryClient, useWorkspaces } from '../lib/queries';
+import { keys, queryClient, usePermissions, useWorkspaces } from '../lib/queries';
 import { useApp } from './context';
 import { PageIcon, PageTypeIcon } from './PageIcon';
 import { SidebarPageSections } from './Teamspaces';
@@ -36,6 +36,7 @@ const isMac = navigator.platform.toLowerCase().includes('mac');
 export const MOD = isMac ? '⌘' : 'Ctrl+';
 
 export function Sidebar({ expanded, setExpanded }: { expanded: Set<string>; setExpanded: (fn: (p: Set<string>) => Set<string>) => void }) {
+  const may = usePermissions();
   const { workspace, pages, openSearch, openTrash, openImport, openTemplates, openSettings, toggleSidebar, newPage, canCreatePages } = useApp();
   const navigate = useNavigate();
   const { pageId } = useParams();
@@ -67,7 +68,7 @@ export function Sidebar({ expanded, setExpanded }: { expanded: Set<string>; setE
             <NavItem icon={<CalendarDays size={16} />} label="Calendar" onClick={() => navigate(`/w/${workspace.id}/calendar`)} active={section === 'calendar'} />
             <NavItem icon={<FolderOpen size={16} />} label="Files" onClick={() => navigate(`/w/${workspace.id}/files`)} active={section === 'files'} />
             <NavItem icon={<PenTool size={16} />} label="Whiteboards" onClick={() => navigate(`/w/${workspace.id}/whiteboards`)} active={section === 'whiteboards'} />
-            <NavItem icon={<Sparkles size={16} />} label="AI assistant" onClick={() => navigate(`/w/${workspace.id}/ai`)} active={section === 'ai'} />
+            {may('use_ai') && <NavItem icon={<Sparkles size={16} />} label="AI assistant" onClick={() => navigate(`/w/${workspace.id}/ai`)} active={section === 'ai'} />}
           </>
         )}
         <NavItem icon={<Settings size={16} />} label="Settings & members" onClick={() => openSettings('members')} />

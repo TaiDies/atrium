@@ -12,6 +12,7 @@ import { notify } from '../notify.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { addTask, meetingPeople, meetingTaskRoutes, newTaskSchema, tasksFor } from '../meetingTasks.js';
 import { postMessage } from './chat.js';
+import { requirePermission } from '../roles.js';
 
 // Meetings: scheduled (or started now) with a link made straight away, invitations under the bell and
 // by email (when the admin has set up mail), tasks prepared beforehand, per-person permissions set by
@@ -145,6 +146,7 @@ export async function meetingRoutes(app: FastifyInstance) {
     const { id } = parse(idParams, req.params);
     const role = await requireMember(req.user.id, id, undefined, true);
     if (role === 'guest') throw new HttpError(403, "Guests can't start meetings");
+    await requirePermission(req.user.id, 'start_meetings');
     const body = parse(createBody, req.body);
     let team: string[] = [];
     if (body.teamChatId) {

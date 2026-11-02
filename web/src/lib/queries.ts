@@ -53,6 +53,16 @@ export function useMe() {
   });
 }
 
+/** What the signed-in person may do (from the roles the server's admin gave them). Allows everything until known. */
+export function usePermissions() {
+  const q = useQuery({
+    queryKey: ['me', 'permissions'],
+    queryFn: () => api<{ permissions: string[] }>('/api/auth/me/permissions'),
+    staleTime: 5 * 60_000,
+  });
+  return (p: string) => !q.data || q.data.permissions.includes(p);
+}
+
 export function useWorkspaces() {
   return useQuery({
     queryKey: keys.workspaces,

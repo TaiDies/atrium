@@ -8,6 +8,7 @@ import { usePhone } from '../lib/device';
 import { SidebarIcon } from '../notifications/Notifications';
 import { meetingState, type MeetingSummary, useMeetings } from '../chat/chatApi';
 import { ScheduleDialog } from '../chat/ScheduleDialog';
+import { usePermissions } from '../lib/queries';
 
 // Meetings: what's on now, what's coming up (each with its link ready), and past meetings with their
 // kept chats and tasks.
@@ -19,6 +20,7 @@ const when = (m: MeetingSummary) => {
 };
 
 export function MeetingsPage() {
+  const may = usePermissions();
   const { workspace, sidebarOpen, toggleSidebar } = useApp();
   const phone = usePhone();
   const meetings = useMeetings(workspace.id);
@@ -70,9 +72,11 @@ export function MeetingsPage() {
         <Link to={`/w/${workspace.id}/chat`} className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted hover:bg-hover">
           <MessagesSquare size={15} /> Chat
         </Link>
-        <Button variant="primary" onClick={() => setScheduling(true)}>
-          <Plus size={15} /> New meeting
-        </Button>
+        {may('start_meetings') && (
+          <Button variant="primary" onClick={() => setScheduling(true)}>
+            <Plus size={15} /> New meeting
+          </Button>
+        )}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-8">
         <div className="mx-auto max-w-3xl">

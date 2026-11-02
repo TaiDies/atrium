@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { Button, FullScreenSpinner, Input, toastError } from '../components/ui';
 import { api, type PageType, type Workspace } from '../lib/api';
-import { createPage, keys, queryClient, useMe, usePages, useWorkspaces, useMembers } from '../lib/queries';
+import { createPage, keys, queryClient, useMe, usePages, usePermissions, useWorkspaces, useMembers } from '../lib/queries';
 import { setDirectory } from '../lib/directory';
 import { getLocal, LAST_WORKSPACE_KEY, setLocal } from '../lib/storage';
 import { AppContext, type AppContextValue, type SettingsTab } from './context';
@@ -93,6 +93,7 @@ function FileOverlay() {
 }
 
 export function AppLayout() {
+  const may = usePermissions();
   const params = useParams();
   const { workspaceId } = params;
   const navigate = useNavigate();
@@ -240,7 +241,7 @@ export function AppLayout() {
         <FileOverlay />
         <RightClickMenus />
         {/* (Not on the AI page itself, nor in chats and meetings, where it would cover the Send button.) */}
-        {!/\/(ai|chat|meetings|meet)(\/|$)/.test(location.pathname) && <PageAssistant key={params.pageId ?? 'general'} pageId={params.pageId} />}
+        {may('use_ai') && !/\/(ai|chat|meetings|meet)(\/|$)/.test(location.pathname) && <PageAssistant key={params.pageId ?? 'general'} pageId={params.pageId} />}
       </div>
       <PhoneNav />
       </div>

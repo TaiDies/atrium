@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { addAiTokens } from './limits.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
 import { one } from './db.js';
@@ -25,6 +26,14 @@ export interface Connection {
   baseUrl: string | null;
   key: string | null;
   source: 'own' | 'shared';
+  /** Whose request this is: the tokens it uses are counted for them. */
+  userId?: string;
+}
+
+/** An answer and the tokens it took (prompt and reply together). */
+interface Answer {
+  text: string;
+  tokens: number;
 }
 
 // ---------- keys at rest ----------
@@ -84,7 +93,8 @@ export async function aiAccess(userId: string): Promise<AiAccess> {
       : null;
   let active: Connection | null = null;
   if (own && canUseOwn && (own.useOwn || !shared)) active = { provider: own.provider, model: own.model, baseUrl: own.baseUrl, key: ownKey, source: 'own' };
-  else if (shared) active = shared;
+  else if (shared) active = { ...shared };
+  if (active) active.userId = userId;
   return { shared: shared && { provider: shared.provider, model: shared.model }, canUseOwn, own, active };
 }
 
@@ -114,7 +124,7 @@ function failure(provider: string, status: number, detail: string): HttpError {
   return new HttpError(400, `${who} refused the request${detail ? `: ${detail}` : ''}`);
 }
 
-async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Promise<string> {
+async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Promise<Answer> {
   const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: TIMEOUT_MS, maxRetries: 2 });
   const fallback = FALLBACK_MODELS.has(c.model);
   try {
@@ -133,7 +143,8 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
       .map((b) => (b as { text: string }).text)
       .join('');
     if (message.stop_reason === 'max_tokens') throw new HttpError(400, 'The answer was too long and got cut off. Ask for a shorter plan, or split it up.');
-    return text;
+    const u = message.usage as { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
+    return { text, tokens: (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) };
   } catch (err) {
     if (err instanceof HttpError) throw err;
     if (err instanceof Anthropic.APIConnectionError) throw new HttpError(502, "Couldn't reach Anthropic. Check the server's internet connection.");
@@ -153,7 +164,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   return { status: res.status, ok: res.ok, data };
 }
 
-async function openai(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<string> {
+async function openai(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<Answer> {
   const base = trimSlash(c.baseUrl || 'https://api.openai.com/v1');
   const headers: Record<string, string> = c.key ? { Authorization: `Bearer ${c.key}` } : {};
   const body = { model: c.model, messages: [{ role: 'system', content: system }, ...turns] };
@@ -163,10 +174,11 @@ async function openai(c: Connection, system: string, turns: ChatTurn[], json: bo
   if (!r.ok) throw failure('openai', r.status, r.data?.error?.message ?? '');
   const text = r.data?.choices?.[0]?.message?.content;
   if (typeof text !== 'string') throw new HttpError(502, 'The AI service sent an empty answer');
-  return text;
+  const u = r.data?.usage ?? {};
+  return { text, tokens: Number(u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0)) || 0 };
 }
 
-async function gemini(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<string> {
+async function gemini(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<Answer> {
   const base = trimSlash(c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
   const r = await postJson(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, c.key ? { 'x-goog-api-key': c.key } : {}, {
     systemInstruction: { parts: [{ text: system }] },
@@ -178,15 +190,17 @@ async function gemini(c: Connection, system: string, turns: ChatTurn[], json: bo
   if (candidate?.finishReason === 'SAFETY') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
   const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('');
   if (!text) throw new HttpError(502, 'Google sent an empty answer');
-  return text;
+  const u = r.data?.usageMetadata ?? {};
+  return { text, tokens: Number(u.totalTokenCount ?? (u.promptTokenCount ?? 0) + (u.candidatesTokenCount ?? 0)) || 0 };
 }
 
 /** Sends a conversation to the model and returns its text answer. */
 export async function complete(c: Connection, system: string, turns: ChatTurn[], opts: { json?: boolean } = {}): Promise<string> {
   if (!c.key && c.provider !== 'openai') throw new HttpError(400, 'The AI connection has no API key');
-  if (c.provider === 'anthropic') return anthropic(c, system, turns);
-  if (c.provider === 'gemini') return gemini(c, system, turns, !!opts.json);
-  return openai(c, system, turns, !!opts.json);
+  const answer = c.provider === 'anthropic' ? await anthropic(c, system, turns) : c.provider === 'gemini' ? await gemini(c, system, turns, !!opts.json) : await openai(c, system, turns, !!opts.json);
+  // The tokens count towards the person's AI limits.
+  if (c.userId && answer.tokens > 0) await addAiTokens(c.userId, answer.tokens).catch(() => {});
+  return answer.text;
 }
 
 /** The models a key can use, for picking one in the settings. */

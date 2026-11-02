@@ -657,8 +657,8 @@ function UsageRow() {
     queryKey: ['my-usage'],
     queryFn: () =>
       api<{
-        limits: Record<'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiPerDay', number | null>;
-        usage: { workspaces: number; storageBytes: number; aiToday: number; owned: { id: string; name: string; people: number }[] };
+        limits: Record<'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiTokensPerDay' | 'aiTokensPerMonth', number | null>;
+        usage: { workspaces: number; storageBytes: number; aiTokensToday: number; aiTokensMonth: number; owned: { id: string; name: string; people: number }[] };
       }>('/api/auth/me/usage'),
   });
   if (!data) return null;
@@ -667,6 +667,7 @@ function UsageRow() {
   const used = usage.storageBytes / 1024 / 1024;
   const of = (amount: string, limit: number | null, unit: (n: number) => string = String) => (limit === null ? `${amount} · no limit` : `${amount} of ${unit(limit)}`);
   const share = (n: number, limit: number | null) => (limit === null ? null : limit ? n / limit : 1);
+  const tok = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
   const lines: { label: string; text: string; share: number | null }[] = [
     { label: 'Storage', text: of(mb(used), limits.storageMb, mb), share: share(used, limits.storageMb) },
     { label: 'Workspaces you own', text: of(String(usage.workspaces), limits.workspaces), share: share(usage.workspaces, limits.workspaces) },
@@ -676,7 +677,8 @@ function UsageRow() {
       share: share(w.people, limits.members),
     })),
     ...(usage.owned?.length ? [] : [{ label: 'People per workspace', text: limits.members === null ? 'No limit' : `Up to ${limits.members}`, share: null }]),
-    { label: 'AI requests today', text: of(String(usage.aiToday), limits.aiPerDay), share: share(usage.aiToday, limits.aiPerDay) },
+    { label: 'AI tokens today', text: of(tok(usage.aiTokensToday), limits.aiTokensPerDay, tok), share: share(usage.aiTokensToday, limits.aiTokensPerDay) },
+    { label: 'AI tokens this month', text: of(tok(usage.aiTokensMonth), limits.aiTokensPerMonth, tok), share: share(usage.aiTokensMonth, limits.aiTokensPerMonth) },
     { label: 'Largest file', text: limits.uploadMb === null ? 'Server maximum' : `Up to ${mb(limits.uploadMb)}`, share: null },
   ];
   return (

@@ -12,6 +12,7 @@ import { one, query } from '../db.js';
 import { checkStorage, uploadLimitBytes } from '../limits.js';
 import { emit } from '../webhooks.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { requirePermission } from '../roles.js';
 
 // Types that are safe to render inline; everything else (HTML, SVG, ...) is forced to download.
 export const INLINE_TYPES = new Set([
@@ -39,6 +40,7 @@ export async function fileRoutes(app: FastifyInstance) {
     }
     // This person's own limits: the largest file, and their total storage.
     try {
+      await requirePermission(req.user.id, 'upload_files');
       const max = await uploadLimitBytes(req.user.id);
       if (size > max) throw new HttpError(413, `Files must be smaller than ${Math.round(max / 1024 / 1024)} MB`);
       await checkStorage(req.user.id, size);

@@ -41,7 +41,7 @@ The first build takes a few minutes. When it's done, open **http://localhost:300
 
 1. **Create an account** — the sign-up page appears on first visit.
 2. **Make a workspace** — you're its owner; invite others from **Settings & members**.
-3. **Open the admin panel** (accounts, limits, AI for everyone, email, sign-ups) at
+3. **Open the admin panel** (accounts, roles, limits, AI for everyone, email, sign-ups) at
    **http://localhost:3001** — on the server itself only. Its password is printed in the log on first
    start and saved in the data volume:
 
@@ -121,6 +121,8 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
 2. It installs for your user only (no admin rights needed) and adds Atrium to the Start menu.
 3. On first launch, choose **Connect to your own server** and type its address, e.g.
    `192.168.1.20:3000` or `atrium.example.com`. Then sign in.
+4. The app keeps itself up to date: when it opens and every few hours it checks the latest release here
+   and asks **Update now / Later**. Updates are signed, and the app checks the signature before installing.
 
 ### Android
 
@@ -166,8 +168,8 @@ Atrium works with **Anthropic (Claude)**, **OpenAI or any OpenAI-compatible serv
 ones like Ollama or LM Studio — set the base address) and **Google Gemini**.
 
 - **For everyone:** admin panel → **AI**: provider, model, API key (and base address for compatible
-  servers); choose whether people may use their own key instead. Set per-person AI limits under
-  **Limits**.
+  servers); choose whether people may use their own key instead. Set AI limits (in tokens, per day and per month) under
+  **Limits** — for everyone, per role or per person.
 - **Just for yourself:** in the app, open **AI assistant** → **AI settings** (the sliders button at the top) → pick a provider, paste
   your key, choose a model.
 
@@ -216,8 +218,10 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` |
 | `RTC_ICE_SERVERS` | public STUN | Meeting connection servers (see above) |
 
-In the admin panel: **Accounts** (everyone's accounts, their usage and AI, delete accounts), **Workspaces**, **Limits**
-(storage, workspaces, members, AI requests — for everyone or per account), **Sign-ups & security**
+In the admin panel: **Accounts** (everyone's accounts, their roles, usage and AI, delete accounts), **Roles** (permissions —
+use AI, create workspaces, invite people, upload files, start meetings, create groups and teams, publish pages, API tokens —
+and optional limits, given to people; everyone has the **Everyone** role), **Workspaces**, **Limits**
+(storage, workspaces, members, AI tokens a day and a month — for everyone, per role or per account), **Sign-ups & security**
 (open or closed sign-ups, email verification).
 
 ---
@@ -236,6 +240,12 @@ npm run build:android     # APK in release/Atrium.apk
 Android only installs signed APKs: put your key in `apps/native/signing/` (`release.jks` and
 `keystore.properties` with `storeFile`, `storePassword`, `keyAlias`, `keyPassword`) — it is never
 committed.
+
+The Windows app's self-update checks `https://github.com/TaiDies/atrium/releases/latest/download/latest.json`
+and only installs updates signed with the matching key. If you publish your own builds, make a key with
+`npx tauri signer generate -w signing/updater.key`, put the public key and your own release address under
+`plugins.updater` in `src-tauri/tauri.conf.json`, and build with `TAURI_SIGNING_PRIVATE_KEY` set to the
+private key; upload `latest.json`, the setup `.exe` and its `.sig` with each release.
 
 ---
 

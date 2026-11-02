@@ -263,12 +263,53 @@ async fn api(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<tauri::
     Ok(tauri::ipc::Response::new(out))
 }
 
+/// A newer version of the Windows app, if the latest GitHub release has one.
+#[derive(Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(update.map(|u| UpdateInfo { version: u.version, notes: u.body }))
+}
+
+/// Downloads the update, checks its signature and installs it; the app closes and opens again.
+#[cfg(desktop)]
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let Some(update) = update else { return Ok(()) };
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+}
+
+// Android's app updates come from wherever it was installed from.
+#[cfg(mobile)]
+#[tauri::command]
+async fn check_update() -> Result<Option<UpdateInfo>, String> {
+    Ok(None)
+}
+#[cfg(mobile)]
+#[tauri::command]
+async fn install_update() -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         // Notifications from the system (new messages, meeting invitations…), shown by the page.
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![api])
+        .invoke_handler(tauri::generate_handler![api, check_update, install_update])
         .register_asynchronous_uri_scheme_protocol("app", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn(async move {

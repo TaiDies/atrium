@@ -9,6 +9,7 @@ import { codeEmail, mailEnabled, sendMail, verificationRequired } from '../mail.
 import { getSettings } from '../settings.js';
 import { limitsFor, usageFor } from '../limits.js';
 import { colorFor, email, HttpError, parse } from '../util.js';
+import { permissionsFor } from '../roles.js';
 
 const password = z.string().min(8, 'Password must be at least 8 characters').max(200);
 const name = z.string().trim().min(1, 'Name is required').max(80);
@@ -179,6 +180,9 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get('/auth/me', { preHandler: requireUser }, async (req) => ({ user: req.user }));
+
+  // What this person may do (from their roles), so the app can hide what isn't allowed.
+  app.get('/auth/me/permissions', { preHandler: requireUser }, async (req) => ({ permissions: [...(await permissionsFor(req.user.id))] }));
 
   // Appearance and language (theme, colours, font, sizes, language…), the same on every device. Each
   // device sends what it has; the stored copy is merged and returned.

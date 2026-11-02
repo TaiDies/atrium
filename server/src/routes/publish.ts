@@ -10,6 +10,7 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { INLINE_TYPES } from './files.js';
+import { requirePermission } from '../roles.js';
 
 // Publishing a page to the web: a secret link (/share/<token>) that shows the page — and, if chosen,
 // the pages inside it — read-only to anyone, without an account.
@@ -92,6 +93,8 @@ export async function publishRoutes(app: FastifyInstance) {
     const { id } = parse(idParams, req.params);
     const body = parse(z.object({ published: z.boolean(), subpages: z.boolean().default(false), allowIndex: z.boolean().default(false) }), req.body);
     await requirePage(req.user.id, id, 'manage');
+    // Publishing needs the role permission; taking a page off the web never does.
+    if (body.published) await requirePermission(req.user.id, 'publish_pages');
     if (!body.published) {
       await query('update pages set publish_token = null, published_at = null where id = $1', [id]);
       return { published: false, token: null };

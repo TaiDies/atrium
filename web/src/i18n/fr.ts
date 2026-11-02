@@ -1105,6 +1105,12 @@ export const fr: Record<string, string> = {
   'Presentation (.pptx)': 'Présentation (.pptx)',
   'Older presentation format (.ppt)': 'Ancien format de présentation (.ppt)',
   'Exactly as it looks in the desktop office apps': 'Exactement comme dans les logiciels de bureautique',
+  'AI tokens today': 'Jetons IA aujourd’hui',
+  'AI tokens this month': 'Jetons IA ce mois-ci',
+  'Update available': 'Mise à jour disponible',
+  'Update now': 'Mettre à jour',
+  'Updating…': 'Mise à jour…',
+  "Your account's role doesn't include API tokens. Ask the server's administrator.": 'Le rôle de votre compte n’inclut pas les jetons API. Demandez à l’administrateur du serveur.',
 };
 
 export const frPatterns: [RegExp, string][] = [
@@ -1146,4 +1152,5 @@ export const frPatterns: [RegExp, string][] = [
   [/^Flashcards · (.+)$/, 'Cartes · $1'],
   [/^Move “(.+)” to the trash\?$/, 'Mettre « $1 » à la corbeille ?'],
   [/^Delete “(.+)”\?$/, 'Supprimer « $1 » ?'],
+  [/^Atrium (.+) is out \(you have (.+)\)\. Update now\? The app will close and open again — nothing you\'ve written is lost\.$/, 'Atrium $1 est sorti (vous avez la $2). Mettre à jour ? L’application se fermera puis se rouvrira — rien de ce que vous avez écrit n’est perdu.'],
 ];

@@ -3,7 +3,7 @@ import { Copy, ExternalLink, Plus, Send, Trash2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { Button, confirmDialog, Input, Spinner, toast, toastError } from '../components/ui';
 import { api } from '../lib/api';
-import { queryClient, useWorkspaces } from '../lib/queries';
+import { queryClient, usePermissions, useWorkspaces } from '../lib/queries';
 import { ConnectClaude } from './ConnectClaude';
 import { useApp } from './context';
 
@@ -34,11 +34,18 @@ const copy = (text: string, what: string) => void navigator.clipboard.writeText(
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : 'never');
 
 export function ApiTab() {
+  const may = usePermissions();
   const { workspace } = useApp();
   return (
     <div className="space-y-8">
-      <ConnectClaude />
-      <Tokens />
+      {may('api_tokens') ? (
+        <>
+          <ConnectClaude />
+          <Tokens />
+        </>
+      ) : (
+        <p className="text-sm text-muted">Your account's role doesn't include API tokens. Ask the server's administrator.</p>
+      )}
       {workspace.role === 'owner' && <Webhooks workspaceId={workspace.id} />}
     </div>
   );

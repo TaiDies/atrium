@@ -12,6 +12,7 @@ import { writeMarkdown } from '../markdownBlocks.js';
 import { databaseToCsv, docToMarkdown } from '../readable.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { deliver, WEBHOOK_EVENTS } from '../webhooks.js';
+import { requirePermission } from '../roles.js';
 
 // Personal API tokens, webhooks, reading and writing pages as Markdown, and the API's own guide page.
 
@@ -49,6 +50,7 @@ export async function apiRoutes(app: FastifyInstance) {
     });
 
     auth.post('/auth/tokens', async (req) => {
+      await requirePermission(req.user.id, 'api_tokens');
       requireSession(req);
       const body = parse(
         z.object({

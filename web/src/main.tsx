@@ -9,6 +9,7 @@ import { AppLayout, NoWorkspace } from './app/AppLayout';
 import { HomeView } from './app/HomeView';
 import { PageView } from './app/PageView';
 import { ConfirmHost, FullScreenSpinner, Toaster } from './components/ui';
+import { AppUpdate } from './app/AppUpdate';
 import { AuthPage } from './pages/AuthPage';
 import { PublicFormPage } from './pages/PublicFormPage';
 import { PublicPage } from './pages/PublicPage';
@@ -156,6 +157,7 @@ async function start() {
     </BrowserRouter>
     <Toaster />
     <ConfirmHost />
+    <AppUpdate />
   </PersistQueryClientProvider>,
   );
 }

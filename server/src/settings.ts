@@ -33,7 +33,8 @@ export interface Limits {
   storageMb?: number | null;
   uploadMb?: number | null;
   members?: number | null;
-  aiPerDay?: number | null;
+  aiTokensPerDay?: number | null;
+  aiTokensPerMonth?: number | null;
 }
 
 export interface MailSettings {

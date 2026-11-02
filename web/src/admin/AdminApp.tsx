@@ -1,20 +1,22 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowUpCircle, Building2, Gauge, KeyRound, LogOut, Mail, Search, ShieldCheck, SlidersHorizontal, Sparkles, UserPlus, Users } from 'lucide-react';
+import { ArrowUpCircle, Building2, Gauge, KeyRound, LogOut, Mail, Search, ShieldCheck, SlidersHorizontal, UserCog, Sparkles, UserPlus, Users } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Avatar, Button, confirmDialog, Dialog, Input, Spinner, toast, toastError } from '../components/ui';
 import { adminApi, bytes, setSignedOutHandler } from './api';
 import { UpdatesTab } from './Updates';
-import { type Effective, type Limits, LimitsTab, limitText, MailTab, PeopleLimitsDialog } from './LimitsAndMail';
+import { AssignRolesDialog, RolesTab, useRoles } from './Roles';
+import { type Effective, type Limits, LimitsTab, limitText, MailTab, PeopleLimitsDialog, tokens } from './LimitsAndMail';
 
 // The admin panel (its own page and port): accounts, workspaces, sign-ups, the AI connection offered to
 // everyone, and the panel's password.
 
-type Tab = 'overview' | 'accounts' | 'workspaces' | 'limits' | 'ai' | 'email' | 'updates' | 'security';
+type Tab = 'overview' | 'accounts' | 'roles' | 'workspaces' | 'limits' | 'ai' | 'email' | 'updates' | 'security';
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'overview', label: 'Overview', icon: <Gauge size={16} /> },
   { id: 'accounts', label: 'Accounts', icon: <Users size={16} /> },
+  { id: 'roles', label: 'Roles', icon: <UserCog size={16} /> },
   { id: 'workspaces', label: 'Workspaces', icon: <Building2 size={16} /> },
   { id: 'limits', label: 'Limits', icon: <SlidersHorizontal size={16} /> },
   { id: 'ai', label: 'AI', icon: <Sparkles size={16} /> },
@@ -81,6 +83,7 @@ export function AdminApp() {
         <div className="mx-auto max-w-[1000px] px-4 py-6 sm:px-8">
           {tab === 'overview' && <Overview />}
           {tab === 'accounts' && <Accounts />}
+          {tab === 'roles' && <RolesTab />}
           {tab === 'workspaces' && <Workspaces />}
           {tab === 'limits' && <LimitsTab />}
           {tab === 'ai' && <AiSettings />}
@@ -196,6 +199,7 @@ interface AdminUser {
   workspaces: number;
   storage: number;
   ownAi: boolean;
+  roleIds: string[];
   ownedWorkspaces: number;
   limits: Effective;
   ownLimits: Limits;
@@ -208,6 +212,9 @@ function Accounts() {
   const [creating, setCreating] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState(false);
+  const [bulkRoles, setBulkRoles] = useState(false);
+  const roles = useRoles();
+  const roleName = (id: string) => roles.data?.roles.find((r) => r.id === id)?.name;
   useEffect(() => {
     const t = setTimeout(() => setSearch(q), 250);
     return () => clearTimeout(t);
@@ -224,6 +231,11 @@ function Accounts() {
         description="Everyone with an account on this server."
         action={
           <div className="flex gap-2">
+            {picked.size > 0 && (
+              <Button onClick={() => setBulkRoles(true)}>
+                <UserCog size={15} /> Roles for {picked.size}
+              </Button>
+            )}
             {picked.size > 0 && (
               <Button onClick={() => setBulk(true)}>
                 <SlidersHorizontal size={15} /> Set limits for {picked.size}
@@ -257,6 +269,7 @@ function Accounts() {
               <th className="px-3 py-2 font-medium">Last active</th>
               <th className="px-3 py-2 font-medium">Workspaces</th>
               <th className="px-3 py-2 font-medium">Storage</th>
+              <th className="px-3 py-2 font-medium">Roles</th>
               <th className="px-3 py-2 font-medium">Status</th>
             </tr>
           </thead>
@@ -298,6 +311,14 @@ function Accounts() {
                   {u.limits.storageMb !== null && <span className="text-faint"> of {limitText('storageMb', u.limits.storageMb)}</span>}
                 </td>
                 <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {(u.roleIds ?? []).map((id) => roleName(id)).filter(Boolean).map((n) => (
+                      <span key={n} className="rounded-md bg-accent/10 px-1.5 py-0.5 text-xs whitespace-nowrap text-accent">{n}</span>
+                    ))}
+                    {!(u.roleIds ?? []).length && <span className="text-xs text-faint">Everyone</span>}
+                  </div>
+                </td>
+                <td className="px-3 py-2">
                   {u.disabled ? (
                     <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-xs whitespace-nowrap text-red-500">Switched off</span>
                   ) : (
@@ -317,6 +338,18 @@ function Accounts() {
           onClose={() => setSelected(null)}
           onChanged={() => {
             void refetch();
+          }}
+        />
+      )}
+      {bulkRoles && (
+        <AssignRolesDialog
+          userIds={[...picked]}
+          label={`${picked.size} ${picked.size === 1 ? 'person' : 'people'}`}
+          current={(data?.users ?? []).filter((u) => picked.has(u.id)).map((u) => u.roleIds ?? [])}
+          onClose={() => setBulkRoles(false)}
+          onSaved={() => {
+            void refetch();
+            void roles.refetch();
           }}
         />
       )}
@@ -401,7 +434,8 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
         ai: { own: { provider: string; model: string } | null; source: string | null };
         limits: Effective;
         ownLimits: Limits;
-        usage: { workspaces: number; storageBytes: number; aiToday: number };
+        roleIds: string[];
+        usage: { workspaces: number; storageBytes: number; aiTokensToday: number; aiTokensMonth: number };
       }>(`/users/${user.id}`),
   });
   const [name, setName] = useState(user.name);
@@ -409,6 +443,8 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [editLimits, setEditLimits] = useState(false);
+  const [editRoles, setEditRoles] = useState(false);
+  const roles = useRoles();
   const u = data?.user ?? user;
 
   const patch = async (body: Record<string, unknown>, done: string) => {
@@ -505,6 +541,22 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
 
         <div>
           <div className="mb-1 flex items-center text-xs font-medium text-faint">
+            <span className="flex-1">Roles</span>
+            <button onClick={() => setEditRoles(true)} disabled={!data} className="text-accent hover:underline disabled:opacity-50">
+              Change
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-sm">
+            <span className="rounded-md bg-hover px-2 py-0.5 text-xs text-muted">Everyone</span>
+            {(data?.roleIds ?? []).map((id) => (
+              <span key={id} className="rounded-md bg-accent/10 px-2 py-0.5 text-xs text-accent">
+                {roles.data?.roles.find((r) => r.id === id)?.name ?? '…'}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1 flex items-center text-xs font-medium text-faint">
             <span className="flex-1">Limits</span>
             <button onClick={() => setEditLimits(true)} disabled={!data} className="text-accent hover:underline disabled:opacity-50">
               Change
@@ -526,9 +578,13 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
               <span className="sm:col-span-2">{limitText('uploadMb', data.limits.uploadMb)}</span>
               <span className="text-muted">People per workspace</span>
               <span className="sm:col-span-2">{limitText('members', data.limits.members)}</span>
-              <span className="text-muted">AI today</span>
+              <span className="text-muted">AI tokens today</span>
               <span className="sm:col-span-2">
-                {data.usage.aiToday} of {limitText('aiPerDay', data.limits.aiPerDay)}
+                {tokens(data.usage.aiTokensToday)} of {limitText('aiTokensPerDay', data.limits.aiTokensPerDay)}
+              </span>
+              <span className="text-muted">AI tokens this month</span>
+              <span className="sm:col-span-2">
+                {tokens(data.usage.aiTokensMonth)} of {limitText('aiTokensPerMonth', data.limits.aiTokensPerMonth)}
               </span>
             </div>
           )}
@@ -560,6 +616,19 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
           </p>
         )}
       </div>
+      {editRoles && data && (
+        <AssignRolesDialog
+          userIds={[user.id]}
+          label={u.name}
+          current={[data.roleIds ?? []]}
+          onClose={() => setEditRoles(false)}
+          onSaved={() => {
+            void refetch();
+            void roles.refetch();
+            onChanged();
+          }}
+        />
+      )}
       {editLimits && data && (
         <PeopleLimitsDialog
           userIds={[user.id]}

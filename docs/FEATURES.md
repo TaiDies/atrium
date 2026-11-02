@@ -49,14 +49,14 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Settings & members**: invite people by email as member or owner. Invitations wait under their 🔔 until they accept. Only **owners** add pages (and import or duplicate them); members edit the pages they can access and can add files, events and whiteboards.
 - **Share** on a page sets who can edit, view, or not see it (with per-person overrides); sub-pages inherit unless they have their own settings.
 
-## More features
+## Other
 - **Search** (Ctrl/⌘+K, or Ctrl/⌘+P for recently opened pages) finds titles, text inside documents and boards, and text inside uploaded files, with filters (pages/databases/files, last edited, made by me). Ctrl/⌘+/ shows all shortcuts.
 - Page ••• menu: Page history (restore earlier versions), Lock page, Full width, Small text, Verify (wiki pages), Archive (hidden from the sidebar, kept in search; Trash → Archive), Keep offline, Move to a teamspace. Backlinks show under the title.
 - **Guests**: Share → Guests invites someone by email to one page only. **Follow** a page (••• → Follow; automatic for pages you make, edit or comment on) to get its changes under 🔔 → Updates. Home shows who's online. Settings → Account → Daily email sends a morning summary (needs email set up by the admin).
 - **Teamspaces**: owners group top-level pages into teamspaces with chosen members (sidebar ⇅ → New teamspace); only members and owners see them. The ⇅ button also switches to your own sidebar order. **Trash** keeps deleted pages until restored.
 - **Export…** on a page (with or without sub-pages), or **Export everything** in Settings → Workspace, makes a .zip that can be imported into another workspace or account; it also contains Markdown and CSV copies. **Import** is described in detail below.
 - **Connect Claude** (Settings → API & webhooks): gives Claude or another MCP assistant one workspace as its own memory — see *For developers* below.
-- **Graph** (sidebar): every page as a dot with its links — see *Graph* below.
+- **Graph** (sidebar): every page as a dot with its links — see *Graph (in detail)* below.
 - **Chat** and **Meetings** (sidebar): see the detailed sections below.
 - **Language**: Settings → Appearance → Language: English (the default), Español, Français or العربية (Arabic, right-to-left). On phones and in the Android app there is a bottom bar (Home, Today, Chat, Calendar, Search; the corner button opens the sidebar; swipe from the left edge too; the back button closes what's open first), menus open as sheets from the bottom, and while writing a toolbar above the keyboard adds blocks, formats text, indents and undoes.
 - **Export as PDF** and **Export as Markdown** are in a document page's ••• menu.
@@ -64,8 +64,11 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Settings → Appearance**: 14 themes in light or dark, a custom accent colour, font, text size, page width and density. Appearance and language are saved with the account, so every device looks the same.
 - **Home** shows what matters now: today's tasks (and how many are overdue), meetings happening now or coming up, unread chats, what's new under the bell and recently edited pages; buttons to create pages, import and invite people are at the bottom.
 - **Admin panel → Updates** (server administrators): shows the running and newest version, **Update now**, **Update automatically**, and a **Server notifications receiver email** that's emailed when a new version is out (through the server's email settings).
+- **Admin panel → Roles** (server administrators): a role gives permissions — Use AI, Create workspaces, Invite people, Upload files, Start meetings, Create groups and teams, Publish pages to the web, API tokens and Connect Claude — and optionally more generous limits. Everyone has the built-in **Everyone** role; give other roles to people in **Accounts** (one person, or tick several and use **Roles for N**). A person may do whatever any of their roles allows; what isn't allowed is hidden in the app and refused by the server.
+- **AI limits** are in tokens (what the AI models charge for), per day and per month, set under Admin panel → Limits for everyone, per role or per person. They only count the server's shared AI connection — with your own key it's your own bill.
+- **The Windows app updates itself**: when it opens and every few hours it checks the latest GitHub release and asks "Update available — Update now / Later"; updating closes and reopens the app.
 - Works offline (pages you've opened stay on the device, changes sync when you're back online), with Windows and Android apps that connect to the same server.
-- **AI assistant** (sidebar): attach files (PDFs, documents, spreadsheets, presentations, text), pick pages with **Pages**, or files from the workspace with **From Files**, and turn on **My calendar** to plan around existing events. What the assistant makes is shown for review and added only when the person clicks Add. Questions are saved straight away and answers arrive in the background (they can leave and come back); hovering a past question shows a pencil to edit and re-ask it.
+- **AI assistant** (this screen): attach files (PDFs, documents, spreadsheets, presentations, text), pick pages with **Pages**, or files from the workspace with **From Files**, and turn on **My calendar** to plan around existing events. What the assistant makes is shown for review and added only when the person clicks Add. Questions are saved straight away and answers arrive in the background (they can leave and come back); hovering a past question shows a pencil to edit and re-ask it.
 - **AI on selected text**: select text in a page or card and click **AI** in the toolbar (improve, fix spelling, shorter, longer, simplify, summarise, to-do list, explain, translate, or type an instruction), then Replace or Insert below. Any block — a task, a file, an image — also has **Ask AI** in its ⋮⋮ handle menu (and on right-click for files and tasks): the AI can change selected tasks (rename, move dates, mark done) and read attached files (summaries, notes). Every page also has an **Ask AI** button in the bottom-right corner: a small assistant that reads that page.
 - **/ai → Ask AI to write**: in a page, writes something new at the cursor from a description.
 - **AI autofill property** (a database property type): write a prompt in its menu ("summarise the card", "which topic is this?") and click **Fill empty cards** or **Redo all**; empty cells also have a **Fill** button. The AI reads each card's other properties and its page.
@@ -76,9 +79,9 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Calendar ••• → Delete events and tasks not in any page** clears out events and tasks that only exist on the calendar.
 - **Calendar ••• → Subscribe in another calendar app** gives a private link (.ics) to add in Google Calendar (Other calendars → From URL), Outlook (Subscribe from web) or Apple Calendar; it shows events, tasks, dated cards and dated to-dos, read-only. **New link** turns the old one off. Online calendars can only fetch it if the server has a public address.
 - **Calendar ••• → Import a calendar file (.ics)** adds the events from another calendar's export (times, all-day spans, weekly/monthly repeats and reminders); ones already there are skipped.
-- **Settings → Account → Usage** shows storage, workspaces, people per workspace and AI requests against the administrator's limits.
+- **Settings → Account → Usage** shows storage, workspaces, people per workspace and AI tokens used today and this month against the administrator's limits.
 
-## Importing
+## Importing (in detail)
 **Import** (sidebar bottom, or Home) → drop files or a .zip → it shows what it found → **Import**. Owners can import. Everything below can be mixed in one .zip; folders become nested pages.
 - **An export from this app** (.zip from Export… / Export everything): pages, sub-pages, databases and cards, attachments, handwriting on PDFs, events and whiteboards all come back.
 - **Notion** export (.zip of Markdown & CSV, even a .zip inside a .zip): pages, nesting, databases as grids, images.
@@ -88,12 +91,12 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Files with AI-made pages**: the JSON names files (pictures, PDFs, documents, spreadsheets, presentations, audio, video…) — in a page as ![caption](photo.jpg), [file: Name](report.pdf), [video](…), [audio](…), in a database's **files** property, or as a page cover. Put the .json and those files in one folder and zip it (or select the .json and the files together in the Import window); names are matched by path, then by file name. A missing file is reported and shown as "📎 … (not included in the import)" so it can be added by hand later. The AI can't put file contents in the JSON — only names.
 - If something isn't imported, the Import window lists warnings (unknown property types, missing files, parents that weren't in the file).
 
-## Chat
+## Chat (in detail)
 - **Chat** in the sidebar (on phones, in the bottom bar). Three kinds: **private** (two people; opening it again reuses the same chat), **groups** (everyone equal; anyone can add people; only the owner removes people) and **teams** (the owner and the admins they choose decide, per member, who may **talk**, **use commands** and **start meetings**; the owner makes admins). Gear button → people, rename, add, remove, leave.
 - In the message box: **@** mentions someone (they get a notification), **[[** links a page, **/** opens commands — /page, /mention, /date (a date and time chip), /task (in a meeting's chat: adds a meeting task), /meet (start a meeting now with the people in this chat), /schedule (schedule one). Enter sends, Shift+Enter adds a line. Hover your message to edit or delete it; team owners/admins can delete anyone's.
 - Meeting links in chat show as cards with a Join button. Unread counts show in the chat list.
 
-## Meetings
+## Meetings (in detail)
 - **Meetings** (sidebar, or the video buttons in a chat): **New meeting** → title, notes, Schedule (date/time, length) or Start now, invite people (they're told under the bell, and by email if the admin set up mail), what everyone may do by default (talk, camera, share screen, chat), whether anyone in the workspace with the link may join, and **tasks** (each editable: notes, due date, priority, for everyone or chosen people). The link (/w/…/meet/code) exists straight away. Invitees are notified again when the meeting actually starts.
 - Before it starts: the meeting page shows the link, tasks, people and its chat. **Start/Join** enters the call.
 - In the call: microphone, camera, **screen sharing** (not in the Android app), the meeting's own chat (bubbles), tasks and people panels. **Click any tile** (a camera or a shared screen) to focus it big; click again to unpin. A green border inside a tile shows who's talking. Mute/unmute and camera on/off play a short sound. On a computer, the ⚙ button in the call chooses the **microphone, camera and speaker** (remembered on that device).
@@ -107,7 +110,7 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - 🔔 in the sidebar: invitations, reminders, the day's tasks, mentions, meeting invitations and starts, tasks given to you, comments and shares.
 - **Settings → Notifications** (per device) turns on **system notifications** in the Windows and Android apps and in browsers: on/off (asks for permission), chat messages (all, only mentions, none), meetings, tasks, everything else, sound, and quiet while the app is in front; **Send a test notification**. They arrive while the app is open or running in the background. Tapping one opens the chat or meeting.
 
-## Graph
+## Graph (in detail)
 - **Graph** in the sidebar shows every page as a dot (bigger the more it's linked), with lines for links/@mentions, sub-pages and (dashed) database relations; toggle each kind at the top; search with "Find a page". It blooms open, and hovering a page fades the rest and sends sparks along its lines. Drag dots, scroll or pinch to zoom, **Fit** to see everything, click to open a page. A page's ••• → **Local graph** shows only what's 1–3 links from it.
 - **Groups** give the colours meaning: Groups button → name, colour, description ("what it means"), and an optional rule (title contains some text, or under:Page for the pages inside a page); right-click (or long-press) a dot to put that page in a group. The legend (bottom-left) shows each colour's meaning and how many pages it has; hover a group to light its pages up, click to keep it lit. Each kind of line can have its own colour.
 

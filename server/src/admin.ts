@@ -18,6 +18,7 @@ import { LIMIT_KEYS, limitsFor, resolve, usageFor } from './limits.js';
 import { mailEnabled, sendMail, verifyMail } from './mail.js';
 import { checkForUpdate, requestUpdate, updateStatus } from './updates.js';
 import { email, escapeLike, handleError, HttpError, idParams, parse } from './util.js';
+import { getRole, isPermission, listRoles, PERMISSIONS } from './roles.js';
 
 // The admin panel: a separate server on its own port (ADMIN_PORT) for managing accounts and the AI
 // connection offered to everyone. Nothing here is reachable from the main app's port.
@@ -105,13 +106,14 @@ const aiBody = z.object({
 });
 
 /** A limit: a whole number, or null for unlimited. */
-const limitValue = z.number().int().min(0).max(10_000_000).nullable();
+const limitValue = z.number().int().min(0).max(100_000_000_000).nullable();
 const limitsBody = z.object({
   workspaces: limitValue.optional(),
   storageMb: limitValue.optional(),
   uploadMb: limitValue.optional(),
   members: limitValue.optional(),
-  aiPerDay: limitValue.optional(),
+  aiTokensPerDay: limitValue.optional(),
+  aiTokensPerMonth: limitValue.optional(),
 });
 /** For one person: also "default" (use the server's default). */
 const userLimit = z.union([limitValue, z.literal('default')]);
@@ -174,6 +176,7 @@ export async function startAdminServer() {
                     (select count(*)::int from workspace_members m where m.user_id = u.id) as workspaces,
                     (select coalesce(sum(size), 0)::bigint from files f where f.uploaded_by = u.id) as storage,
                     exists (select 1 from ai_connections a where a.user_id = u.id) as "ownAi",
+                    (select coalesce(array_agg(ur.role_id), '{}') from user_roles ur where ur.user_id = u.id) as "roleIds",
                     (select count(*)::int from workspace_members m where m.user_id = u.id and m.role = 'owner') as "ownedWorkspaces",
                     u.limits
                from users u
@@ -205,7 +208,8 @@ export async function startAdminServer() {
           );
           const ai = await aiAccess(id);
           const own = (await one<{ limits: Limits }>('select limits from users where id = $1', [id]))?.limits ?? {};
-          return { user, workspaces, ai: { own: ai.own, source: ai.active?.source ?? null }, limits: await limitsFor(id), ownLimits: own, usage: await usageFor(id) };
+          return { user, workspaces, ai: { own: ai.own, source: ai.active?.source ?? null }, limits: await limitsFor(id), ownLimits: own, usage: await usageFor(id),
+            roleIds: (await query<{ role_id: string }>('select role_id from user_roles where user_id = $1', [id])).map((r) => r.role_id) };
         });
 
         secured.post('/users', async (req, reply) => {
@@ -299,6 +303,52 @@ export async function startAdminServer() {
 
         // ----- settings -----
 
+        // ----- roles -----
+
+        secured.get('/roles', async () => ({ roles: await listRoles(), permissions: PERMISSIONS }));
+        const roleBody = z.object({
+          name: z.string().trim().min(1).max(60),
+          description: z.string().max(300).default(''),
+          permissions: z.array(z.string()).max(50).default([]),
+          limits: limitsBody.default({}),
+        });
+        secured.post('/roles', async (req) => {
+          const b = parse(roleBody, req.body);
+          const r = await one<{ id: string }>(
+            `insert into roles (name, description, permissions, limits, position) values ($1, $2, $3, $4, (select coalesce(max(position), 0) + 1 from roles)) returning id`,
+            [b.name, b.description, b.permissions.filter(isPermission), JSON.stringify(b.limits)],
+          );
+          return { id: r!.id };
+        });
+        secured.put('/roles/:id', async (req) => {
+          const { id } = parse(idParams, req.params);
+          const role = await getRole(id);
+          const b = parse(roleBody, req.body);
+          await query('update roles set name = $2, description = $3, permissions = $4, limits = $5 where id = $1', [
+            id,
+            role.isDefault ? 'Everyone' : b.name,
+            b.description,
+            b.permissions.filter(isPermission),
+            JSON.stringify(b.limits),
+          ]);
+          return { ok: true };
+        });
+        secured.delete('/roles/:id', async (req) => {
+          const { id } = parse(idParams, req.params);
+          if ((await getRole(id)).isDefault) throw new HttpError(400, 'The Everyone role can’t be deleted');
+          await query('delete from roles where id = $1', [id]);
+          return { ok: true };
+        });
+        // Giving roles to people (or taking them away), one or many at once.
+        secured.put('/users/roles', async (req) => {
+          const b = parse(z.object({ userIds: z.array(z.uuid()).min(1).max(1000), add: z.array(z.uuid()).default([]), remove: z.array(z.uuid()).default([]) }), req.body);
+          for (const roleId of b.add) {
+            await query(`insert into user_roles (user_id, role_id) select u, $2 from unnest($1::uuid[]) u on conflict do nothing`, [b.userIds, roleId]);
+          }
+          if (b.remove.length) await query('delete from user_roles where user_id = any($1::uuid[]) and role_id = any($2::uuid[])', [b.userIds, b.remove]);
+          return { ok: true };
+        });
+
         // ----- updates -----
 
         secured.get('/updates', async () => updateStatus());
@@ -390,7 +440,8 @@ export async function startAdminServer() {
                 storageMb: userLimit.optional(),
                 uploadMb: userLimit.optional(),
                 members: userLimit.optional(),
-                aiPerDay: userLimit.optional(),
+                aiTokensPerDay: userLimit.optional(),
+                aiTokensPerMonth: userLimit.optional(),
               }),
             }),
             req.body,

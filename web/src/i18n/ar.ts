@@ -1132,6 +1132,12 @@ export const ar: Record<string, string> = {
   'Presentation (.pptx)': 'عرض تقديمي (.pptx)',
   'Older presentation format (.ppt)': 'صيغة عرض تقديمي أقدم (.ppt)',
   'Exactly as it looks in the desktop office apps': 'تمامًا كما يظهر في تطبيقات المكتب على الحاسوب',
+  'AI tokens today': 'رموز الذكاء الاصطناعي اليوم',
+  'AI tokens this month': 'رموز الذكاء الاصطناعي هذا الشهر',
+  'Update available': 'يتوفر تحديث',
+  'Update now': 'حدّث الآن',
+  'Updating…': 'جارٍ التحديث…',
+  "Your account's role doesn't include API tokens. Ask the server's administrator.": 'دور حسابك لا يشمل رموز API. اسأل مسؤول الخادم.',
 };
 
 /**
@@ -1177,4 +1183,5 @@ export const arPatterns: [RegExp, string][] = [
   [/^Flashcards · (.+)$/, 'بطاقات تعليمية · $1'],
   [/^Move “(.+)” to the trash\?$/, 'نقل «$1» إلى سلة المهملات؟'],
   [/^Delete “(.+)”\?$/, 'حذف «$1»؟'],
+  [/^Atrium (.+) is out \(you have (.+)\)\. Update now\? The app will close and open again — nothing you\'ve written is lost\.$/, 'صدر Atrium $1 (لديك $2). هل تريد التحديث الآن؟ سيُغلق التطبيق ويُفتح مجددًا — ولن تفقد شيئًا مما كتبت.'],
 ];

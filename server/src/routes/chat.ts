@@ -6,6 +6,7 @@ import { one, query, tx } from '../db.js';
 import { pushTo } from '../live.js';
 import { notify } from '../notify.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { requirePermission } from '../roles.js';
 
 // Chat: private chats (two people), groups (everyone equal; the owner can remove people), teams (the
 // owner and admins set who may talk, use commands and start meetings), and each meeting's own chat
@@ -110,6 +111,7 @@ export async function chatRoutes(app: FastifyInstance) {
     } else {
       if (!body.name) throw new HttpError(400, `Give the ${body.kind} a name`);
       if (role === 'guest') throw new HttpError(403, "Guests can't make groups or teams");
+      await requirePermission(req.user.id, 'create_chats');
     }
     const chatId = await tx(async (c) => {
       const chat = await one<{ id: string }>('insert into chats (workspace_id, kind, name, created_by) values ($1, $2, $3, $4) returning id', [id, body.kind, body.kind === 'direct' ? '' : body.name, req.user.id], c);

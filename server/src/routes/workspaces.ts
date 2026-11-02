@@ -10,6 +10,7 @@ import { one, query, tx } from '../db.js';
 import { checkMembers, checkWorkspaces } from '../limits.js';
 import { inviteEmail, mailEnabled, sendMail } from '../mail.js';
 import { email, HttpError, idParams, parse } from '../util.js';
+import { requirePermission } from '../roles.js';
 
 const role = z.enum(['owner', 'member']);
 const wsName = z.string().trim().min(1, 'Name is required').max(80);
@@ -34,6 +35,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
   app.post('/workspaces', async (req, reply) => {
     if (tokenWorkspace()) throw new HttpError(403, 'This token is limited to one workspace');
     const body = parse(z.object({ name: wsName, icon: icon.optional() }), req.body);
+    await requirePermission(req.user.id, 'create_workspaces');
     await checkWorkspaces(req.user.id);
     const workspace = await tx(async (c) => {
       const ws = (await one(
@@ -86,6 +88,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
 
   // Invites someone; they join once they accept (from the bell), whether or not they have an account yet.
   app.post('/workspaces/:id/members', async (req, reply) => {
+    await requirePermission(req.user.id, 'invite_people');
     const { id } = parse(idParams, req.params);
     await requireOwner(req.user.id, id);
     const body = parse(z.object({ email, role: role.default('member') }), req.body);
