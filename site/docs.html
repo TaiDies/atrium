@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atrium documentation</title>
+  <meta name="description" content="How to install and host Atrium, configure email, AI, the API, webhooks and meetings, and use every feature." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236d4aff'/><path d='M9 23 16 8l7 15M11.5 18h9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="/"><span class="logo"><svg width="17" height="17" viewBox="0 0 32 32"><path d="M9 25 16 7l7 18M11.5 19h9" stroke="white" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Atrium</a>
+      <nav class="nav">
+        <a href="/#features">Features</a>
+        <a href="/#download">Download</a>
+        <button class="btn small menu-btn" onclick="document.querySelector('.toc').classList.toggle('open')">Contents</button>
+        <a class="btn small" data-repo-link href="https://github.com/TaiDies/atrium">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap docs">
+    <aside class="toc">
+      <input id="find" type="search" placeholder="Search the docs…" aria-label="Search the docs" />
+      <div id="toc"></div>
+    </aside>
+    <main>
+      <div class="tabs" role="tablist">
+        <a href="#install" data-doc="install">Install & configure</a>
+        <a href="#features" data-doc="features">Features & how to use them</a>
+      </div>
+      <article class="md" id="doc"><p>Loading…</p></article>
+    </main>
+  </div>
+
+  <footer>
+    <div class="wrap"><span>© Atrium contributors · AGPL-3.0</span><span>Found a mistake? <a data-repo-link data-suffix="/issues" href="https://github.com/TaiDies/atrium/issues">Open an issue</a></span></div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="/site.js"></script>
+  <script>
+    // The two guides are the repository's own docs/INSTALL.md and docs/FEATURES.md (copied into
+    // /content when the site is built), so the website and GitHub always say the same thing.
+    const DOCS = { install: { file: '/content/INSTALL.md', title: 'Install & configure' }, features: { file: '/content/FEATURES.md', title: 'Features' } };
+    const cache = {};
+    const slug = (t) => t.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\w؀-ۿ]+/g, '-').replace(/^-|-$/g, '');
+    const doc = document.getElementById('doc');
+    const toc = document.getElementById('toc');
+    const find = document.getElementById('find');
+    let current = null;
+
+    async function load(name) {
+      if (!cache[name]) {
+        const res = await fetch(DOCS[name].file);
+        let md = await res.text();
+        md = md.replaceAll('TaiDies/atrium', REPO).replace(/\]\((INSTALL|FEATURES)\.md\)/g, (_, f) => `](#${f.toLowerCase() === 'install' ? 'install' : 'features'})`);
+        cache[name] = md;
+      }
+      return cache[name];
+    }
+
+    async function show(name, anchor) {
+      if (!DOCS[name]) name = 'install';
+      current = name;
+      document.title = `${DOCS[name].title} · Atrium documentation`;
+      for (const t of document.querySelectorAll('[data-doc]')) t.classList.toggle('on', t.dataset.doc === name);
+      doc.innerHTML = marked.parse(await load(name));
+      // Headings get ids; the contents list follows them.
+      toc.innerHTML = `<h4>${DOCS[name].title}</h4>`;
+      for (const h of doc.querySelectorAll('h2, h3')) {
+        h.id = slug(h.textContent);
+        const a = document.createElement('a');
+        a.href = `#${name}/${h.id}`;
+        a.textContent = h.textContent;
+        if (h.tagName === 'H3') a.style.paddingInlineStart = '22px';
+        toc.appendChild(a);
+      }
+      const other = name === 'install' ? 'features' : 'install';
+      toc.insertAdjacentHTML('beforeend', `<h4>Also</h4><a href="#${other}">${DOCS[other].title}</a>`);
+      for (const a of doc.querySelectorAll('a[href^="http"]')) a.target = '_blank';
+      if (find.value.trim()) highlight(find.value.trim());
+      const target = anchor && document.getElementById(anchor);
+      if (target) target.scrollIntoView();
+      else window.scrollTo(0, 0);
+      spy();
+    }
+
+    function route() {
+      const [name, anchor] = location.hash.slice(1).split('/');
+      if (name === current && anchor) {
+        document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth' });
+        document.querySelector('.toc').classList.remove('open');
+      } else void show(name || 'install', anchor);
+    }
+    window.addEventListener('hashchange', route);
+    route();
+
+    // Highlight where you are in the contents.
+    function spy() {
+      const hs = [...doc.querySelectorAll('h2, h3')];
+      let on = hs[0];
+      for (const h of hs) if (h.getBoundingClientRect().top < 120) on = h;
+      for (const a of toc.querySelectorAll('a')) a.classList.toggle('on', on && a.getAttribute('href') === `#${current}/${on.id}`);
+    }
+    window.addEventListener('scroll', spy, { passive: true });
+
+    // Search: marks matches in the page, filters the contents, and jumps to the first match (Enter: next).
+    let matchIndex = 0;
+    function highlight(q) {
+      for (const m of doc.querySelectorAll('mark')) m.replaceWith(...m.childNodes);
+      doc.normalize();
+      if (!q) return [];
+      const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+      const hits = [];
+      const lower = q.toLowerCase();
+      let node;
+      const nodes = [];
+      while ((node = walker.nextNode())) if (node.nodeValue.toLowerCase().includes(lower)) nodes.push(node);
+      for (const n of nodes) {
+        const i = n.nodeValue.toLowerCase().indexOf(lower);
+        const mid = n.splitText(i);
+        mid.splitText(q.length);
+        const mark = document.createElement('mark');
+        mid.replaceWith(mark);
+        mark.appendChild(mid);
+        hits.push(mark);
+      }
+      return hits;
+    }
+    find.addEventListener('input', () => {
+      const q = find.value.trim();
+      const hits = highlight(q);
+      matchIndex = 0;
+      for (const a of toc.querySelectorAll('a')) a.style.display = !q || a.textContent.toLowerCase().includes(q.toLowerCase()) || hits.length ? '' : 'none';
+      hits[0]?.scrollIntoView({ block: 'center' });
+    });
+    find.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const hits = [...doc.querySelectorAll('mark')];
+      if (!hits.length) return;
+      matchIndex = (matchIndex + 1) % hits.length;
+      hits[matchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  </script>
+</body>
+</html>

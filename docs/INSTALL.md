@@ -1,0 +1,240 @@
+# Installing Atrium
+
+Atrium has two parts:
+
+- **The server** — runs on a computer you control (a home server, a NAS, a cloud VPS…) with Docker. It
+  holds everyone's pages, files, chats and meetings, and serves the web app.
+- **The apps** — the web app (open the server's address in any browser), plus apps for **Windows** and
+  **Android** that connect to your server.
+
+Start with the server; then open it in a browser or install the apps.
+
+---
+
+## 1. Run the server (Docker)
+
+**You need:** a computer with [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on Windows
+or macOS, Docker Engine on Linux), about 2 GB of free memory and a few GB of disk.
+
+```bash
+git clone https://github.com/TaiDies/atrium.git
+cd atrium
+cp .env.example .env        # on Windows: copy .env.example .env
+```
+
+Open `.env` in a text editor and set at least a database password:
+
+```ini
+POSTGRES_PASSWORD=a-long-random-password
+```
+
+Then start it:
+
+```bash
+docker compose up -d --build
+```
+
+The first build takes a few minutes. When it's done, open **http://localhost:3000** (or
+`http://<the computer's IP>:3000` from another device on your network).
+
+**First steps**
+
+1. **Create an account** — the sign-up page appears on first visit.
+2. **Make a workspace** — you're its owner; invite others from **Settings & members**.
+3. **Open the admin panel** (accounts, limits, AI for everyone, email, sign-ups) at
+   **http://localhost:3001** — on the server itself only. Its password is printed in the log on first
+   start and saved in the data volume:
+
+   ```bash
+   docker compose logs app | grep -i "admin panel password"
+   ```
+
+   Change it in the panel (or set `ADMIN_PASSWORD` in `.env`). To reach the panel from elsewhere, use an
+   SSH tunnel: `ssh -L 3001:localhost:3001 you@your-server`.
+
+**Updating**
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+Database changes are applied automatically when the server starts.
+
+**Backups** — everything lives in two Docker volumes: `db` (the database) and `data` (uploaded files,
+the admin password file). For example:
+
+```bash
+docker compose exec postgres pg_dump -U atrium atrium > atrium-backup.sql
+docker run --rm -v atrium_data:/data -v "$PWD":/backup alpine tar czf /backup/atrium-files.tgz -C /data .
+```
+
+(The volumes are named `atrium_db` and `atrium_data` — check with `docker volume ls`.) Users can also
+export whole workspaces as a .zip from **Settings → Workspace → Export everything**.
+
+---
+
+## 2. Put it on the internet (HTTPS) — optional but recommended
+
+Inside your home or office network, `http://<IP>:3000` is enough. To use Atrium from anywhere — and for
+**camera and microphone in browsers**, **calendar subscriptions** from Google/Outlook and **links in
+emails** — give it a domain and HTTPS with a reverse proxy. With [Caddy](https://caddyserver.com) (it
+gets certificates automatically):
+
+```caddy
+atrium.example.com {
+    reverse_proxy localhost:3000
+}
+```
+
+Then set in `.env` and restart (`docker compose up -d`):
+
+```ini
+SECURE_COOKIES=true
+```
+
+Nginx, Traefik or Cloudflare Tunnel work too; they must pass **WebSockets** (live editing at `/collab`,
+chat and calls at `/live`).
+
+---
+
+## 3. Install the apps
+
+Download them from the [latest release](https://github.com/TaiDies/atrium/releases/latest).
+
+### Windows
+
+1. Download **Atrium-Windows-setup.exe** and run it. If Windows SmartScreen says it doesn't recognise
+   the app, click **More info → Run anyway** (the installer isn't signed with a paid certificate).
+2. It installs for your user only (no admin rights needed) and adds Atrium to the Start menu.
+3. On first launch, choose **Connect to your own server** and type its address, e.g.
+   `192.168.1.20:3000` or `atrium.example.com`. Then sign in.
+
+### Android
+
+1. Download **Atrium.apk** on the phone (or copy it over).
+2. Open it. Android asks to allow installing apps from this source (your browser or file manager) —
+   allow it, then **Install**. (Android 7 or newer.)
+3. On first launch, enter your server's address and sign in. The phone must be able to reach the
+   server — the same Wi-Fi network, a VPN such as Tailscale, or a public HTTPS address.
+4. Allow notifications (Settings → Notifications in the app) and camera/microphone when asked in a
+   meeting.
+
+### Web and other devices
+
+Any modern browser works: open the server's address. On phones the web app switches to a phone layout.
+iPhone and macOS/Linux users can use the web app (and "Add to Home Screen").
+
+---
+
+## 4. Configure
+
+Settings go in `.env` (then `docker compose up -d` to apply), or in the **admin panel** where noted.
+
+### Email (sign-in codes, invitations, meeting invites, daily summaries)
+
+Admin panel → **Email**: SMTP server, port, user, password, sender — with **Send a test**. Or in `.env`:
+
+```ini
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587            # 465 with SMTP_SECURE=true
+SMTP_USER=you@example.com
+SMTP_PASSWORD=app-password
+SMTP_SECURE=false
+MAIL_FROM=Atrium <you@example.com>
+REQUIRE_EMAIL_VERIFICATION=false   # true: new accounts confirm their email with a code
+```
+
+Without email, everything works except emailed codes, email invitations and daily summaries (people
+still see invitations under the 🔔 bell).
+
+### AI
+
+Atrium works with **Anthropic (Claude)**, **OpenAI or any OpenAI-compatible server** (including local
+ones like Ollama or LM Studio — set the base address) and **Google Gemini**.
+
+- **For everyone:** admin panel → **AI**: provider, model, API key (and base address for compatible
+  servers); choose whether people may use their own key instead. Set per-person AI limits under
+  **Limits**.
+- **Just for yourself:** in the app, open **AI assistant** → **AI settings** (the sliders button at the top) → pick a provider, paste
+  your key, choose a model.
+
+AI powers the assistant (which can build documents, databases and calendar tasks), writing and editing
+selected text, AI autofill columns, "Search my workspace", flashcards and quizzes, and audio/video
+transcription (needs OpenAI, Groq or Gemini; `AI_TRANSCRIBE_MODEL` picks the model).
+
+### API, webhooks and Claude (MCP)
+
+- **API tokens:** Settings → **API & webhooks** → New token (optionally limited to one workspace, with
+  an expiry). Use `Authorization: Bearer af_…`. The reference is at `https://your-server/api/docs`; a
+  guide to the whole app for programs and AI assistants is at `/api/guide`.
+- **Webhooks** (workspace owners): an address that receives signed JSON when pages, events, tasks or
+  files change.
+- **Connect Claude:** Settings → API & webhooks → **Connect Claude** makes a token limited to one
+  workspace and shows the setup for Claude Code and Claude Desktop — Claude then uses that workspace as
+  its long-term memory (MCP endpoint `/api/mcp`).
+
+### Meetings (calls)
+
+Calls connect people directly (WebRTC). On one network they work as they are. Across the internet,
+some networks need a **TURN** relay — run one (e.g. [coturn](https://github.com/coturn/coturn)) or use a
+hosted one, and set:
+
+```ini
+RTC_ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:turn.example.com:3478","username":"atrium","credential":"secret"}]
+```
+
+Browsers need HTTPS for the camera and microphone (the Windows and Android apps don't).
+
+### Everything else in `.env`
+
+| Setting | Default | What it does |
+|---|---|---|
+| `APP_PORT` | `3000` | Port the app is published on |
+| `POSTGRES_PASSWORD` | — | Database password (set before the first start) |
+| `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
+| `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
+| `MAX_UPLOAD_MB` | `25` | Largest upload |
+| `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |
+| `TZ` | `UTC` | Time zone for "today" (repeating tasks reset at midnight here) |
+| `CONVERT_PARALLEL` | `2` | Document conversions (Office/PDF) at once |
+| `ADMIN_PORT` | `3001` | Admin panel port (only on the server itself) |
+| `ADMIN_PASSWORD` | generated | Admin panel password |
+| `ADMIN_PANEL` | `true` | `false` turns the admin panel off |
+| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` |
+| `RTC_ICE_SERVERS` | public STUN | Meeting connection servers (see above) |
+
+In the admin panel: **Accounts** (everyone's accounts, their usage and AI, delete accounts), **Workspaces**, **Limits**
+(storage, workspaces, members, AI requests — for everyone or per account), **Sign-ups & security**
+(open or closed sign-ups, email verification).
+
+---
+
+## 5. Build the apps yourself (optional)
+
+Needs Node.js 22+, Rust, and for Android the Android SDK/NDK and Java 17.
+
+```bash
+cd apps/native
+npm install
+npm run build:windows     # installer in src-tauri/target/release/bundle/nsis/
+npm run build:android     # APK in release/Atrium.apk
+```
+
+Android only installs signed APKs: put your key in `apps/native/signing/` (`release.jks` and
+`keystore.properties` with `storeFile`, `storePassword`, `keyAlias`, `keyPassword`) — it is never
+committed.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| The page doesn't load | `docker compose ps` — both containers should be running; `docker compose logs app` shows errors. |
+| The app says it can't reach the server | Check the address and port, that the device is on the same network (or VPN), and that a firewall allows port 3000. |
+| Signed out after every reload over HTTPS | Set `SECURE_COOKIES=true`. Over plain HTTP, keep it `false`. |
+| Camera/microphone blocked in the browser | Use HTTPS (section 2), or the Windows/Android app. |
+| Calls connect on Wi-Fi but not across the internet | Add a TURN server to `RTC_ICE_SERVERS`. |
+| No emails arrive | Admin panel → Email → **Send a test** shows the SMTP error. |
+| "Live editing" or chat doesn't update behind a proxy | The proxy must forward WebSockets for `/collab` and `/live`. |

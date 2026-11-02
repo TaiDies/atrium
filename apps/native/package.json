@@ -1,0 +1,16 @@
+{
+  "name": "workspace-native",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Windows and Android apps: the web app, working offline, connected to a server of your choice.",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build:windows": "tauri build",
+    "android:init": "tauri android init",
+    "build:android": "tauri android build --apk && node scripts/collect-apk.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

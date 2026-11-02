@@ -1,0 +1,542 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: var(--app-font);
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-column: var(--column);
+  --color-card: var(--card);
+}
+
+:root {
+  --bg: #ffffff;
+  --sidebar: #f7f7f5;
+  --surface: #ffffff;
+  --hover: rgba(55, 53, 47, 0.06);
+  --active: rgba(55, 53, 47, 0.1);
+  --line: #e9e9e7;
+  --fg: #37352f;
+  --muted: #787774;
+  --faint: #a8a7a3;
+  --accent: #7c5cff;
+  --accent-soft: rgba(124, 92, 255, 0.12);
+  --danger: #e03e3e;
+  --column: #f7f7f5;
+  --card: #ffffff;
+  --shadow: 0 0 0 1px rgba(15, 15, 15, 0.05), 0 3px 6px rgba(15, 15, 15, 0.1), 0 9px 24px rgba(15, 15, 15, 0.2);
+  color-scheme: light;
+}
+
+/* :root only: BlockNote also puts a "dark" class on the editor, which must not reset the theme's colours. */
+:root.dark {
+  --bg: #191919;
+  --sidebar: #202020;
+  --surface: #252525;
+  --hover: rgba(255, 255, 255, 0.055);
+  --active: rgba(255, 255, 255, 0.09);
+  --line: #2f2f2f;
+  --fg: #e3e3e1;
+  --muted: #9b9b9b;
+  --faint: #6b6b6b;
+  --accent: #8f74ff;
+  --accent-soft: rgba(143, 116, 255, 0.18);
+  --danger: #ff6b6b;
+  --column: #202020;
+  --card: #2a2a2a;
+  --shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 3px 6px rgba(0, 0, 0, 0.3), 0 9px 24px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+/* ---------- Fonts ---------- */
+:root {
+  --app-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+:root[data-font='serif'] {
+  --app-font: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
+}
+:root[data-font='mono'] {
+  --app-font: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+/* ---------- Colour themes (accent + a light tint on the sidebar) ---------- */
+:root[data-color='dandelion'] { --accent: #e08a00; --accent-soft: rgba(245, 158, 11, 0.15); --sidebar: #fbf7ef; --column: #fbf7ef; }
+:root.dark[data-color='dandelion'] { --accent: #f6ad37; --accent-soft: rgba(246, 173, 55, 0.18); --sidebar: #221f19; --column: #221f19; }
+:root[data-color='lavender'] { --accent: #a855d6; --accent-soft: rgba(176, 106, 217, 0.14); --sidebar: #f8f4fb; --column: #f8f4fb; }
+:root.dark[data-color='lavender'] { --accent: #c88ae8; --accent-soft: rgba(200, 138, 232, 0.18); --sidebar: #221d26; --column: #221d26; }
+:root[data-color='lemonade'] { --accent: #6f9e12; --accent-soft: rgba(132, 184, 31, 0.15); --sidebar: #f8faf0; --column: #f8faf0; }
+:root.dark[data-color='lemonade'] { --accent: #a3d13f; --accent-soft: rgba(163, 209, 63, 0.18); --sidebar: #1f221a; --column: #1f221a; }
+:root[data-color='ocean'] { --accent: #2f80ed; --accent-soft: rgba(47, 128, 237, 0.13); --sidebar: #f2f6fb; --column: #f2f6fb; }
+:root.dark[data-color='ocean'] { --accent: #5b9cf5; --accent-soft: rgba(91, 156, 245, 0.18); --sidebar: #1a1e25; --column: #1a1e25; }
+:root[data-color='forest'] { --accent: #1f9d6b; --accent-soft: rgba(31, 157, 107, 0.13); --sidebar: #f1f7f3; --column: #f1f7f3; }
+:root.dark[data-color='forest'] { --accent: #3ec58c; --accent-soft: rgba(62, 197, 140, 0.18); --sidebar: #19221e; --column: #19221e; }
+:root[data-color='rose'] { --accent: #e5487a; --accent-soft: rgba(229, 72, 122, 0.12); --sidebar: #fbf3f5; --column: #fbf3f5; }
+:root.dark[data-color='rose'] { --accent: #f26d96; --accent-soft: rgba(242, 109, 150, 0.18); --sidebar: #261c20; --column: #261c20; }
+:root[data-color='graphite'] { --accent: #4b5263; --accent-soft: rgba(75, 82, 99, 0.12); }
+:root.dark[data-color='graphite'] { --accent: #a9b0bf; --accent-soft: rgba(169, 176, 191, 0.16); }
+:root[data-color='sunset'] { --accent: #e9542e; --accent-soft: rgba(240, 96, 58, 0.13); --sidebar: #fcf4f0; --column: #fcf4f0; }
+:root.dark[data-color='sunset'] { --accent: #ff7f5c; --accent-soft: rgba(255, 127, 92, 0.18); --sidebar: #261d1a; --column: #261d1a; }
+:root[data-color='mint'] { --accent: #0f9e8f; --accent-soft: rgba(20, 184, 166, 0.13); --sidebar: #f0f8f7; --column: #f0f8f7; }
+:root.dark[data-color='mint'] { --accent: #2dd4bf; --accent-soft: rgba(45, 212, 191, 0.17); --sidebar: #172321; --column: #172321; }
+
+/* Themes that also tint the page and its surfaces */
+:root[data-color='nord'] {
+  --bg: #f4f6f9; --sidebar: #e8ecf2; --surface: #ffffff; --card: #ffffff; --column: #e8ecf2; --line: #d8dee9;
+  --fg: #2e3440; --muted: #5d6779; --faint: #8f99ab; --accent: #5e81ac; --accent-soft: rgba(94, 129, 172, 0.15);
+}
+:root.dark[data-color='nord'] {
+  --bg: #2e3440; --sidebar: #272c36; --surface: #3b4252; --card: #3b4252; --column: #353b48; --line: #434c5e;
+  --fg: #eceff4; --muted: #b3bccc; --faint: #7b8598; --accent: #88c0d0; --accent-soft: rgba(136, 192, 208, 0.18);
+}
+:root[data-color='sepia'] {
+  --bg: #fbf7ef; --sidebar: #f3ecdf; --surface: #fffdf8; --card: #fffdf8; --column: #f3ecdf; --line: #e6dccb;
+  --fg: #433422; --muted: #7d6a55; --faint: #ad9d88; --accent: #a0643a; --accent-soft: rgba(160, 100, 58, 0.14);
+}
+:root.dark[data-color='sepia'] {
+  --bg: #221d17; --sidebar: #1b1712; --surface: #2c261e; --card: #2c261e; --column: #27211a; --line: #3a3127;
+  --fg: #eadfcd; --muted: #b3a38c; --faint: #7c6e5c; --accent: #d79b63; --accent-soft: rgba(215, 155, 99, 0.18);
+}
+:root[data-color='midnight'] {
+  --bg: #fafbff; --sidebar: #eef1fb; --column: #eef1fb; --line: #e1e5f3; --accent: #4f6ef7; --accent-soft: rgba(79, 110, 247, 0.12);
+}
+:root.dark[data-color='midnight'] {
+  --bg: #0f1424; --sidebar: #0b0f1c; --surface: #171e33; --card: #171e33; --column: #131a2c; --line: #232c45;
+  --fg: #e3e8f7; --muted: #98a2c0; --faint: #5f6987; --accent: #7d97ff; --accent-soft: rgba(125, 151, 255, 0.18);
+}
+:root[data-color='contrast'] {
+  --bg: #ffffff; --sidebar: #f2f2f2; --surface: #ffffff; --card: #ffffff; --column: #f2f2f2; --line: #8a8a8a;
+  --fg: #000000; --muted: #333333; --faint: #5c5c5c; --accent: #0050d0; --accent-soft: rgba(0, 80, 208, 0.14);
+  --hover: rgba(0, 0, 0, 0.08); --active: rgba(0, 0, 0, 0.14);
+}
+:root.dark[data-color='contrast'] {
+  --bg: #000000; --sidebar: #0d0d0d; --surface: #111111; --card: #141414; --column: #0d0d0d; --line: #8a8a8a;
+  --fg: #ffffff; --muted: #d6d6d6; --faint: #a8a8a8; --accent: #6cb4ff; --accent-soft: rgba(108, 180, 255, 0.2);
+  --hover: rgba(255, 255, 255, 0.1); --active: rgba(255, 255, 255, 0.17);
+}
+
+/* A custom accent picked in Settings wins over the theme's */
+:root[data-custom-accent],
+:root.dark[data-custom-accent] {
+  --accent: var(--custom-accent);
+  --accent-soft: color-mix(in srgb, var(--custom-accent) 15%, transparent);
+}
+
+/* ---------- Text size, page width and density ---------- */
+:root {
+  --page-width: 900px;
+  --editor-size: 16px;
+}
+:root[data-width='wide'] { --page-width: 1240px; }
+:root[data-width='full'] { --page-width: 100%; }
+:root[data-size='small'] { font-size: 15px; --editor-size: 14.5px; }
+:root[data-size='large'] { font-size: 17px; --editor-size: 18px; }
+:root[data-density='compact'] .bn-block-outer:not([data-prev-depth-changed]) { margin-top: 0; }
+:root[data-density='compact'] .bn-block-content { padding-block: 1px; }
+:root[data-font='rounded'] {
+  --app-font: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.shadow-pop {
+  box-shadow: var(--shadow);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--active) transparent;
+}
+
+/* BlockNote: blend the editor into the page */
+.bn-container,
+.bn-container[data-color-scheme] {
+  --bn-colors-editor-background: var(--bg);
+  --bn-colors-editor-text: var(--fg);
+  --bn-colors-menu-background: var(--surface);
+  --bn-colors-menu-text: var(--fg);
+  --bn-font-family: var(--app-font);
+  --bn-border-radius: 6px;
+}
+.bn-container .bn-editor {
+  padding-inline: 54px;
+  font-size: var(--editor-size);
+}
+
+/* A block opened from a link (e.g. a date on the calendar) flashes briefly. */
+.block-flash > .bn-block > .bn-block-content {
+  animation: block-flash 2.2s ease-out;
+  border-radius: 6px;
+}
+@keyframes block-flash {
+  0%, 40% { background: var(--accent-soft); }
+  100% { background: transparent; }
+}
+
+/* Things nested inside a checked to-do (images, files, notes…) are shown as done too. */
+.bn-block-content[data-content-type='checkListItem'][data-checked='true'] + .bn-block-group .bn-block-content:not([data-content-type='checkListItem']) {
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.bn-block-content[data-content-type='checkListItem'][data-checked='true'] + .bn-block-group .bn-block-content:not([data-content-type='checkListItem']):hover {
+  opacity: 0.85;
+}
+@media (max-width: 640px) {
+  .bn-container .bn-editor {
+    padding-inline: 18px;
+  }
+}
+
+/* ---------- Touch screens & phones ---------- */
+/* Controls that normally appear on hover are always shown where there is no hover. */
+@media (hover: none) {
+  .hover-reveal {
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+  .hover-reveal-flex {
+    display: flex !important;
+  }
+}
+@media (max-width: 640px) {
+  /* 16px text stops iOS from zooming into fields. */
+  input.text-sm,
+  select.text-sm,
+  textarea.text-sm,
+  input:not([class*='text-']),
+  select:not([class*='text-']) {
+    font-size: 16px;
+  }
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.collaboration-cursor__label {
+  font-family: var(--font-sans);
+}
+
+/* ---------- AI assistant answers (Markdown) ---------- */
+.ai-markdown > :first-child {
+  margin-top: 0;
+}
+.ai-markdown > :last-child {
+  margin-bottom: 0;
+}
+.ai-markdown p,
+.ai-markdown ul,
+.ai-markdown ol,
+.ai-markdown pre,
+.ai-markdown table,
+.ai-markdown blockquote {
+  margin: 0.6em 0;
+  line-height: 1.6;
+}
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4 {
+  margin: 1.1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ai-markdown h1 {
+  font-size: 1.35em;
+}
+.ai-markdown h2 {
+  font-size: 1.2em;
+}
+.ai-markdown h3 {
+  font-size: 1.05em;
+}
+.ai-markdown ul {
+  list-style: disc;
+  padding-left: 1.4em;
+}
+.ai-markdown ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.ai-markdown li {
+  margin: 0.2em 0;
+}
+.ai-markdown li > input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+.ai-markdown a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.ai-markdown code {
+  border-radius: 4px;
+  background: var(--color-hover);
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.ai-markdown pre {
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--color-hover);
+  padding: 0.75em 1em;
+}
+.ai-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.ai-markdown blockquote {
+  border-left: 3px solid var(--color-line);
+  padding-left: 0.9em;
+  color: var(--color-muted);
+}
+.ai-markdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.ai-markdown th,
+.ai-markdown td {
+  border: 1px solid var(--color-line);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+
+/* Columns: a column list lays its columns out side by side; each column holds ordinary blocks.
+   (Custom blocks render inside a .react-renderer wrapper.) */
+.bn-block:has(> .react-renderer.node-columnList) > .bn-block-group {
+  display: flex;
+  gap: 24px;
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.bn-block:has(> .react-renderer.node-columnList) > .bn-block-group > .bn-block-outer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.bn-block:has(> .react-renderer.node-column) > .bn-block-group {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+  min-height: 2rem;
+}
+.react-renderer.node-columnList,
+.react-renderer.node-column {
+  display: none;
+}
+@media (max-width: 640px) {
+  .bn-block:has(> .react-renderer.node-columnList) > .bn-block-group {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+/* Find in page */
+::highlight(find-match) {
+  background-color: rgba(255, 206, 54, 0.45);
+}
+::highlight(find-current) {
+  background-color: rgba(255, 145, 77, 0.75);
+}
+
+/* File attachments look like something to open: a card with an icon, the name and a hint. */
+.bn-block-content[data-content-type='file'] .bn-file-name-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(100%, 520px);
+  padding: 10px 14px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  color: var(--fg);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.bn-block-content[data-content-type='file'] .bn-file-name-with-icon:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+.bn-block-content[data-content-type='file'] .bn-file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.bn-block-content[data-content-type='file'] .bn-file-name-with-icon p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pages set to small text (page ••• → Small text). */
+.page-small-text .bn-editor {
+  font-size: 14px;
+}
+
+/* Highlighter ink: on light pages it tints like a marker (multiply); on dark pages that would make it
+   almost invisible, so it lightens instead and is a little stronger. */
+.ink-highlight {
+  mix-blend-mode: multiply;
+}
+.pdf-dark .ink-highlight {
+  mix-blend-mode: screen;
+  stroke-opacity: 0.6;
+}
+
+/* The Ask AI button sits above a screen's own floating "+" button instead of covering it. */
+body:has([data-fab]) .ai-fab {
+  bottom: 5.75rem;
+  right: 1.75rem;
+}
+@media (min-width: 640px) {
+  body:has([data-fab]) .ai-fab {
+    bottom: 7.25rem;
+    right: 2.4rem;
+  }
+}
+/* Whiteboards keep their own help button in the bottom-right corner. */
+body:has(.excalidraw) .ai-fab {
+  bottom: 4.5rem;
+}
+
+/* Blocks without text (tasks, files, images, embeds…) inside a selection: shown selected like text. */
+.bn-editor .af-selected-block {
+  position: relative;
+}
+.bn-editor .af-selected-block::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.bn-editor .af-selected-text {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* ---------- Phone layout (and the Android app) ---------- */
+/* Taps don't flash, the page doesn't bounce, and buttons are big enough for a thumb. */
+@media (max-width: 767px) {
+  html,
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  button,
+  [role='button'] {
+    touch-action: manipulation;
+  }
+  /* Small icon buttons get a finger-sized hit area. */
+  button.size-7,
+  button.size-6,
+  button.size-8 {
+    min-width: 38px;
+    min-height: 38px;
+  }
+  /* Menus as bottom sheets: rows sized for touch. */
+  .af-menu-item {
+    height: 46px;
+    font-size: 15px;
+    padding-inline: 14px;
+  }
+  .af-sheet {
+    animation: af-sheet-up 180ms ease-out;
+  }
+  /* The bottom bar and the editing toolbar keep floating buttons clear. */
+  body:has(.af-phone-nav) .ai-fab,
+  body:has(.af-phone-toolbar) .ai-fab {
+    bottom: 76px;
+  }
+  body:has(.af-phone-nav) [data-fab] {
+    bottom: 76px;
+  }
+  body:has(.af-phone-nav):has([data-fab]) .ai-fab {
+    bottom: 148px;
+    right: 24px;
+  }
+  body:has(.af-phone-toolbar) .bn-editor {
+    padding-bottom: 72px;
+  }
+}
+@keyframes af-sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (max-width: 767px) {
+  body:has(.af-phone-nav) .af-toasts,
+  body:has(.af-phone-toolbar) .af-toasts {
+    bottom: 76px;
+  }
+}
+
+/* ---------- Right-to-left languages (Arabic) ---------- */
+/* Each paragraph of writing takes its own direction, so Arabic sits right and English left
+   whatever the interface language is. */
+.bn-inline-content,
+.ai-markdown p,
+.ai-markdown li {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+/* Arrows that mean "next/back" point the other way. */
+[dir='rtl'] .lucide-chevron-right,
+[dir='rtl'] .lucide-chevron-left,
+[dir='rtl'] .lucide-arrow-right,
+[dir='rtl'] .lucide-arrow-left,
+[dir='rtl'] .lucide-arrow-up-right,
+[dir='rtl'] .lucide-external-link {
+  transform: scaleX(-1);
+}
+/* Tools drawn by measured positions stay left to right. */
+[dir='rtl'] .excalidraw,
+[dir='rtl'] .fortune-sheet-container,
+[dir='rtl'] .af-ltr {
+  direction: ltr;
+}
+/* Arabic reads better a touch larger, with a font that has Arabic letters. */
+:root[lang='ar'] body {
+  font-family: 'Segoe UI', Tahoma, 'Noto Sans Arabic', 'Noto Naskh Arabic', system-ui, sans-serif;
+}

@@ -1,0 +1,225 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import Anthropic from '@anthropic-ai/sdk';
+import { config } from './config.js';
+import { one } from './db.js';
+import { getSettings } from './settings.js';
+import { HttpError } from './util.js';
+
+// The AI assistant's connection to a model. People can bring their own key; the admin can also set one
+// for everybody, and then decides whether people may still use their own. Keys are stored encrypted
+// and never sent back to the browser.
+
+export const PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
+export type Provider = (typeof PROVIDERS)[number];
+
+/** Suggested models; any model the provider offers can be typed in (or picked from its list). */
+export const DEFAULT_MODELS: Record<Provider, string> = {
+  anthropic: 'claude-opus-5-5',
+  openai: 'gpt-5',
+  gemini: 'gemini-2.5-pro',
+};
+
+export interface Connection {
+  provider: Provider;
+  model: string;
+  baseUrl: string | null;
+  key: string | null;
+  source: 'own' | 'shared';
+}
+
+// ---------- keys at rest ----------
+
+const secretKey = () => createHash('sha256').update(`${config.sessionSecret}:ai-keys`).digest();
+
+export function encryptKey(plain: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', secretKey(), iv);
+  const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
+}
+
+export function decryptKey(stored: string | null): string | null {
+  if (!stored) return null;
+  try {
+    const raw = Buffer.from(stored, 'base64');
+    const decipher = createDecipheriv('aes-256-gcm', secretKey(), raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
+  } catch {
+    return null; // the server's secret changed; the key has to be entered again
+  }
+}
+
+/** "sk-…abcd": enough to recognise a key without revealing it. */
+export const maskKey = (key: string | null) => (key ? `${key.slice(0, 3)}…${key.slice(-4)}` : null);
+
+// ---------- which connection a person uses ----------
+
+export interface AiAccess {
+  /** The server offers a connection to everyone. */
+  shared: { provider: Provider; model: string } | null;
+  /** Whether this person may use their own key (always, when the server offers none). */
+  canUseOwn: boolean;
+  own: { provider: Provider; model: string; baseUrl: string | null; keyHint: string | null; useOwn: boolean } | null;
+  /** The connection their requests go through, if any. */
+  active: Connection | null;
+}
+
+export async function aiAccess(userId: string): Promise<AiAccess> {
+  const settings = await getSettings();
+  const s = settings.ai;
+  const shared: Connection | null =
+    s && PROVIDERS.includes(s.provider as Provider)
+      ? { provider: s.provider as Provider, model: s.model, baseUrl: s.baseUrl, key: decryptKey(s.keyEnc), source: 'shared' }
+      : null;
+  const canUseOwn = !shared || s!.allowOwn;
+  const row = await one<{ provider: string; model: string; base_url: string | null; key_enc: string | null; use_own: boolean }>(
+    'select provider, model, base_url, key_enc, use_own from ai_connections where user_id = $1',
+    [userId],
+  );
+  const ownKey = row ? decryptKey(row.key_enc) : null;
+  const own =
+    row && PROVIDERS.includes(row.provider as Provider)
+      ? { provider: row.provider as Provider, model: row.model, baseUrl: row.base_url, keyHint: maskKey(ownKey), useOwn: row.use_own }
+      : null;
+  let active: Connection | null = null;
+  if (own && canUseOwn && (own.useOwn || !shared)) active = { provider: own.provider, model: own.model, baseUrl: own.baseUrl, key: ownKey, source: 'own' };
+  else if (shared) active = shared;
+  return { shared: shared && { provider: shared.provider, model: shared.model }, canUseOwn, own, active };
+}
+
+// ---------- talking to the model ----------
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** Models that accept Anthropic's server-side fallback (a declined request is retried on another model). */
+const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
+
+const TIMEOUT_MS = 5 * 60_000;
+
+function trimSlash(url: string) {
+  return url.replace(/\/+$/, '');
+}
+
+/** A clear message for a failed request, by status code. */
+function failure(provider: string, status: number, detail: string): HttpError {
+  const who = provider === 'anthropic' ? 'Anthropic' : provider === 'gemini' ? 'Google' : 'The AI service';
+  if (status === 401 || status === 403) return new HttpError(400, `${who} didn't accept the API key${detail ? `: ${detail}` : ''}`);
+  if (status === 404) return new HttpError(400, `${who} doesn't know that model${detail ? `: ${detail}` : ''}. Check the model name in the AI settings.`);
+  if (status === 429) return new HttpError(429, `${who} is rate-limiting this key or it's out of credit${detail ? `: ${detail}` : ''}`);
+  if (status >= 500) return new HttpError(502, `${who} had a problem answering. Try again in a moment.`);
+  return new HttpError(400, `${who} refused the request${detail ? `: ${detail}` : ''}`);
+}
+
+async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Promise<string> {
+  const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: TIMEOUT_MS, maxRetries: 2 });
+  const fallback = FALLBACK_MODELS.has(c.model);
+  try {
+    // Streamed so long plans don't hit the HTTP timeout; only the finished message is used.
+    const stream = client.beta.messages.stream({
+      model: c.model,
+      max_tokens: 16000,
+      system,
+      messages: turns,
+      ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+    });
+    const message = await stream.finalMessage();
+    if (message.stop_reason === 'refusal') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
+    const text = message.content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as { text: string }).text)
+      .join('');
+    if (message.stop_reason === 'max_tokens') throw new HttpError(400, 'The answer was too long and got cut off. Ask for a shorter plan, or split it up.');
+    return text;
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    if (err instanceof Anthropic.APIConnectionError) throw new HttpError(502, "Couldn't reach Anthropic. Check the server's internet connection.");
+    if (err instanceof Anthropic.APIError) throw failure('anthropic', err.status ?? 500, (err.error as { error?: { message?: string } })?.error?.message ?? '');
+    throw err;
+  }
+}
+
+async function postJson(url: string, headers: Record<string, string>, body: unknown) {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch {
+    throw new HttpError(502, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
+  }
+  const data = (await res.json().catch(() => null)) as Record<string, any> | null;
+  return { status: res.status, ok: res.ok, data };
+}
+
+async function openai(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<string> {
+  const base = trimSlash(c.baseUrl || 'https://api.openai.com/v1');
+  const headers: Record<string, string> = c.key ? { Authorization: `Bearer ${c.key}` } : {};
+  const body = { model: c.model, messages: [{ role: 'system', content: system }, ...turns] };
+  let r = await postJson(`${base}/chat/completions`, headers, json ? { ...body, response_format: { type: 'json_object' } } : body);
+  // Some compatible servers don't support JSON mode; the prompt asks for JSON anyway.
+  if (!r.ok && r.status === 400 && json) r = await postJson(`${base}/chat/completions`, headers, body);
+  if (!r.ok) throw failure('openai', r.status, r.data?.error?.message ?? '');
+  const text = r.data?.choices?.[0]?.message?.content;
+  if (typeof text !== 'string') throw new HttpError(502, 'The AI service sent an empty answer');
+  return text;
+}
+
+async function gemini(c: Connection, system: string, turns: ChatTurn[], json: boolean): Promise<string> {
+  const base = trimSlash(c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+  const r = await postJson(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, c.key ? { 'x-goog-api-key': c.key } : {}, {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: turns.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
+    ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
+  });
+  if (!r.ok) throw failure('gemini', r.status, r.data?.error?.message ?? '');
+  const candidate = r.data?.candidates?.[0];
+  if (candidate?.finishReason === 'SAFETY') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
+  const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('');
+  if (!text) throw new HttpError(502, 'Google sent an empty answer');
+  return text;
+}
+
+/** Sends a conversation to the model and returns its text answer. */
+export async function complete(c: Connection, system: string, turns: ChatTurn[], opts: { json?: boolean } = {}): Promise<string> {
+  if (!c.key && c.provider !== 'openai') throw new HttpError(400, 'The AI connection has no API key');
+  if (c.provider === 'anthropic') return anthropic(c, system, turns);
+  if (c.provider === 'gemini') return gemini(c, system, turns, !!opts.json);
+  return openai(c, system, turns, !!opts.json);
+}
+
+/** The models a key can use, for picking one in the settings. */
+export async function listModels(c: Omit<Connection, 'source'>): Promise<string[]> {
+  if (c.provider === 'anthropic') {
+    const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: 20_000 });
+    try {
+      const ids: string[] = [];
+      for await (const m of client.models.list()) ids.push(m.id);
+      return ids;
+    } catch (err) {
+      if (err instanceof Anthropic.APIConnectionError) throw new HttpError(502, "Couldn't reach Anthropic");
+      if (err instanceof Anthropic.APIError) throw failure('anthropic', err.status ?? 500, '');
+      throw err;
+    }
+  }
+  const gemini = c.provider === 'gemini';
+  const base = trimSlash(c.baseUrl || (gemini ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'));
+  let res: Response;
+  try {
+    res = await fetch(`${base}/models`, {
+      headers: gemini ? (c.key ? { 'x-goog-api-key': c.key } : {}) : c.key ? { Authorization: `Bearer ${c.key}` } : {},
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new HttpError(502, `Couldn't reach ${new URL(base).host}`);
+  }
+  const data = (await res.json().catch(() => null)) as Record<string, any> | null;
+  if (!res.ok) throw failure(c.provider, res.status, data?.error?.message ?? '');
+  if (gemini) {
+    return ((data?.models ?? []) as { name: string; supportedGenerationMethods?: string[] }[])
+      .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+      .map((m) => m.name.replace(/^models\//, ''));
+  }
+  return ((data?.data ?? []) as { id: string }[]).map((m) => m.id).sort();
+}

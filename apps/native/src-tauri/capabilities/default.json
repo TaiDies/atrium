@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window. The app talks to its built-in code only through the app:// scheme, plus system notifications.",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default"]
+}

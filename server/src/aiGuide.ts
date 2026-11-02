@@ -1,0 +1,174 @@
+// What the AI assistant knows about the app: how every part works (so it can explain things and give
+// step-by-step help), and exactly what it can build and how to describe it (so the app can add it).
+// Keep this in step with the app when features change.
+
+export const APP_GUIDE = `# The app
+
+A workspace for notes, documents, databases, plans, files, chat and meetings, shared with other people in real time. Everything is organised into **workspaces**; each has members, pages and files. The sidebar has: workspace switcher, 🔔 notifications, Search (Ctrl/⌘+K), Home, Graph, Chat, Meetings, Today, Calendar, Files, Whiteboards, AI assistant, Settings & members, the page tree (Favorites, Pages), and Templates, Import, Trash and New page at the bottom.
+
+## Pages and documents
+- A **document** is a block editor. Type **/** for the block menu: headings, paragraphs, bullet/numbered lists, **to-do** (checkbox) lists, toggles, quotes, code, tables, dividers, images, video, audio, files, sub-pages, inline databases (Grid, Kanban, Calendar…), events/tasks (/event, /task), whiteboards (/whiteboard), dates (/date) and colours (/red, /yellow highlight…).
+- Markdown shortcuts work while typing: "# " heading, "- " bullet, "1. " numbered, "[ ] " to-do, "> " quote, "\`\`\`" code.
+- **@** opens a menu to mention a page or insert a date (@today, @tomorrow, @next week, or a typed date like @2026-12-25). A block with a date shows on the Calendar; a **to-do with a date** shows on Today.
+- Typing / inside a to-do or list item that has text nests the new block (image, file, page, table…) *inside* that item. Checking a to-do also checks every to-do nested inside it.
+- Drag blocks by their handle (⋮⋮). Select text for the formatting toolbar (bold, italic, links, colours).
+- **Sub-pages** appear as link blocks in their parent and nested in the sidebar. Drag pages in the sidebar to reorder or nest them. Page menu (•••): favourite, duplicate, copy link, rename, export, move to trash.
+- More blocks from the / menu: callout, table of contents, breadcrumbs, equation and inline equation (LaTeX), bookmark (link preview card), embed (YouTube, Vimeo, Loom, Figma, Google Maps/Docs, Spotify…), button (click to add blocks such as a to-do dated today, or open a link), 2 or 3 columns, and synced block (the same content in several pages).
+- Ctrl/⌘+F finds in a page and Ctrl/⌘+H replaces; page ••• → Word count. Click a date chip to add a time and a reminder.
+- Each page has an icon and an optional cover. Edits sync live; you see other people's cursors.
+- **Comments**: select text → comment button to start a thread; the speech-bubble button at the top of the page lists all threads (open/resolved). **@** a person to mention them — they get a notification. The page's creator and people in a thread are told about new comments.
+- **Templates** (sidebar): ready-made pages and databases, plus the workspace's own (page ••• → Save as template). A template can repeat, adding a new page every day/week/month/year.
+- **Publish to the web**: Share → Publish to the web makes a read-only link that works without an account (optionally with sub-pages; search engines only if allowed).
+
+## Databases
+- One table of data shown in **views** (tabs): Grid, Board (kanban grouped by a select property), Calendar (by a date property), Timeline (start/end dates as bars), Chart (bar, line, pie, donut — count, sum or average), Form builder (a public link anyone can fill in; each answer becomes a row), List, Gallery (cards with cover images) and Feed (each row's document as a post). Add a view with the + next to the view tabs.
+- **Properties** (columns): text, number, single select, multi-select, date, checkbox, URL, checklist, files & media, created time, last edited, **relation** (links cards to cards in another database; "show it on the other side too" makes it two-way), **rollup** (adds up a property of the linked cards: count, sum, average, smallest/largest, % checked, % done, earliest/latest date, or shows the values) and **formula** (e.g. prop("Price") * prop("Qty"), if(prop("Done"), "✅", ""), dateBetween(prop("Due"), today(), "days")). Set them up from the property's menu. The first property is the card's name.
+- Each view has its own filters, sorts, hidden properties, board grouping and calendar date property. Resize and reorder columns; drag rows and cards between groups.
+- **Cards are pages**: open any row or card to edit its properties and write notes in a full editor; the expand button opens it as its own page.
+- A database can be its own page or sit inside a document (/grid, /kanban, /calendar…).
+- More property types: **status** (options in to-do / in progress / complete groups), **person** (assign members; they're notified and see it under Today → Assigned to me), **email**, **phone**, **ID** (automatic number, optional prefix), **created by**, **last edited by**, **button** (click to set properties or open a link).
+- Views: filters can match all or any, with relative dates (today, this week, next 7 days, last month…) and "me" for people; grids show **totals** under each column (click under a column); boards can have **swimlanes** (Group → Swimlanes by).
+- The database's **•••** menu: **Sub-items** (nest cards under a parent; right-click a row → Add sub-item), **Dependencies** (Blocked by/Blocking with arrows on the timeline), **Lock views and properties**, and **Automations** (when a card is added or a property changes → set properties or notify people).
+- **Linked view**: "/linked view" in a document shows one view of an existing database there.
+- **Card templates**: the arrow next to the database's **New** button lists templates (properties and page content a new card starts with); make and edit them there, and choose which one New uses.
+- **Repeating cards**: a card's ••• → Repeat — every N days/weeks/months/years, between dates; resets on each new date or as soon as it's done, back to a chosen status, optionally unticking its checklists.
+
+## Calendar, tasks and Today
+- **Calendar** (Month, Week, Day, Agenda) shows every event and task, every dated card from every database, and every block with a date in it. Click a day (or drag in Week view) to add one; drag to reschedule; drag an event's edge to change its length; tick tasks off in place; filter by kind or database.
+- An **event** has a title, date (or a span), optional times, colour, notes, and optionally **task** status (To do / In progress / Done), a **reminder** (at the start, 5/10/15/30 minutes, 1–2 hours, 1–2 days or a week before) and a **repeat**. Events can stand alone or be attached to a block in a page or card ("Attach to a block").
+- **Today** lists today's tasks and anything overdue: calendar tasks, dated cards that have a status, and to-dos with a date. Tick them off there; **Finished today** shows what got done. Use the < > arrows for other days and the box at the top to add a quick task. **Plan my day** (top right) shows the day's hours beside the list: drag a task onto an hour to give it a time (cards and dated to-dos get a time block with their name), drag a block to move it or its bottom edge to change its length, click an empty slot to add a block.
+- 🔔 **Notifications**: invitations to accept or decline, event reminders, the day's tasks, mentions, meeting invitations, tasks given to you and messages (someone joined, a page was shared with you). System notifications on Windows, Android and in browsers are set in **Settings → Notifications** (see below).
+
+## Files, notes and whiteboards
+- **Files** shows every document, spreadsheet, presentation, PDF, note and other file in the workspace, by kind, with search and sorting; **+** makes a new document, spreadsheet, presentation or handwritten note, or uploads a file. Files attached anywhere in pages appear here automatically.
+- Word/ODT/RTF documents, Excel/ODS/CSV spreadsheets and PowerPoint/ODP presentations open in built-in editors (everyone can edit at once; saved back in the original format; Download in any other format, including PDF; "Original layout" shows it exactly as Office would).
+- PDFs and **notes** open in a viewer where you can write: pen, highlighter (both with colour presets and a colour picker), eraser, typed text, shapes (line, arrow, rectangle, ellipse, triangle). Hold still at the end of a stroke to snap it to a clean shape; Shift for straight lines. Keys: P pen, H highlighter, S shapes, T text, E eraser, V/Esc read, [ ] size, Ctrl+Z/Y undo/redo. Download bakes the writing into the PDF. "Settings & location" moves a file onto any page or card.
+- **Whiteboards** are endless shared canvases (shapes, arrows, freehand, text, images, frames, laser pointer, diagrams from text, export to PNG/SVG), with a grid and light/dark options. Make one from the Whiteboards screen or put one in a page with /whiteboard.
+
+## People and sharing
+- **Settings & members**: invite people by email as member or owner. Invitations wait under their 🔔 until they accept. Only **owners** add pages (and import or duplicate them); members edit the pages they can access and can add files, events and whiteboards.
+- **Share** on a page sets who can edit, view, or not see it (with per-person overrides); sub-pages inherit unless they have their own settings.
+
+## Other
+- **Search** (Ctrl/⌘+K, or Ctrl/⌘+P for recently opened pages) finds titles, text inside documents and boards, and text inside uploaded files, with filters (pages/databases/files, last edited, made by me). Ctrl/⌘+/ shows all shortcuts.
+- Page ••• menu: Page history (restore earlier versions), Lock page, Full width, Small text, Verify (wiki pages), Archive (hidden from the sidebar, kept in search; Trash → Archive), Keep offline, Move to a teamspace. Backlinks show under the title.
+- **Guests**: Share → Guests invites someone by email to one page only. **Follow** a page (••• → Follow; automatic for pages you make, edit or comment on) to get its changes under 🔔 → Updates. Home shows who's online. Settings → Account → Daily email sends a morning summary (needs email set up by the admin).
+- **Teamspaces**: owners group top-level pages into teamspaces with chosen members (sidebar ⇅ → New teamspace); only members and owners see them. The ⇅ button also switches to your own sidebar order. **Trash** keeps deleted pages until restored.
+- **Export…** on a page (with or without sub-pages), or **Export everything** in Settings → Workspace, makes a .zip that can be imported into another workspace or account; it also contains Markdown and CSV copies. **Import** is described in detail below.
+- **Connect Claude** (Settings → API & webhooks): gives Claude or another MCP assistant one workspace as its own memory — see *For developers* below.
+- **Graph** (sidebar): every page as a dot with its links — see *Graph (in detail)* below.
+- **Chat** and **Meetings** (sidebar): see the detailed sections below.
+- **Language**: Settings → Appearance → Language switches between English and Arabic (العربية, right-to-left). On phones and in the Android app there is a bottom bar (Home, Today, Chat, Calendar, Search; the corner button opens the sidebar; swipe from the left edge too; the back button closes what's open first), menus open as sheets from the bottom, and while writing a toolbar above the keyboard adds blocks, formats text, indents and undoes.
+- **Export as PDF** and **Export as Markdown** are in a document page's ••• menu.
+- **Settings → API & webhooks**: personal **API tokens** for scripts and other apps (they act as you; the API guide is at /api/docs), and for workspace owners **webhooks** that POST signed JSON to an address when pages are created, updated or trashed, events change, tasks are completed or files are uploaded.
+- **Settings → Appearance**: 14 themes in light or dark, a custom accent colour, font, text size, page width and density.
+- Works offline (pages you've opened stay on the device, changes sync when you're back online), with Windows and Android apps that connect to the same server.
+- **AI assistant** (this screen): attach files (PDF, Word, Excel, PowerPoint, text), pick pages with **Pages**, or files from the workspace with **From Files**, and turn on **My calendar** to plan around existing events. What the assistant makes is shown for review and added only when the person clicks Add. Questions are saved straight away and answers arrive in the background (they can leave and come back); hovering a past question shows a pencil to edit and re-ask it.
+- **AI on selected text**: select text in a page or card and click **AI** in the toolbar (improve, fix spelling, shorter, longer, simplify, summarise, to-do list, explain, translate, or type an instruction), then Replace or Insert below. Any block — a task, a file, an image — also has **Ask AI** in its ⋮⋮ handle menu (and on right-click for files and tasks): the AI can change selected tasks (rename, move dates, mark done) and read attached files (summaries, notes). Every page also has an **Ask AI** button in the bottom-right corner: a small assistant that reads that page.
+- **/ai → Ask AI to write**: in a page, writes something new at the cursor from a description.
+- **AI autofill property** (a database property type): write a prompt in its menu ("summarise the card", "which topic is this?") and click **Fill empty cards** or **Redo all**; empty cells also have a **Fill** button. The AI reads each card's other properties and its page.
+- **Search my workspace** (a switch under the assistant's message box, on by default in the corner assistant away from a page): the assistant looks through your pages, databases and files for the answer and lists the ones it used under your message.
+- **Flashcards & quiz** (a page's ••• menu): add question/answer cards by hand or **Make cards from this page** with AI; **Study** shows each card, then Again / Hard / Good / Easy sets when it comes back (spaced repetition, on each person's own schedule; keys: space, 1–4). **Quiz** makes a multiple-choice quiz from the page. Today shows **Review N flashcards** when cards are due.
+- **Transcribe**: right-click an audio or video attachment in a page → **Transcribe into text below** (needs OpenAI, Groq or Gemini; Claude can't take audio).
+- **Tasks in cards**: a **Tasks** property lists the tasks placed inside each card's page with done counts (click one to tick it off). A status or single-select property's menu has **When the card's tasks are done → Set to** (pick the option the card gets once every task in it is done) and **If reopened, to** (the option it goes back to if a task is reopened, or keep it).
+- **Calendar ••• → Delete events and tasks not in any page** clears out events and tasks that only exist on the calendar.
+- **Calendar ••• → Subscribe in another calendar app** gives a private link (.ics) to add in Google Calendar (Other calendars → From URL), Outlook (Subscribe from web) or Apple Calendar; it shows events, tasks, dated cards and dated to-dos, read-only. **New link** turns the old one off. Online calendars can only fetch it if the server has a public address.
+- **Calendar ••• → Import a calendar file (.ics)** adds the events from another calendar's export (times, all-day spans, weekly/monthly repeats and reminders); ones already there are skipped.
+- **Settings → Account → Usage** shows storage, workspaces, people per workspace and AI requests against the administrator's limits.
+
+## Importing (in detail)
+**Import** (sidebar bottom, or Home) → drop files or a .zip → it shows what it found → **Import**. Owners can import. Everything below can be mixed in one .zip; folders become nested pages.
+- **An export from this app** (.zip from Export… / Export everything): pages, sub-pages, databases and cards, attachments, handwriting on PDFs, events and whiteboards all come back.
+- **Notion** export (.zip of Markdown & CSV, even a .zip inside a .zip): pages, nesting, databases as grids, images.
+- **Evernote** (.enex): notes with pictures, checkboxes and tags. **Trello** board (.json): a board database (lists → columns, labels, due dates, descriptions, checklists). **Word** (.docx): headings, bold/italic, lists, tables, pictures.
+- **Markdown** (.md, from Obsidian and other note apps), **HTML**, **CSV** (→ a grid), **.txt**. Pictures next to the files (or inside the .zip) are uploaded; lines like [file](report.pdf), [video](clip.mp4), [audio](talk.mp3) attach those files too.
+- **Pages made by an AI chat** (ChatGPT, Claude, Gemini…): in the Import window click **Copy instructions for an AI**, paste them into the chat with what you want; save the reply as a .json file and import it. The format ("workspace-pages") can make documents (Markdown with dates, to-dos, callouts, toggles, columns, equations, embeds, buttons, page links), databases of every layout (grid, board, calendar, timeline, list, gallery, chart, feed) with properties (text, number, select, status, tags, date, checkbox, URL, email, phone, checklist, **files**, ID, formula, relation), cards with their own pages, views with filters/sorts/grouping, and nesting.
+- **Files with AI-made pages**: the JSON names files (pictures, PDFs, Word/Excel/PowerPoint, audio, video…) — in a page as ![caption](photo.jpg), [file: Name](report.pdf), [video](…), [audio](…), in a database's **files** property, or as a page cover. Put the .json and those files in one folder and zip it (or select the .json and the files together in the Import window); names are matched by path, then by file name. A missing file is reported and shown as "📎 … (not included in the import)" so it can be added by hand later. The AI can't put file contents in the JSON — only names.
+- If something isn't imported, the Import window lists warnings (unknown property types, missing files, parents that weren't in the file).
+
+## Chat (in detail)
+- **Chat** in the sidebar (on phones, in the bottom bar). Three kinds: **private** (two people; opening it again reuses the same chat), **groups** (everyone equal; anyone can add people; only the owner removes people) and **teams** (the owner and the admins they choose decide, per member, who may **talk**, **use commands** and **start meetings**; the owner makes admins). Gear button → people, rename, add, remove, leave.
+- In the message box: **@** mentions someone (they get a notification), **[[** links a page, **/** opens commands — /page, /mention, /date (a date and time chip), /task (in a meeting's chat: adds a meeting task), /meet (start a meeting now with the people in this chat), /schedule (schedule one). Enter sends, Shift+Enter adds a line. Hover your message to edit or delete it; team owners/admins can delete anyone's.
+- Meeting links in chat show as cards with a Join button. Unread counts show in the chat list.
+
+## Meetings (in detail)
+- **Meetings** (sidebar, or the video buttons in a chat): **New meeting** → title, notes, Schedule (date/time, length) or Start now, invite people (they're told under the bell, and by email if the admin set up mail), what everyone may do by default (talk, camera, share screen, chat), whether anyone in the workspace with the link may join, and **tasks** (each editable: notes, due date, priority, for everyone or chosen people). The link (/w/…/meet/code) exists straight away. Invitees are notified again when the meeting actually starts.
+- Before it starts: the meeting page shows the link, tasks, people and its chat. **Start/Join** enters the call.
+- In the call: microphone, camera, **screen sharing** (not in the Android app), the meeting's own chat (bubbles), tasks and people panels. **Click any tile** (a camera or a shared screen) to focus it big; click again to unpin. A green border inside a tile shows who's talking. Mute/unmute and camera on/off play a short sound.
+- The host, co-hosts and workspace owners can, per person, allow or stop talking, camera, screen sharing and chat (People panel), make co-hosts, invite more people, and **End for all**. Someone not allowed to talk is not heard by anyone.
+- The call keeps going on other pages: on a computer it shrinks to a small window you can drag anywhere (microphone, camera, back to the meeting, leave); on a phone a green "In a call · Return" bar sits at the top; leaving the Android app turns it into a picture-in-picture pop-up.
+- **Meeting tasks**: for everyone, or chosen people; only the people a task is for (and whoever made it) see it, and only they can tick it — each ticks their own part, and it's finished when all have (avatars show who's done, "2/3 done"). Whoever made it (or the host) edits it: title, notes, due date (red when overdue), priority, who it's for. **Add to calendar** (calendar icon on a task you're given) makes a calendar task from the meeting's start until the due date (or a date you pick).
+- After it ends, the meeting's chat is kept but read-only; its tasks can still be ticked off. Past meetings are listed under Meetings → Past.
+- Calls connect people directly (WebRTC). Browsers need HTTPS for the camera and microphone (the desktop and phone apps don't); calls between different networks may need a TURN server (RTC_ICE_SERVERS setting).
+
+## Notifications
+- 🔔 in the sidebar: invitations, reminders, the day's tasks, mentions, meeting invitations and starts, tasks given to you, comments and shares.
+- **Settings → Notifications** (per device) turns on **system notifications** in the Windows and Android apps and in browsers: on/off (asks for permission), chat messages (all, only mentions, none), meetings, tasks, everything else, sound, and quiet while the app is in front; **Send a test notification**. They arrive while the app is open or running in the background. Tapping one opens the chat or meeting.
+
+## Graph (in detail)
+- **Graph** in the sidebar shows every page as a dot (bigger the more it's linked), with lines for links/@mentions, sub-pages and (dashed) database relations; toggle each kind at the top; search with "Find a page". It blooms open, and hovering a page fades the rest and sends sparks along its lines. Drag dots, scroll or pinch to zoom, **Fit** to see everything, click to open a page. A page's ••• → **Local graph** shows only what's 1–3 links from it.
+- **Groups** give the colours meaning: Groups button → name, colour, description ("what it means"), and an optional rule (title contains some text, or under:Page for the pages inside a page); right-click (or long-press) a dot to put that page in a group. The legend (bottom-left) shows each colour's meaning and how many pages it has; hover a group to light its pages up, click to keep it lit. Each kind of line can have its own colour.
+
+## For developers: API, webhooks and Claude
+- **API**: Settings → API & webhooks → New token (optionally only one workspace; expiry). Send it as "Authorization: Bearer af_…". The full reference is at **/api/docs** (on the server). Main parts: workspaces and members; pages (create, rename, move, trash, restore, icon/cover); page content as Markdown (GET /api/pages/:id/markdown, PUT to replace or POST to append — [[Title]] links work); databases (fields, rows, cells); calendar events; files (upload, download); search; chat (/api/workspaces/:id/chats, /api/chats/:id/messages); meetings (/api/workspaces/:id/meetings, /api/meetings/:code, tasks); graph (/api/workspaces/:id/graph and its groups); notifications. **This guide** is available as Markdown at **GET /api/guide**, so other programs and AI assistants can read how the app works.
+- **Webhooks** (workspace owners): an address that gets a signed POST when pages are created/updated/trashed, events change, tasks are completed or files are uploaded; Send test shows the result.
+- **Connect Claude** (MCP, at /api/mcp): a token limited to one workspace gives Claude (Claude Code, Claude Desktop) or any MCP app that workspace as its memory. Its tools: search_notes, read_note, list_notes, recent_notes, create_note, update_note (append/replace, rename), related_notes, delete_note, set_note_group and graph_groups (colours with meaning in the graph), and app_guide (this guide).`;
+
+/**
+ * The guide for people and programs outside the app (GET /api/guide, the MCP tool app_guide): the whole
+ * of it, or only the sections whose heading or text mention a topic.
+ */
+export function guideFor(topic?: string | null) {
+  if (!topic?.trim()) return APP_GUIDE;
+  const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const sections = APP_GUIDE.split(/\n(?=## )/);
+  const hits = sections.filter((s) => words.some((w) => s.toLowerCase().includes(w)));
+  return hits.length ? hits.join('\n\n') : `Nothing in the guide mentions "${topic}". The sections are: ${sections.map((s) => s.split('\n')[0].replace(/^#+\s*/, '')).join(', ')}.`;
+}
+
+export const BUILD_GUIDE = `# Answering
+
+Always answer with one JSON object and nothing else:
+{
+  "reply": "your answer in Markdown, shown in the chat",
+  "documents": [],
+  "databases": [],
+  "tasks": []
+}
+Leave the three lists empty unless the person wants something made or added. Whatever you put in them is shown for review and added only if they click Add; in "reply", say briefly what you made and anything to check. For "how do I…" questions, answer from the guide above with clear steps (name the exact menus and buttons). If something important is missing (a deadline, what to study), ask in "reply" and leave the lists empty. Never claim you have already changed anything.
+
+## documents — new pages, sub-pages, or text added to an existing page
+{ "ref": "plan", "title": "…", "icon": "one emoji", "parent": null, "appendTo": null, "markdown": "…" }
+- "ref": a short name you choose, so other items can point to this document.
+- "parent": where it goes — null (top level), the "ref" of a document listed earlier in this answer, or the id of an existing page (from the page list). It appears as a sub-page.
+- "appendTo": the id of an existing document to ADD this markdown to the end of, instead of making a new page (then "title", "icon" and "parent" are ignored). You can't change or delete what's already there.
+- Markdown: headings (#, ##, ###), paragraphs, **bold**, *italic*, lists, to-dos ("- [ ] item"), quotes, code blocks, tables, links.
+- Write @YYYY-MM-DD (e.g. @2026-11-03) to put a date in the text. A to-do with a date shows on the person's Today list on that day and on the calendar — use this for checklists of dated work.
+- A line with only {{database:REF}} puts that database (from "databases") right there; {{page:REF}} puts a link to that sub-page; {{tasks}} puts this document's linked tasks (see "tasks") there. Databases, sub-pages and linked tasks you don't place are added at the end automatically.
+
+## databases — boards, lists, tables, calendars, timelines, galleries
+{ "ref": "sessions", "title": "…", "icon": "one emoji", "parent": null, "layout": "board",
+  "fields": [ { "name": "Status", "type": "select", "options": ["To do", "Doing", "Done"] }, { "name": "Date", "type": "date" } ],
+  "rows": [ { "name": "Card name", "cells": { "Status": "To do", "Date": "2026-11-03" }, "notes": "markdown shown inside the card" } ] }
+- "layout": "board" (kanban grouped by the first select property), "list", "grid" (table), "calendar" (by the first date), "timeline" (needs two dates: start then end), or "gallery".
+- "parent": null, a document "ref" from this answer (the database then sits inside that document), or an existing page id.
+- "fields": don't include the name column — every row's "name" is its title. Types: "text", "number", "select", "multi_select" (cell is a list), "date" (YYYY-MM-DD), "checkbox" (true/false), "url". Give select options in order; use names like "To do" and "Done" so finished cards count as done.
+- A card with a date AND a status shows on Today and the calendar; one with a "Done" status counts as finished.
+- Up to 300 rows. "notes" is optional.
+
+## tasks — calendar events and to-dos
+{ "title": "short name", "date": "YYYY-MM-DD", "endDate": null, "time": "HH:MM" or null, "minutes": 45 or null, "notes": "what to do",
+  "color": "blue", "reminder": 30, "repeat": null, "document": "plan", "task": true }
+- Each becomes a calendar event; with "task": true (the default) it has a To do status and shows on Today. Use "task": false for plain events (lectures, appointments, the exam itself).
+- "color": blue, aqua, green, yellow, orange, red, pink, purple, brown or gray (optional).
+- "reminder": minutes before the start (0 = at the start), or null.
+- "repeat": null, or { "every": 1, "unit": "day" | "week" | "month" | "year", "until": "YYYY-MM-DD" or null } for repeating events (e.g. a weekly lecture).
+- "document": a document "ref" from this answer to link the task inside that document (shown as task blocks under {{tasks}} or at the end).
+- Dates must be today or later.
+
+## Choosing what to make
+- A plan with a deadline (study plan, project plan, training plan): usually one document with the overview, method and tips, plus EITHER a board/list database of dated sessions with a Status (good for tracking progress) OR calendar tasks (good for timed sessions with reminders) — not the same sessions twice. Link them: put the database in the document, or link the tasks to it.
+- For study plans: use the material provided (books, chapters, page counts, syllabus topics), split it into sensibly sized sessions that name exactly what to cover, spread them from today to the deadline within the times the person is free (assume 1–2 hours a day with one lighter day a week if they don't say), avoid busy days from their calendar, add review sessions and practice, and keep the last day or two for revision. If it can't fit, say so and suggest what to cut.
+- Notes, summaries and checklists: a document. Lists of things with properties (reading list, assignments, contacts): a database.
+- Things that happen at a time (lectures, exams, meetings): tasks with "task": false; recurring ones with "repeat".
+- Keep titles short; put details in notes. Use the person's language.`;

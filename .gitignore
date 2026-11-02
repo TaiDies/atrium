@@ -1,0 +1,17 @@
+node_modules/
+dist/
+data/
+.env
+*.tsbuildinfo
+
+# Native apps: build output, the signing key and finished builds (those go in GitHub Releases)
+apps/native/src-tauri/target/
+apps/native/src-tauri/gen/android/app/build/
+apps/native/src-tauri/gen/android/build/
+apps/native/src-tauri/gen/android/.gradle/
+apps/native/src-tauri/gen/android/local.properties
+apps/native/src-tauri/gen/schemas/
+apps/native/signing/
+apps/native/release/
+
+site/content/

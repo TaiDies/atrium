@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "mkdir -p content && cp ../docs/INSTALL.md ../docs/FEATURES.md content/",
+  "outputDirectory": ".",
+  "cleanUrls": true
+}
