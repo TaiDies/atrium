@@ -42,7 +42,7 @@ import { startAdminServer } from './admin.js';
 import { handleError } from './util.js';
 
 /** Bumped with each release; the apps show it and can warn about very old servers. */
-const SERVER_VERSION = '1.1.0';
+import { SERVER_VERSION, startUpdateChecks } from './updates.js';
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
@@ -127,6 +127,7 @@ backfillDocIndex().catch((err) => app.log.error(err, 'Could not index documents'
 backfillFileText().catch((err) => app.log.error(err, 'Could not read file text'));
 // Move repeating cards and events to their next date (checked every minute).
 startScheduler();
+startUpdateChecks();
 await app.listen({ port: config.port, host: config.host });
 const admin = config.admin.enabled ? await startAdminServer() : null;
 

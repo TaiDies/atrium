@@ -92,10 +92,10 @@ export async function loadPresentation(doc: Y.Doc, file: OfficeFile) {
 }
 
 export const PRESENTATION_FORMATS = [
-  { ext: 'pptx', label: 'PowerPoint (.pptx)' },
+  { ext: 'pptx', label: 'Presentation (.pptx)' },
   { ext: 'odp', label: 'OpenDocument presentation (.odp)' },
   { ext: 'pdf', label: 'PDF (.pdf)' },
-  { ext: 'ppt', label: 'PowerPoint 97–2003 (.ppt)' },
+  { ext: 'ppt', label: 'Older presentation format (.ppt)' },
 ];
 
 interface Props {

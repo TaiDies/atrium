@@ -52,5 +52,5 @@ export async function extractText(workspaceId: string, file: Blob, name: string,
     const pdf = await convertBytes(workspaceId, 'presentation', ext, 'pdf', file, name);
     return pdfText(await pdf.arrayBuffer());
   }
-  throw new Error(`The assistant can't read “${name}” — use PDF, Word, Excel, PowerPoint or text files`);
+  throw new Error(`The assistant can't read “${name}” — use PDFs, documents, spreadsheets, presentations or text files`);
 }

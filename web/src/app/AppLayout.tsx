@@ -12,6 +12,7 @@ import { ShortcutsDialog } from './ShortcutsDialog';
 import { isInside } from './PageExtras';
 import { downloadForOffline } from '../lib/collab';
 import { startLive } from '../lib/live';
+import { syncAccountPrefs } from '../lib/accountPrefs';
 import { startAppNotifications } from '../lib/appNotify';
 import { CallBar, CallProvider } from '../meetings/CallContext';
 import { offlinePages } from '../lib/offline';
@@ -103,6 +104,8 @@ export function AppLayout() {
 
   // The live channel: chat messages, meeting invitations and calls.
   useEffect(() => startLive(), []);
+  // Appearance and language follow the account across devices.
+  useEffect(() => void syncAccountPrefs(), [user.id]);
   // System notifications (Windows, Android and browsers), as set in Settings → Notifications.
   const workspaceRef = useRef(workspaceId);
   workspaceRef.current = workspaceId;

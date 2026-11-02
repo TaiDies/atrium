@@ -39,13 +39,21 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
 - **Graph** — every page and how it connects, with colour groups that mean something.
 - **AI** — Claude, OpenAI-compatible or Gemini: an assistant that builds documents, databases and plans,
   AI on selected text, autofill columns, flashcards, quizzes and transcription.
-- **Files & Office** — Word, Excel and PowerPoint editors, writing on PDFs, whiteboards and full-text
+- **Files & Office** — editors for documents, spreadsheets and presentations, writing on PDFs, whiteboards and full-text
   search in files.
-- **Imports** — Notion, Evernote, Trello, Word, Markdown, CSV, and pages (with files) written by any AI chat.
+- **Imports** — Notion, Evernote, Trello, documents (.docx), Markdown, CSV, and pages (with files) written by any AI chat.
 - **For developers** — API tokens, documented REST API, signed webhooks, and an MCP server so Claude can
   use a workspace as its memory.
-- **Everywhere** — web, Windows and Android apps, offline pages, system notifications, English and Arabic
-  (right-to-left), light and dark themes.
+- **Everywhere** — web, Windows and Android apps, offline pages, system notifications, English, Spanish, French
+  and Arabic (right-to-left), light and dark themes saved with your account, and one-click updates.
+
+## Atrium Cloud — coming later
+
+Atrium will always be free and open source to host yourself. **Down the line we plan a hosted
+subscription — Atrium Cloud** — for teams who'd rather not run a server: the same app, hosted, updated
+and backed up for you, with the Windows and Android apps connecting to it out of the box. Self-hosting
+stays fully featured; the subscription is simply the no-setup option. Watch the repository (or the
+[website](https://atrium-five-xi.vercel.app)) for news.
 
 ## All features in detail
 
@@ -129,7 +137,7 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
   pictures and files are uploaded. Export from the other app, then **Import** in the sidebar here.
   Also takes a **Notion** export .zip (zips inside it too, with the complete CSV of each database),
   **Evernote** notebooks (.enex), a **Trello** board's .json export (a board database with lists, labels,
-  due dates, descriptions and checklists) and **Word** documents (.docx).
+  due dates, descriptions and checklists) and documents (.docx).
 - **Export as PDF** – a document page's ••• menu makes a PDF on the server (LibreOffice, in the Docker
   image), pictures included; without LibreOffice the browser's print window opens instead.
 - **API and webhooks** – Settings → **API & webhooks**: personal API tokens (`Authorization: Bearer af_…`,
@@ -168,7 +176,7 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
   them all). Each has its own section in the sidebar; move a top-level page in from its ••• menu. The
   sidebar's ⇅ button switches between the shared order and **your own order** of top-level pages.
 - **Quick switcher and search** – **Ctrl/⌘ + P** (or K) shows the pages you opened recently; type to search
-  titles, page text, cards and the **text inside files** (PDFs, Word, Excel, PowerPoint, text files —
+  titles, page text, cards and the **text inside files** (PDFs, documents, spreadsheets, presentations, text files —
   scanned PDFs only by name). Filter by pages, databases or files, when they were edited, and *made by me*.
   **Ctrl/⌘ + /** lists every keyboard shortcut.
 - **Search** – `Ctrl/⌘ + K` searches titles *and* the text inside documents and boards.
@@ -206,15 +214,15 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
   other file in the workspace (everything attached to pages and cards appears automatically) as thumbnails,
   with tabs for each kind, search, sorting, grid or list, and a **+** for a new document, spreadsheet,
   presentation or handwritten note, or an upload.
-  - **Documents** (Word .docx/.doc, OpenDocument .odt, RTF, Markdown, text…): a page-view word processor —
+  - **Documents** (.docx/.doc, OpenDocument .odt, RTF, Markdown, text…): a page-view word processor —
     styles, fonts, sizes, bold/italic/underline/strike, sub/superscript, colours and highlight, alignment, line
     spacing, indents, bullet/numbered/check lists, links, images (resizable), tables (merge/split, header
     rows, resizable columns), page breaks, horizontal lines, special characters, table of contents, find and
     replace, comments with replies, word count, page size/orientation/margins, zoom and print.
-  - **Spreadsheets** (Excel .xlsx/.xls, OpenDocument .ods, CSV/TSV…): a full spreadsheet — formulas, number
+  - **Spreadsheets** (.xlsx/.xls, OpenDocument .ods, CSV/TSV…): a full spreadsheet — formulas, number
     formats, fonts and colours, borders, merged cells, freeze panes, sort and filter, conditional formatting,
     data validation, comments, links, images, multiple sheets, find and replace.
-  - **Presentations** (PowerPoint .pptx/.ppt, OpenDocument .odp…): slides with text boxes, 21 shapes, images,
+  - **Presentations** (.pptx/.ppt, OpenDocument .odp…): slides with text boxes, 21 shapes, images,
     tables, lines and arrows; move/resize/rotate with snapping guides, align and distribute, layering, layouts,
     themes, backgrounds, transitions, speaker notes, and a full-screen slideshow.
   All three are edited by everyone at once and save back into the file in its own format; **Download** offers
@@ -261,7 +269,9 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
   talk, use the camera, share the screen and chat. Tasks can be prepared before the meeting. Each meeting
   has its own chat, kept after it ends but read-only. In a browser the camera and microphone need HTTPS
   (the desktop and phone apps work over plain HTTP); Android's app can't share its screen.
-- **Languages** – English and **Arabic (العربية)**, in Settings → Appearance → Language. Arabic turns the
+- **Languages** – English (the default), **Spanish (Español)**, **French (Français)** and **Arabic (العربية)**,
+  in Settings → Appearance → Language — saved with your account along with the theme and other appearance
+  settings, so every device matches. Arabic turns the
   whole interface right-to-left (dates in Arabic too, and the editor's own menus); writing in a page takes
   each paragraph's own direction, so Arabic and English sit correctly side by side in any language.
 - **Phones and the Android app** – a phone layout of its own: a bottom navigation bar, windows as sheets
@@ -286,7 +296,7 @@ setting — is in **[docs/INSTALL.md](docs/INSTALL.md)**; every feature is expla
   page, and text added to the end of an existing page), dated to-dos that show on Today, **databases** (board,
   list, table, calendar, timeline or gallery, with properties, cards and card notes, placed inside a document),
   and calendar events and tasks with colours, reminders and repeats, linked inside the plan page. Attach PDFs,
-  Word, Excel, PowerPoint or text files, pick pages from the workspace, and let it see your calendar — e.g. ask
+  documents, spreadsheets, presentations or text files, pick pages from the workspace, and let it see your calendar — e.g. ask
   for a **study plan** from your deadline, books and free time. Everything it makes is shown for review and added
   only when you click **Add**. Keys are stored encrypted on the server and never sent back to the browser.
 - **Admin panel** – a separate panel on its own port (see below) to manage accounts (search, create, switch off,

@@ -43,7 +43,7 @@ export function convertForeignFormats(files: Map<string, Uint8Array>): { files: 
       }
       if (lower.endsWith('.docx')) {
         docxToHtml(path, data, add);
-        notes.push(`Word: ${stem(path)}`);
+        notes.push(`Document: ${stem(path)}`);
         return;
       }
       if (lower.endsWith('.json')) {

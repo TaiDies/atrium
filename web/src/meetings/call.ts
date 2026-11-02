@@ -8,6 +8,40 @@ import type { MeetingPerms } from '../chat/chatApi';
 // have on, and everyone else ignores those tracks.
 
 export type Slot = 'mic' | 'cam' | 'screen';
+
+// The microphone, camera and speaker chosen on this device (empty: the system's default).
+export type DeviceKind = 'mic' | 'cam' | 'speaker';
+const DEVICE_KEYS: Record<DeviceKind, string> = { mic: 'af:mic-device', cam: 'af:cam-device', speaker: 'af:speaker-device' };
+export function chosenDevice(kind: DeviceKind): string {
+  try {
+    return localStorage.getItem(DEVICE_KEYS[kind]) ?? '';
+  } catch {
+    return '';
+  }
+}
+export function chooseDevice(kind: DeviceKind, id: string) {
+  try {
+    if (id) localStorage.setItem(DEVICE_KEYS[kind], id);
+    else localStorage.removeItem(DEVICE_KEYS[kind]);
+  } catch {
+    // not remembered, still used now
+  }
+}
+
+/** A track from the chosen microphone or camera (falling back to the default if it's gone). */
+async function openDevice(slot: 'mic' | 'cam'): Promise<MediaStreamTrack> {
+  const id = chosenDevice(slot);
+  const base: MediaTrackConstraints = slot === 'mic' ? { echoCancellation: true, noiseSuppression: true } : { width: { ideal: 1280 }, height: { ideal: 720 } };
+  const ask = (c: MediaTrackConstraints) => navigator.mediaDevices.getUserMedia(slot === 'mic' ? { audio: c } : { video: c });
+  let s: MediaStream;
+  try {
+    s = await ask(id ? { ...base, deviceId: { exact: id } } : base);
+  } catch (err) {
+    if (!id || (err as Error).name === 'NotAllowedError') throw err;
+    s = await ask(base);
+  }
+  return s.getTracks()[0];
+}
 const SLOTS: Slot[] = ['mic', 'cam', 'screen'];
 
 export interface Media {
@@ -206,6 +240,23 @@ export class Call {
     }
   }
 
+  /** Switches to another microphone or camera (straight away if it's on). */
+  async useDevice(slot: 'mic' | 'cam', deviceId: string) {
+    chooseDevice(slot, deviceId);
+    if (!this.tracks[slot]) return;
+    const old = this.tracks[slot];
+    const track = await openDevice(slot);
+    this.tracks[slot] = track;
+    this.state.local = { ...this.state.local, [slot]: new MediaStream([track]) };
+    const i = SLOTS.indexOf(slot);
+    for (const c of this.conns.values()) {
+      const t = c.pc?.getTransceivers()[i];
+      if (t) await t.sender.replaceTrack(track).catch(() => {});
+    }
+    old?.stop();
+    this.emit();
+  }
+
   /** Turns the microphone, camera or screen share on or off. */
   async set(slot: Slot, on: boolean) {
     const old = this.tracks[slot];
@@ -216,8 +267,7 @@ export class Call {
         track = s.getVideoTracks()[0];
         track.onended = () => void this.set('screen', false);
       } else {
-        const s = await navigator.mediaDevices.getUserMedia(slot === 'mic' ? { audio: { echoCancellation: true, noiseSuppression: true } } : { video: { width: { ideal: 1280 }, height: { ideal: 720 } } });
-        track = s.getTracks()[0];
+        track = await openDevice(slot);
       }
       this.tracks[slot] = track;
       this.state.local = { ...this.state.local, [slot]: new MediaStream([track]) };

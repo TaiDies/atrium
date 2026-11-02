@@ -149,7 +149,7 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
         {step === 'pick' && (
           <>
             <p className="mb-3 text-sm text-muted">
-              Bring in pages from another workspace or account, or from other apps. Markdown, HTML, Word and text files become documents,
+              Bring in pages from another workspace or account, or from other apps. Markdown, HTML, document and text files become documents,
               CSV files become grids, and folders inside a .zip become nested pages. Pictures and files that come with them are uploaded too.
             </p>
             <div
@@ -172,7 +172,7 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
               <FileUp size={28} className="text-muted" />
               <div className="text-sm font-medium">Drop files here or click to choose</div>
               <div className="text-xs text-faint">
-                An export from this app · Notion (.zip) · Evernote (.enex) · Trello (.json) · Word (.docx) · .md · .html · .csv · .txt · .json (pages made by an AI)
+                An export from this app · Notion (.zip) · Evernote (.enex) · Trello (.json) · documents (.docx) · .md · .html · .csv · .txt · .json (pages made by an AI)
               </div>
             </div>
             <input

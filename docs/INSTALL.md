@@ -54,6 +54,18 @@ The first build takes a few minutes. When it's done, open **http://localhost:300
 
 **Updating**
 
+Open the admin panel → **Updates**. It shows the version you run and the newest release, and has:
+
+- **Update now** — downloads the new version and restarts the app (a minute or two).
+- **Update automatically** — installs each new release when it comes out (checked every 6 hours).
+- **Server notifications receiver email** — an address that's emailed when a new version is out (uses
+  the server's email settings, see below).
+
+The installing is done by the small `updater` container in `docker-compose.yml`, which pulls the new
+version into this folder and rebuilds the app. It needs the Docker socket (so it can control Docker on
+this machine) and only works when the folder is a `git clone` of this repository. If you'd rather not run
+it, delete the `updater` service and update by hand:
+
 ```bash
 git pull
 docker compose up -d --build

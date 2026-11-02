@@ -1,9 +1,12 @@
 import { ar, arPatterns } from './ar';
+import { es, esPatterns } from './es';
+import { fr, frPatterns } from './fr';
+import { prefsChanged } from '../lib/prefsSync';
 
 // The app's language. English is what the code is written in; for another language a dictionary maps
 // each piece of interface text to its translation, applied to the page as it's drawn (text, tooltips,
 // placeholders). What people write — documents, titles being typed, cells — is never touched.
-// Adding a language: a file like ar.ts and an entry below.
+// Adding a language: a file like ar.ts (same keys) and an entry below.
 
 export interface Language {
   code: string;
@@ -15,11 +18,15 @@ export interface Language {
 
 export const LANGUAGES: Language[] = [
   { code: 'en', name: 'English', dir: 'ltr', locale: 'en' },
+  { code: 'es', name: 'Español', dir: 'ltr', locale: 'es' },
+  { code: 'fr', name: 'Français', dir: 'ltr', locale: 'fr' },
   { code: 'ar', name: 'العربية', dir: 'rtl', locale: 'ar-u-nu-latn' },
 ];
 
 const DICTIONARIES: Record<string, { words: Record<string, string>; patterns: [RegExp, string][] }> = {
   ar: { words: ar, patterns: arPatterns },
+  es: { words: es, patterns: esPatterns },
+  fr: { words: fr, patterns: frPatterns },
 };
 
 const KEY = 'af-lang';
@@ -29,9 +36,10 @@ function initial(): string {
     const saved = localStorage.getItem(KEY);
     if (saved && LANGUAGES.some((l) => l.code === saved)) return saved;
   } catch {
-    // Storage blocked: fall through to the browser's language.
+    // Storage blocked: English.
   }
-  return navigator.language?.toLowerCase().startsWith('ar') ? 'ar' : 'en';
+  // English until someone picks another language (Settings → Appearance → Language).
+  return 'en';
 }
 
 const current = initial();
@@ -44,6 +52,7 @@ export function setLanguage(code: string) {
   } catch {
     // Can't remember it: still switch for now.
   }
+  prefsChanged(true);
   location.reload();
 }
 

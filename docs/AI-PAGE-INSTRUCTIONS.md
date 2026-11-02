@@ -105,7 +105,7 @@ Each goes **on its own line**, except where it says *inline*.
 | **Embedded video / map / document from the web** | `[embed](https://www.youtube.com/watch?v=…)` — YouTube, Vimeo, Loom, Figma, Google Maps, Google Docs/Sheets/Slides/Drive, Spotify, CodePen, Miro |
 | **Bookmark** (a web link shown as a card) | `[bookmark](https://…)` |
 | **Button** that adds content when clicked | `::: button Button text` … Markdown to add (e.g. `- [ ] Practice @today`) … `:::` |
-| **A file in the page** (download/preview; PDFs, Word, Excel, PowerPoint open in the app's viewers and editors) | `[file](report.pdf)` or with a shown name `[file: Q3 report](report.pdf)`; `[pdf](notes.pdf)` is the same |
+| **A file in the page** (download/preview; PDFs, documents, spreadsheets and presentations open in the app's viewers and editors) | `[file](report.pdf)` or with a shown name `[file: Q3 report](report.pdf)`; `[pdf](notes.pdf)` is the same |
 | **A picture** (as a block, with a caption) | `![caption](photo.jpg)` or `[image: caption](photo.jpg)` |
 | **A video file** (plays in the page) | `[video](lecture.mp4)` or `[video: Lecture 1](lecture.mp4)` |
 | **An audio file** (plays in the page; can be transcribed in the app) | `[audio](interview.mp3)` |
@@ -135,8 +135,8 @@ anywhere in the import by the file's name alone (`"slides.pdf"`). Use names exac
 them (same spelling, capital letters and extension). Names with spaces work; inside Markdown links write
 them as `<My file.pdf>` — e.g. `[file](<Lab report 2.pdf>)` — or replace spaces with `%20`.
 
-**Any kind of file works**: pictures (png, jpg, gif, webp, svg, avif), PDF, Word (doc, docx, odt, rtf),
-Excel (xls, xlsx, ods, csv), PowerPoint (ppt, pptx, odp), text and Markdown, audio (mp3, wav, m4a,
+**Any kind of file works**: pictures (png, jpg, gif, webp, svg, avif), PDF, documents (doc, docx, odt, rtf),
+spreadsheets (xls, xlsx, ods, csv), presentations (ppt, pptx, odp), text and Markdown, audio (mp3, wav, m4a,
 ogg), video (mp4, webm, mov), zip and others. Web addresses (`https://…`) can be used instead of a
 file name anywhere a file goes; those aren't downloaded, just linked.
 

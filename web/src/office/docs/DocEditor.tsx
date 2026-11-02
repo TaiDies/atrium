@@ -128,11 +128,11 @@ export async function loadDocument(doc: Y.Doc, file: OfficeFile) {
 }
 
 export const DOCUMENT_FORMATS = [
-  { ext: 'docx', label: 'Word document (.docx)' },
+  { ext: 'docx', label: 'Document (.docx)' },
   { ext: 'odt', label: 'OpenDocument text (.odt)' },
   { ext: 'pdf', label: 'PDF (.pdf)' },
   { ext: 'rtf', label: 'Rich Text Format (.rtf)' },
-  { ext: 'doc', label: 'Word 97–2003 (.doc)' },
+  { ext: 'doc', label: 'Older document format (.doc)' },
   { ext: 'html', label: 'Web page (.html)' },
   { ext: 'md', label: 'Markdown (.md)' },
   { ext: 'txt', label: 'Plain text (.txt)' },

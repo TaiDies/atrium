@@ -236,7 +236,7 @@ export const ar: Record<string, string> = {
   'Relations': 'العلاقات',
   // ---------- chat and meetings ----------
   'Notes about this import': 'ملاحظات حول هذا الاستيراد',
-  'Bring in pages from another workspace or account, or from other apps. Markdown, HTML, Word and text files become documents, CSV files become grids, and folders inside a .zip become nested pages. Pictures and files that come with them are uploaded too.': 'استورد صفحات من مساحة عمل أو حساب آخر، أو من تطبيقات أخرى. تصبح ملفات Markdown وHTML وWord والنصوص مستندات، وتصبح ملفات CSV جداول، وتصبح المجلدات داخل ملف .zip صفحات متداخلة. تُرفع أيضًا الصور والملفات المرفقة بها.',
+  'Bring in pages from another workspace or account, or from other apps. Markdown, HTML, document and text files become documents, CSV files become grids, and folders inside a .zip become nested pages. Pictures and files that come with them are uploaded too.': 'استورد صفحات من مساحة عمل أو حساب آخر، أو من تطبيقات أخرى. تصبح ملفات Markdown وHTML والمستندات والنصوص مستندات، وتصبح ملفات CSV جداول، وتصبح المجلدات داخل ملف .zip صفحات متداخلة. تُرفع أيضًا الصور والملفات المرفقة بها.',
   'From other apps:': 'من تطبيقات أخرى:',
   'Notifications on this device': 'الإشعارات على هذا الجهاز',
   'System notifications for new messages, mentions, meeting invitations and tasks, as they happen — while the app is open or running in the background.': 'إشعارات النظام للرسائل الجديدة والإشارات ودعوات الاجتماعات والمهام فور حدوثها — أثناء فتح التطبيق أو تشغيله في الخلفية.',
@@ -1030,7 +1030,7 @@ export const ar: Record<string, string> = {
   'Paste colours': 'لصق الألوان',
   'Colours applied': 'تم تطبيق الألوان',
   'Reset to defaults': 'استعادة الإعدادات الافتراضية',
-  'Choose how the app looks on this device.': 'اختر مظهر التطبيق على هذا الجهاز.',
+  'Choose how the app looks — saved with your account, on every device.': 'اختر مظهر التطبيق — يُحفظ في حسابك على كل أجهزتك.',
   'How wide documents are on large screens.': 'عرض المستندات على الشاشات الكبيرة.',
   'Compact puts blocks in documents closer together.': 'الوضع المضغوط يقرّب الكتل في المستندات من بعضها.',
   'Shown to collaborators on cursors and avatars.': 'يظهر للمتعاونين على المؤشرات والصور الرمزية.',
@@ -1111,6 +1111,27 @@ export const ar: Record<string, string> = {
   'New slide': 'شريحة جديدة',
   'Delete slide': 'حذف الشريحة',
   'Duplicate slide': 'تكرار الشريحة',
+  'Nothing left for today.': 'لم يبقَ شيء لليوم.',
+  'Open Today': 'افتح اليوم',
+  'No meetings coming up.': 'لا توجد اجتماعات قادمة.',
+  'Unread chats': 'دردشات غير مقروءة',
+  'Open Chat': 'افتح الدردشة',
+  'You\'re all caught up.': 'لقد اطلعت على كل شيء.',
+  'What\'s new': 'الجديد',
+  'No new notifications.': 'لا توجد إشعارات جديدة.',
+  'Microphone': 'الميكروفون',
+  'Speaker': 'مكبر الصوت',
+  'System default': 'الافتراضي في النظام',
+  'Microphone, camera and speaker': 'الميكروفون والكاميرا ومكبر الصوت',
+  'Turn on your microphone or camera once to see the devices\' names.': 'شغّل الميكروفون أو الكاميرا مرة لترى أسماء الأجهزة.',
+  'Remembered on this device for every call.': 'يُحفظ على هذا الجهاز لكل المكالمات.',
+  'Document (.docx)': 'مستند (.docx)',
+  'Older document format (.doc)': 'صيغة مستند أقدم (.doc)',
+  'Spreadsheet (.xlsx)': 'جدول بيانات (.xlsx)',
+  'Older spreadsheet format (.xls)': 'صيغة جدول بيانات أقدم (.xls)',
+  'Presentation (.pptx)': 'عرض تقديمي (.pptx)',
+  'Older presentation format (.ppt)': 'صيغة عرض تقديمي أقدم (.ppt)',
+  'Exactly as it looks in the desktop office apps': 'تمامًا كما يظهر في تطبيقات المكتب على الحاسوب',
 };
 
 /**
@@ -1118,6 +1139,7 @@ export const ar: Record<string, string> = {
  * `$1`, `$2`… are the parts in brackets.
  */
 export const arPatterns: [RegExp, string][] = [
+  [/^(\d+) overdue$/, '$1 متأخرة'],
   [/^(\d+) to do$/, '$1 للإنجاز'],
   [/^(.+) · Done$/, '$1 · منجزة'],
   [/^(.+) · To do$/, '$1 · للإنجاز'],

@@ -1,15 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Building2, Gauge, KeyRound, LogOut, Mail, Search, ShieldCheck, SlidersHorizontal, Sparkles, UserPlus, Users } from 'lucide-react';
+import { ArrowUpCircle, Building2, Gauge, KeyRound, LogOut, Mail, Search, ShieldCheck, SlidersHorizontal, Sparkles, UserPlus, Users } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Avatar, Button, confirmDialog, Dialog, Input, Spinner, toast, toastError } from '../components/ui';
 import { adminApi, bytes, setSignedOutHandler } from './api';
+import { UpdatesTab } from './Updates';
 import { type Effective, type Limits, LimitsTab, limitText, MailTab, PeopleLimitsDialog } from './LimitsAndMail';
 
 // The admin panel (its own page and port): accounts, workspaces, sign-ups, the AI connection offered to
 // everyone, and the panel's password.
 
-type Tab = 'overview' | 'accounts' | 'workspaces' | 'limits' | 'ai' | 'email' | 'security';
+type Tab = 'overview' | 'accounts' | 'workspaces' | 'limits' | 'ai' | 'email' | 'updates' | 'security';
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'overview', label: 'Overview', icon: <Gauge size={16} /> },
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'limits', label: 'Limits', icon: <SlidersHorizontal size={16} /> },
   { id: 'ai', label: 'AI', icon: <Sparkles size={16} /> },
   { id: 'email', label: 'Email', icon: <Mail size={16} /> },
+  { id: 'updates', label: 'Updates', icon: <ArrowUpCircle size={16} /> },
   { id: 'security', label: 'Sign-ups & security', icon: <ShieldCheck size={16} /> },
 ];
 
@@ -83,6 +85,7 @@ export function AdminApp() {
           {tab === 'limits' && <LimitsTab />}
           {tab === 'ai' && <AiSettings />}
           {tab === 'email' && <MailTab />}
+          {tab === 'updates' && <UpdatesTab />}
           {tab === 'security' && <Security />}
           <button onClick={signOut} className="mt-10 flex items-center gap-2 text-sm text-muted md:hidden">
             <LogOut size={16} /> Sign out

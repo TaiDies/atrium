@@ -192,7 +192,7 @@ function AppearanceTab() {
   ];
   return (
     <div>
-      <Heading title="Appearance" description="Choose how the app looks on this device." />
+      <Heading title="Appearance" description="Choose how the app looks — saved with your account, on every device." />
       <ThemeSection title="Language">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {LANGUAGES.map((l) => (

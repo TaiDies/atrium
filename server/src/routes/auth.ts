@@ -180,6 +180,23 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get('/auth/me', { preHandler: requireUser }, async (req) => ({ user: req.user }));
 
+  // Appearance and language (theme, colours, font, sizes, language…), the same on every device. Each
+  // device sends what it has; the stored copy is merged and returned.
+  app.get('/auth/me/prefs', { preHandler: requireUser }, async (req) => {
+    const row = await one<{ prefs: Record<string, string> }>('select prefs from users where id = $1', [req.user.id]);
+    return { prefs: row?.prefs ?? {} };
+  });
+  app.put('/auth/me/prefs', { preHandler: requireUser }, async (req) => {
+    const body = parse(z.object({ prefs: z.record(z.string().max(64), z.string().max(4000).nullable()) }), req.body);
+    const set = Object.fromEntries(Object.entries(body.prefs).filter(([, v]) => v !== null));
+    const removed = Object.entries(body.prefs).filter(([, v]) => v === null).map(([k]) => k);
+    const row = await one<{ prefs: Record<string, string> }>(
+      `update users set prefs = (prefs || $2::jsonb) - $3::text[] where id = $1 returning prefs`,
+      [req.user.id, JSON.stringify(set), removed],
+    );
+    return { prefs: row?.prefs ?? {} };
+  });
+
   // This person's limits (set by the admin) and how much of each they use.
   app.get('/auth/me/usage', { preHandler: requireUser }, async (req) => {
     // People in each workspace this person owns (members and pending invitations, as the limit counts them).

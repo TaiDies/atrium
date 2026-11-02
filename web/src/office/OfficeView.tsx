@@ -75,7 +75,7 @@ export default function OfficeView({ file, kind, renderOriginal }: { file: Offic
               onClick={() => setMode(m)}
               disabled={m === 'original' && (file.size === 0 || /\.(txt|md|markdown)$/i.test(file.name))}
               className={clsx('h-7 rounded-md px-2.5 disabled:opacity-40', mode === m ? 'bg-active font-medium' : 'text-muted hover:text-fg')}
-              title={m === 'original' ? 'Exactly as it looks in Word, Excel or PowerPoint' : 'Edit together with everyone'}
+              title={m === 'original' ? 'Exactly as it looks in the desktop office apps' : 'Edit together with everyone'}
             >
               {m === 'edit' ? 'Edit' : 'Original layout'}
             </button>

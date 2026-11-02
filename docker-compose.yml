@@ -48,11 +48,28 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_PANEL: ${ADMIN_PANEL:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Where new versions are looked for (GitHub owner/repo); the admin panel shows and can install them.
+      UPDATE_REPO: ${UPDATE_REPO:-TaiDies/atrium}
     ports:
       - "${APP_PORT:-3000}:3000"
       # The admin panel is only opened on this machine (use an SSH tunnel or VPN to reach it).
       - "127.0.0.1:${ADMIN_PORT:-3001}:3001"
     volumes:
+      - data:/data
+
+  # Installs new versions for the admin panel's "Update now" and auto-update: pulls the new version
+  # into this folder and rebuilds the app (tools/updater.sh). It needs the Docker socket, so it can
+  # control Docker on this machine — remove this service if you'd rather update by hand.
+  updater:
+    image: docker:27-cli
+    restart: unless-stopped
+    working_dir: /project
+    entrypoint: ["sh", "/project/tools/updater.sh"]
+    environment:
+      UPDATE_REPO: ${UPDATE_REPO:-TaiDies/atrium}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/project
       - data:/data
 
 volumes:

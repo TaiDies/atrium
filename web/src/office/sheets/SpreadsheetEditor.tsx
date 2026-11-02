@@ -32,9 +32,9 @@ export async function loadSpreadsheet(doc: Y.Doc, file: OfficeFile) {
 }
 
 export const SPREADSHEET_FORMATS = [
-  { ext: 'xlsx', label: 'Excel workbook (.xlsx)' },
+  { ext: 'xlsx', label: 'Spreadsheet (.xlsx)' },
   { ext: 'ods', label: 'OpenDocument spreadsheet (.ods)' },
-  { ext: 'xls', label: 'Excel 97–2003 (.xls)' },
+  { ext: 'xls', label: 'Older spreadsheet format (.xls)' },
   { ext: 'csv', label: 'CSV, current sheet (.csv)' },
   { ext: 'tsv', label: 'Tab-separated, current sheet (.tsv)' },
   { ext: 'pdf', label: 'PDF (.pdf)' },

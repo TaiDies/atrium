@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
+import { prefsChanged } from './prefsSync';
 
 export type ThemePref = 'light' | 'dark' | 'system';
 export type ColorTheme =
@@ -198,6 +199,7 @@ export function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]) {
     else localStorage.setItem(KEYS[key], value);
   } catch {}
   apply();
+  prefsChanged();
 }
 
 /** Sets (or, with '', clears) one colour for light or dark mode. */
@@ -221,6 +223,14 @@ function saveColors() {
     if (!Object.keys(customColors.light).length && !Object.keys(customColors.dark).length) localStorage.removeItem(COLORS_KEY);
     else localStorage.setItem(COLORS_KEY, JSON.stringify(customColors));
   } catch {}
+  apply();
+  prefsChanged();
+}
+
+/** Takes the settings kept on the device again (after the account's were written there) and applies them. */
+export function reloadAppearance() {
+  for (const k of Object.keys(DEFAULTS) as (keyof Prefs)[]) (prefs as unknown as Record<string, string>)[k] = read(k);
+  customColors = readColors();
   apply();
 }
 

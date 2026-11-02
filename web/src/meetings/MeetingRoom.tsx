@@ -37,6 +37,7 @@ import { type MeetingDetail, type MeetingPerms, type MeetingTask, meetingState, 
 import { ChatView } from '../chat/ChatView';
 import { PeoplePicker } from '../chat/PeoplePicker';
 import { type Focus, MediaView, useCall, visible } from './CallContext';
+import { DevicePicker } from './DevicePicker';
 
 // A meeting: before it — details, the link, who's invited, tasks to prepare; during — the call (see
 // CallContext: it keeps going on other pages) with microphone, camera and screen sharing as the host
@@ -695,6 +696,7 @@ function RoomView() {
         {panelBtn('chat', <MessageSquare size={18} />, 'Chat')}
         {panelBtn('tasks', <CheckSquare size={18} />, 'Tasks')}
         {panelBtn('people', <Users size={18} />, 'People')}
+        {!phone && <DevicePicker />}
         <span className="mx-1 h-6 w-px bg-white/15" />
         <button onClick={leave} title="Leave" className="flex h-11 items-center gap-1.5 rounded-full bg-red-600 px-4 text-sm font-medium hover:bg-red-700">
           <PhoneOff size={17} /> Leave

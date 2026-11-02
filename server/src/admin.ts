@@ -16,6 +16,7 @@ import { createAccount } from './routes/auth.js';
 import { getSettings, type Limits, setSetting } from './settings.js';
 import { LIMIT_KEYS, limitsFor, resolve, usageFor } from './limits.js';
 import { mailEnabled, sendMail, verifyMail } from './mail.js';
+import { checkForUpdate, requestUpdate, updateStatus } from './updates.js';
 import { email, escapeLike, handleError, HttpError, idParams, parse } from './util.js';
 
 // The admin panel: a separate server on its own port (ADMIN_PORT) for managing accounts and the AI
@@ -297,6 +298,25 @@ export async function startAdminServer() {
         });
 
         // ----- settings -----
+
+        // ----- updates -----
+
+        secured.get('/updates', async () => updateStatus());
+        secured.post('/updates/check', async () => {
+          await checkForUpdate();
+          return updateStatus();
+        });
+        secured.put('/settings/updates', async (req) => {
+          const body = parse(z.object({ email: z.union([z.literal(''), z.string().trim().email().max(200)]), auto: z.boolean() }), req.body);
+          await setSetting('updates', { ...(await getSettings()).updates, email: body.email, auto: body.auto });
+          return updateStatus();
+        });
+        secured.post('/updates/run', async () => {
+          const s = await updateStatus();
+          if (!s.updater.canUpdate) throw new HttpError(400, s.updater.reason ?? 'The updater isn’t available');
+          await requestUpdate(s.latest?.version ?? null);
+          return updateStatus();
+        });
 
         secured.get('/settings', async () => {
           const s = await getSettings();

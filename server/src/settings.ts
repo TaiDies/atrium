@@ -15,6 +15,16 @@ export interface ServerSettings {
   mail: MailSettings | null;
   /** New accounts must confirm their email; null follows REQUIRE_EMAIL_VERIFICATION. */
   requireEmailVerification: boolean | null;
+  /** New versions: who's emailed, whether the server updates itself, and what's been done (updates.ts). */
+  updates: UpdateSettings;
+}
+
+export interface UpdateSettings {
+  /** "Server notifications receiver email": told when a new version is out ('' for nobody). */
+  email: string;
+  auto: boolean;
+  notifiedVersion?: string;
+  autoUpdatedVersion?: string;
 }
 
 /** Each key: a number (the limit), null (unlimited); missing means "use the default". */
@@ -46,7 +56,7 @@ export interface SharedAi {
   allowOwn: boolean;
 }
 
-const DEFAULTS: ServerSettings = { allowSignups: true, adminPasswordHash: null, ai: null, defaultLimits: {}, mail: null, requireEmailVerification: null };
+const DEFAULTS: ServerSettings = { allowSignups: true, adminPasswordHash: null, ai: null, defaultLimits: {}, mail: null, requireEmailVerification: null, updates: { email: '', auto: false } };
 
 let cache: { at: number; value: ServerSettings } | null = null;
 

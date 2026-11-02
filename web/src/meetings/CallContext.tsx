@@ -6,7 +6,7 @@ import { Avatar, toast, toastError } from '../components/ui';
 import { usePhone } from '../lib/device';
 import { queryClient } from '../lib/queries';
 import type { MeetingDetail } from '../chat/chatApi';
-import { Call, type CallState, type RemotePeer, type Slot } from './call';
+import { Call, type CallState, chooseDevice, chosenDevice, type DeviceKind, type RemotePeer, type Slot } from './call';
 
 // The call you're in, for the whole app: it keeps going when you open other pages. On the meeting's
 // own page it fills the screen (MeetingRoom); elsewhere it's a small window you can drag around, or on a
@@ -23,6 +23,9 @@ interface ActiveCall {
   focus: Focus;
   setFocus: (f: Focus) => void;
   toggle: (slot: Slot) => Promise<void>;
+  /** Switches microphone or camera, or (for 'speaker') where the call's sound plays. */
+  useDevice: (kind: DeviceKind, id: string) => Promise<void>;
+  speaker: string;
   leave: () => void;
 }
 
@@ -108,11 +111,15 @@ function useSpeaking(streams: [string, MediaStream | undefined][]) {
   return speaking;
 }
 
-function Sound({ stream }: { stream: MediaStream }) {
+function Sound({ stream, speaker }: { stream: MediaStream; speaker: string }) {
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream;
   }, [stream]);
+  useEffect(() => {
+    const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    void el?.setSinkId?.(speaker).catch(() => {});
+  }, [speaker]);
   return <audio ref={ref} autoPlay />;
 }
 
@@ -201,17 +208,34 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const [speaker, setSpeaker] = useState(() => chosenDevice('speaker'));
+  const useDevice = useCallback(async (kind: DeviceKind, id: string) => {
+    if (kind === 'speaker') {
+      chooseDevice('speaker', id);
+      setSpeaker(id);
+      return;
+    }
+    try {
+      await call.current?.useDevice(kind, id);
+    } catch (err) {
+      toastError(err);
+    }
+  }, []);
+
   const peers = state?.peers ?? [];
   const heard = detail ? peers.map((p) => [p.id, visible(detail, state, p).mic] as [string, MediaStream | undefined]) : [];
   const speaking = useSpeaking([['me', state?.media.mic ? state.local.mic : undefined], ...heard]);
 
-  const active = useMemo<ActiveCall | null>(() => (detail ? { detail, state, speaking, focus, setFocus, toggle, leave } : null), [detail, state, speaking, focus, toggle, leave]);
+  const active = useMemo<ActiveCall | null>(
+    () => (detail ? { detail, state, speaking, focus, setFocus, toggle, useDevice, speaker, leave } : null),
+    [detail, state, speaking, focus, toggle, useDevice, speaker, leave],
+  );
 
   return (
     <Ctx.Provider value={{ active, join }}>
       {children}
       {/* The call's sound, wherever you are in the app. */}
-      {heard.map(([id, s]) => s && <Sound key={id} stream={s} />)}
+      {heard.map(([id, s]) => s && <Sound key={id} stream={s} speaker={speaker} />)}
       {active && <CallOverlay call={active} />}
     </Ctx.Provider>
   );
