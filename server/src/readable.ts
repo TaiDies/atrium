@@ -165,8 +165,13 @@ function csvCell(v: string) {
   return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
-/** A database's cards as CSV, one column per property (select options by name, files by name). */
-export function databaseToCsv(doc: Y.Doc): string {
+interface CardCells {
+  cells: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function fieldsAndRows(doc: Y.Doc): { fields: Field[]; rows: (CardCells & { id: string })[] } {
   const fields = doc
     .getArray<Y.Map<unknown>>('fields')
     .toArray()
@@ -178,31 +183,58 @@ export function databaseToCsv(doc: Y.Doc): string {
     .filter((r) => r instanceof Y.Map)
     .map((r) => {
       const cells = r.get('cells');
-      return { cells: (cells instanceof Y.Map ? cells.toJSON() : {}) as Record<string, unknown>, createdAt: Number(r.get('createdAt') ?? 0), updatedAt: Number(r.get('updatedAt') ?? 0) };
+      return {
+        id: String(r.get('id')),
+        cells: (cells instanceof Y.Map ? cells.toJSON() : {}) as Record<string, unknown>,
+        createdAt: Number(r.get('createdAt') ?? 0),
+        updatedAt: Number(r.get('updatedAt') ?? 0),
+      };
     });
-  const display = (f: Field, row: (typeof rows)[number]): string => {
-    const v = row.cells[f.id];
-    const name = (id: unknown) => f.options?.find((o) => o.id === id)?.name ?? '';
-    switch (f.type) {
-      case 'select':
-        return name(v);
-      case 'multi_select':
-        return Array.isArray(v) ? v.map(name).filter(Boolean).join(', ') : '';
-      case 'checkbox':
-        return v === true ? 'Yes' : 'No';
-      case 'checklist':
-        return Array.isArray(v) ? v.map((i: { text?: string; done?: boolean }) => `[${i.done ? 'x' : ' '}] ${i.text ?? ''}`).join('; ') : '';
-      case 'media':
-        return Array.isArray(v) ? v.map((m: { name?: string }) => m.name ?? '').join(', ') : '';
-      case 'created_time':
-        return row.createdAt ? new Date(row.createdAt).toISOString() : '';
-      case 'last_edited':
-        return row.updatedAt ? new Date(row.updatedAt).toISOString() : '';
-      default:
-        return v === null || v === undefined ? '' : String(v);
-    }
-  };
+  return { fields, rows };
+}
+
+/** A card's value for a property, as text (select options by name, files by name). */
+function cellText(f: Field, row: CardCells): string {
+  const v = row.cells[f.id];
+  const name = (id: unknown) => f.options?.find((o) => o.id === id)?.name ?? '';
+  switch (f.type) {
+    case 'select':
+      return name(v);
+    case 'multi_select':
+      return Array.isArray(v) ? v.map(name).filter(Boolean).join(', ') : '';
+    case 'checkbox':
+      return v === true ? 'Yes' : 'No';
+    case 'checklist':
+      return Array.isArray(v) ? v.map((i: { text?: string; done?: boolean }) => `[${i.done ? 'x' : ' '}] ${i.text ?? ''}`).join('; ') : '';
+    case 'media':
+      return Array.isArray(v) ? v.map((m: { name?: string }) => m.name ?? '').join(', ') : '';
+    case 'created_time':
+      return row.createdAt ? new Date(row.createdAt).toISOString() : '';
+    case 'last_edited':
+      return row.updatedAt ? new Date(row.updatedAt).toISOString() : '';
+    default:
+      return v === null || v === undefined ? '' : String(v);
+  }
+}
+
+/** A database's cards as CSV, one column per property. */
+export function databaseToCsv(doc: Y.Doc): string {
+  const { fields, rows } = fieldsAndRows(doc);
   const lines = [fields.map((f) => csvCell(f.name)).join(',')];
-  for (const row of rows) lines.push(fields.map((f) => csvCell(display(f, row))).join(','));
+  for (const row of rows) lines.push(fields.map((f) => csvCell(cellText(f, row))).join(','));
   return `${lines.join('\r\n')}\r\n`;
+}
+
+/** One card's properties as "Name: value" lines, and the files in its cells (ids). */
+export function cardProperties(doc: Y.Doc, rowId: string): { text: string; files: string[] } {
+  const { fields, rows } = fieldsAndRows(doc);
+  const row = rows.find((r) => r.id === rowId);
+  if (!row) return { text: '', files: [] };
+  const text = fields
+    .map((f) => [f.name, cellText(f, row)] as const)
+    .filter(([, v]) => v && v !== 'No')
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\n');
+  const files = [...JSON.stringify(row.cells).matchAll(/\/api\/files\/([0-9a-f-]{36})/gi)].map((m) => m[1].toLowerCase());
+  return { text, files };
 }

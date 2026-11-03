@@ -6,7 +6,7 @@ import { adminApi, bytes } from './api';
 
 // Admin panel: limits per person (or for everyone), and the email (SMTP) settings.
 
-export type LimitKey = 'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiTokensPerDay' | 'aiTokensPerMonth';
+export type LimitKey = 'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiRequestsPerDay' | 'aiRequestsPerMonth' | 'aiTokensPerDay' | 'aiTokensPerMonth';
 export type Limits = Partial<Record<LimitKey, number | null>>;
 export type Effective = Record<LimitKey, number | null>;
 
@@ -15,6 +15,8 @@ export const LIMIT_INFO: { key: LimitKey; label: string; unit: string; help: str
   { key: 'storageMb', label: 'Storage', unit: 'MB', help: 'Everything they upload — files, images, attachments and imports — added together.' },
   { key: 'uploadMb', label: 'Largest file', unit: 'MB', help: 'The biggest single upload (the server-wide MAX_UPLOAD_MB also applies).' },
   { key: 'members', label: 'People per workspace', unit: 'people', help: 'Members plus pending invitations, in workspaces they own.' },
+  { key: 'aiRequestsPerDay', label: 'AI requests a day', unit: 'requests', help: 'Each question to the assistant, AI edit, autofill, set of flashcards or quiz is one request. Only counted on the server’s AI connection, not with someone’s own key.' },
+  { key: 'aiRequestsPerMonth', label: 'AI requests a month', unit: 'requests', help: 'The same, for the calendar month (resets on the 1st).' },
   { key: 'aiTokensPerDay', label: 'AI tokens a day', unit: 'tokens', help: 'Tokens are what AI models charge for: the question, what it reads and the answer. A short question is a few hundred; a plan from long files can be tens of thousands. Only counted on the server’s AI connection, not with someone’s own key.' },
   { key: 'aiTokensPerMonth', label: 'AI tokens a month', unit: 'tokens', help: 'The same, for the calendar month (resets on the 1st).' },
 ];
@@ -22,7 +24,7 @@ export const LIMIT_INFO: { key: LimitKey; label: string; unit: string; help: str
 /** 1234567 → 1.2M, 45000 → 45k. */
 export const tokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 export const limitText = (key: LimitKey, v: number | null) =>
-  v === null ? 'Unlimited' : key === 'storageMb' || key === 'uploadMb' ? bytes(v * 1024 * 1024) : key.startsWith('aiTokens') ? `${tokens(v)} tokens` : String(v);
+  v === null ? 'Unlimited' : key === 'storageMb' || key === 'uploadMb' ? bytes(v * 1024 * 1024) : key.startsWith('aiTokens') ? `${tokens(v)} tokens` : key.startsWith('aiRequests') ? `${v} request${v === 1 ? '' : 's'}` : String(v);
 
 /** One limit's choice: unlimited, a number, or (for a person) the server's default. */
 type Choice = { mode: 'unlimited' | 'value' | 'default' | 'keep'; value: string };
@@ -146,7 +148,7 @@ export function PeopleLimitsDialog({
   userIds: string[];
   label: string;
   own?: Limits;
-  usage?: { workspaces: number; storageBytes: number; aiTokensToday: number; aiTokensMonth: number };
+  usage?: { workspaces: number; storageBytes: number; aiRequestsToday: number; aiRequestsMonth: number; aiTokensToday: number; aiTokensMonth: number };
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -156,7 +158,7 @@ export function PeopleLimitsDialog({
     () => Object.fromEntries(LIMIT_INFO.map(({ key }) => [key, single ? toChoice(own!, key, true) : { mode: 'keep', value: '' }])) as Record<LimitKey, Choice>,
   );
   const [busy, setBusy] = useState(false);
-  const used: Partial<Record<LimitKey, string>> = usage ? { workspaces: String(usage.workspaces), storageMb: bytes(usage.storageBytes), aiTokensPerDay: `${tokens(usage.aiTokensToday)} today`, aiTokensPerMonth: `${tokens(usage.aiTokensMonth)} this month` } : {};
+  const used: Partial<Record<LimitKey, string>> = usage ? { workspaces: String(usage.workspaces), storageMb: bytes(usage.storageBytes), aiRequestsPerDay: `${usage.aiRequestsToday} today`, aiRequestsPerMonth: `${usage.aiRequestsMonth} this month`, aiTokensPerDay: `${tokens(usage.aiTokensToday)} today`, aiTokensPerMonth: `${tokens(usage.aiTokensMonth)} this month` } : {};
 
   const save = async () => {
     setBusy(true);

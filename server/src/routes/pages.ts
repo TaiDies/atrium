@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { updateDocIndex } from '../docIndex.js';
 import { notify } from '../notify.js';
 import { type Access, accessMap, requireMember, requirePage } from '../access.js';
+import { deleteFile, filesOnlyIn } from './notes.js';
 import { requireUser } from '../auth.js';
 import { editDoc } from '../blocks.js';
 import { appendSubpageBlock, applyUpdate, closePage, createDatabaseState, DATABASE_TYPES, notifyPageChanged } from '../collab.js';
@@ -398,12 +399,24 @@ export async function pageRoutes(app: FastifyInstance) {
     return { count: row?.n ?? 0 };
   });
 
+  // What lives only in this page (and the pages and cards inside it), so it can be deleted with it.
+  app.get('/pages/:id/own-content', async (req) => {
+    const { id } = parse(idParams, req.params);
+    await requirePage(req.user.id, id, 'edit');
+    const row = await one<{ n: number }>(`select count(*)::int as n from (${OWN_EVENTS}) x`, [id]);
+    return { events: row?.n ?? 0, files: (await filesOnlyIn(id)).length };
+  });
+
   app.post('/pages/:id/trash', async (req) => {
     const { id } = parse(idParams, req.params);
-    const { deleteEvents } = parse(z.object({ deleteEvents: z.boolean().default(false) }), req.body ?? {});
+    const { deleteEvents, deleteFiles } = parse(z.object({ deleteEvents: z.boolean().default(false), deleteFiles: z.boolean().default(false) }), req.body ?? {});
     const trashed = await requirePage(req.user.id, id, 'edit');
-    // Optionally delete the events and tasks that live only here (restoring the page won't bring them back).
+    // Optionally delete the events, tasks and files that live only here (restoring the page won't bring them back).
     if (deleteEvents) await query(`delete from events where id in (${OWN_EVENTS})`, [id]);
+    if (deleteFiles) {
+      const access = await accessMap(req.user.id, trashed.workspace_id);
+      for (const f of await filesOnlyIn(id)) await deleteFile(access, f.id);
+    }
     await query(
       `with recursive sub as (
          select id from pages where id = $1

@@ -5,10 +5,10 @@ import { HttpError } from './util.js';
 import { requirePermission, roleLimits } from './roles.js';
 
 // Limits the admin sets per person (or for everyone): how many workspaces they can own, how much they can
-// upload in total and per file, how many people a workspace of theirs can have, and how many AI tokens
-// (what the models charge for) they can use a day and a month on the server's AI connection.
+// upload in total and per file, how many people a workspace of theirs can have, and how many AI requests
+// and AI tokens (what the models charge for) they can use a day and a month on the server's AI connection.
 
-export const LIMIT_KEYS = ['workspaces', 'storageMb', 'uploadMb', 'members', 'aiTokensPerDay', 'aiTokensPerMonth'] as const;
+export const LIMIT_KEYS = ['workspaces', 'storageMb', 'uploadMb', 'members', 'aiRequestsPerDay', 'aiRequestsPerMonth', 'aiTokensPerDay', 'aiTokensPerMonth'] as const;
 export type LimitKey = (typeof LIMIT_KEYS)[number];
 
 /** Each limit as it applies: a number, or null for unlimited. */
@@ -36,20 +36,31 @@ export async function limitsFor(userId: string, c?: Queryable): Promise<Effectiv
 export interface Usage {
   workspaces: number;
   storageBytes: number;
-  /** AI tokens used today and this calendar month. */
+  /** AI requests and tokens used today and this calendar month. */
+  aiRequestsToday: number;
+  aiRequestsMonth: number;
   aiTokensToday: number;
   aiTokensMonth: number;
 }
 
 export async function usageFor(userId: string): Promise<Usage> {
-  const row = await one<{ workspaces: number; storage: string; today: string; month: string }>(
+  const row = await one<{ workspaces: number; storage: string; today: string; month: string; rtoday: number; rmonth: number }>(
     `select (select count(*)::int from workspace_members where user_id = $1 and role = 'owner') as workspaces,
             (select coalesce(sum(size), 0)::text from files where uploaded_by = $1) as storage,
             (select coalesce(sum(tokens), 0)::text from ai_usage where user_id = $1 and day = current_date) as today,
-            (select coalesce(sum(tokens), 0)::text from ai_usage where user_id = $1 and day >= date_trunc('month', current_date)) as month`,
+            (select coalesce(sum(tokens), 0)::text from ai_usage where user_id = $1 and day >= date_trunc('month', current_date)) as month,
+            (select coalesce(sum(requests), 0)::int from ai_usage where user_id = $1 and day = current_date) as rtoday,
+            (select coalesce(sum(requests), 0)::int from ai_usage where user_id = $1 and day >= date_trunc('month', current_date)) as rmonth`,
     [userId],
   );
-  return { workspaces: row?.workspaces ?? 0, storageBytes: Number(row?.storage ?? 0), aiTokensToday: Number(row?.today ?? 0), aiTokensMonth: Number(row?.month ?? 0) };
+  return {
+    workspaces: row?.workspaces ?? 0,
+    storageBytes: Number(row?.storage ?? 0),
+    aiRequestsToday: row?.rtoday ?? 0,
+    aiRequestsMonth: row?.rmonth ?? 0,
+    aiTokensToday: Number(row?.today ?? 0),
+    aiTokensMonth: Number(row?.month ?? 0),
+  };
 }
 
 const sizeText = (bytes: number) => (bytes >= 1024 * MB ? `${(bytes / 1024 / MB).toFixed(1)} GB` : `${Math.round(bytes / MB)} MB`);
@@ -98,17 +109,23 @@ export async function checkMembers(workspaceId: string) {
 const tokenText = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /**
- * Before an AI request: whether the person still has tokens left today and this month (on the server's
- * AI connection — with their own key it's their own bill). A request that starts under the limit may
- * finish over it; the next one is refused. Also counts the request, for the admin's numbers.
+ * Before an AI request: whether the person still has requests and tokens left today and this month (on
+ * the server's AI connection — with their own key it's their own bill). A request that starts under the
+ * token limit may finish over it; the next one is refused. Then counts the request.
  */
 export async function useAi(userId: string) {
   await requirePermission(userId, 'use_ai');
-  const { aiTokensPerDay, aiTokensPerMonth } = await limitsFor(userId);
+  const { aiRequestsPerDay, aiRequestsPerMonth, aiTokensPerDay, aiTokensPerMonth } = await limitsFor(userId);
   const { aiAccess } = await import('./ai.js');
   const shared = (await aiAccess(userId)).active?.source !== 'own';
-  if (shared && (aiTokensPerDay !== null || aiTokensPerMonth !== null)) {
-    const { aiTokensToday, aiTokensMonth } = await usageFor(userId);
+  if (shared && [aiRequestsPerDay, aiRequestsPerMonth, aiTokensPerDay, aiTokensPerMonth].some((v) => v !== null)) {
+    const { aiRequestsToday, aiRequestsMonth, aiTokensToday, aiTokensMonth } = await usageFor(userId);
+    if (aiRequestsPerDay !== null && aiRequestsToday >= aiRequestsPerDay) {
+      throw new HttpError(429, `You've used today's ${aiRequestsPerDay} AI request${aiRequestsPerDay === 1 ? '' : 's'}. They reset tomorrow.`);
+    }
+    if (aiRequestsPerMonth !== null && aiRequestsMonth >= aiRequestsPerMonth) {
+      throw new HttpError(429, `You've used this month's ${aiRequestsPerMonth} AI request${aiRequestsPerMonth === 1 ? '' : 's'}. They reset on the 1st.`);
+    }
     if (aiTokensPerDay !== null && aiTokensToday >= aiTokensPerDay) {
       throw new HttpError(429, `You've used today's ${tokenText(aiTokensPerDay)} AI tokens. They reset tomorrow.`);
     }

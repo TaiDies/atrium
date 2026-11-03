@@ -33,6 +33,8 @@ export interface Limits {
   storageMb?: number | null;
   uploadMb?: number | null;
   members?: number | null;
+  aiRequestsPerDay?: number | null;
+  aiRequestsPerMonth?: number | null;
   aiTokensPerDay?: number | null;
   aiTokensPerMonth?: number | null;
 }

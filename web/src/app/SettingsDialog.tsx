@@ -657,8 +657,8 @@ function UsageRow() {
     queryKey: ['my-usage'],
     queryFn: () =>
       api<{
-        limits: Record<'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiTokensPerDay' | 'aiTokensPerMonth', number | null>;
-        usage: { workspaces: number; storageBytes: number; aiTokensToday: number; aiTokensMonth: number; owned: { id: string; name: string; people: number }[] };
+        limits: Record<'workspaces' | 'storageMb' | 'uploadMb' | 'members' | 'aiRequestsPerDay' | 'aiRequestsPerMonth' | 'aiTokensPerDay' | 'aiTokensPerMonth', number | null>;
+        usage: { workspaces: number; storageBytes: number; aiRequestsToday: number; aiRequestsMonth: number; aiTokensToday: number; aiTokensMonth: number; owned: { id: string; name: string; people: number }[] };
       }>('/api/auth/me/usage'),
   });
   if (!data) return null;
@@ -677,6 +677,8 @@ function UsageRow() {
       share: share(w.people, limits.members),
     })),
     ...(usage.owned?.length ? [] : [{ label: 'People per workspace', text: limits.members === null ? 'No limit' : `Up to ${limits.members}`, share: null }]),
+    { label: 'AI requests today', text: of(String(usage.aiRequestsToday), limits.aiRequestsPerDay), share: share(usage.aiRequestsToday, limits.aiRequestsPerDay) },
+    { label: 'AI requests this month', text: of(String(usage.aiRequestsMonth), limits.aiRequestsPerMonth), share: share(usage.aiRequestsMonth, limits.aiRequestsPerMonth) },
     { label: 'AI tokens today', text: of(tok(usage.aiTokensToday), limits.aiTokensPerDay, tok), share: share(usage.aiTokensToday, limits.aiTokensPerDay) },
     { label: 'AI tokens this month', text: of(tok(usage.aiTokensMonth), limits.aiTokensPerMonth, tok), share: share(usage.aiTokensMonth, limits.aiTokensPerMonth) },
     { label: 'Largest file', text: limits.uploadMb === null ? 'Server maximum' : `Up to ${mb(limits.uploadMb)}`, share: null },

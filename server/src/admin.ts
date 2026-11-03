@@ -112,6 +112,8 @@ const limitsBody = z.object({
   storageMb: limitValue.optional(),
   uploadMb: limitValue.optional(),
   members: limitValue.optional(),
+  aiRequestsPerDay: limitValue.optional(),
+  aiRequestsPerMonth: limitValue.optional(),
   aiTokensPerDay: limitValue.optional(),
   aiTokensPerMonth: limitValue.optional(),
 });
@@ -440,6 +442,8 @@ export async function startAdminServer() {
                 storageMb: userLimit.optional(),
                 uploadMb: userLimit.optional(),
                 members: userLimit.optional(),
+                aiRequestsPerDay: userLimit.optional(),
+                aiRequestsPerMonth: userLimit.optional(),
                 aiTokensPerDay: userLimit.optional(),
                 aiTokensPerMonth: userLimit.optional(),
               }),

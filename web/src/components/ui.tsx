@@ -349,6 +349,9 @@ interface ConfirmRequest {
   /** The other button's text (default "Cancel"). */
   cancelLabel?: string;
   danger?: boolean;
+  /** Checkboxes shown under the message (each starts unticked); what's ticked goes to `onChecks` on confirm. */
+  checks?: { label: ReactNode; help?: ReactNode }[];
+  onChecks?: (ticked: boolean[]) => void;
   resolve: (ok: boolean) => void;
 }
 let pendingConfirm: ConfirmRequest | null = null;
@@ -361,12 +364,21 @@ export function confirmDialog(opts: Omit<ConfirmRequest, 'resolve'>): Promise<bo
   });
 }
 
+/** Asks to confirm with checkboxes: the ticked boxes, or null when cancelled. */
+export function confirmWithChecks(opts: Omit<ConfirmRequest, 'resolve' | 'onChecks'> & { checks: NonNullable<ConfirmRequest['checks']> }): Promise<boolean[] | null> {
+  let ticked: boolean[] = opts.checks.map(() => false);
+  return confirmDialog({ ...opts, onChecks: (t) => (ticked = t) } as Omit<ConfirmRequest, 'resolve'>).then((ok) => (ok ? ticked : null));
+}
+
 export function ConfirmHost() {
   const req = useSyncExternalStore(
     (cb) => (confirmListeners.add(cb), () => confirmListeners.delete(cb)),
     () => pendingConfirm,
   );
+  const [ticked, setTicked] = useState<boolean[]>([]);
+  useEffect(() => setTicked(req?.checks?.map(() => false) ?? []), [req]);
   const finish = (ok: boolean) => {
+    if (ok) req?.onChecks?.(ticked);
     req?.resolve(ok);
     pendingConfirm = null;
     confirmListeners.forEach((l) => l());
@@ -377,6 +389,19 @@ export function ConfirmHost() {
         <div className="p-5">
           <h2 className="text-[15px] font-semibold">{req.title}</h2>
           {req.message && <div className="mt-2 text-sm text-muted">{req.message}</div>}
+          {req.checks && req.checks.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {req.checks.map((c, i) => (
+                <label key={i} className="flex cursor-pointer gap-2.5 rounded-lg border border-line p-2.5 text-sm">
+                  <input type="checkbox" className="mt-0.5" checked={!!ticked[i]} onChange={(e) => setTicked((t) => t.map((v, j) => (j === i ? e.target.checked : v)))} />
+                  <span>
+                    <span className="block">{c.label}</span>
+                    {c.help && <span className="block text-xs text-muted">{c.help}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <Button onClick={() => finish(false)}>{req.cancelLabel ?? 'Cancel'}</Button>
             <Button variant={req.danger ? 'danger' : 'primary'} onClick={() => finish(true)} autoFocus>

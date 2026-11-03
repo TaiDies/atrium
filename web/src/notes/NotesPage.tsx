@@ -2,6 +2,7 @@ import { useOpenFile } from '../lib/openFile';
 import clsx from 'clsx';
 import {
   Download,
+  Eraser,
   ExternalLink,
   File as FileIcon,
   FileText,
@@ -25,6 +26,7 @@ import {
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useApp } from '../app/context';
+import { CleanupDialog } from './CleanupDialog';
 import { type Anchor, confirmDialog, IconButton, Menu, MenuDivider, MenuItem, toast, toastError } from '../components/ui';
 import { downloadUrl, uploadFile } from '../lib/api';
 import { getLocal, setLocal } from '../lib/storage';
@@ -66,6 +68,7 @@ const matches = (f: WorkspaceFile, filter: Filter) => {
  */
 export function NotesPage() {
   const { workspace, sidebarOpen, toggleSidebar } = useApp();
+  const [cleaning, setCleaning] = useState(false);
   const files = useWorkspaceFiles(workspace.id);
   const navigate = useNavigate();
   const [q, setQ] = useState('');
@@ -172,6 +175,7 @@ export function NotesPage() {
           </IconButton>
         </div>
       )}
+      {cleaning && <CleanupDialog workspaceId={workspace.id} isOwner={workspace.role === 'owner'} onClose={() => setCleaning(false)} />}
       <div className="mx-auto max-w-[1200px] px-4 pt-8 pb-32 sm:px-8 sm:pt-12">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -199,6 +203,9 @@ export function NotesPage() {
             </select>
             <IconButton onClick={() => setLayout(layout === 'grid' ? 'list' : 'grid')} title={layout === 'grid' ? 'List view' : 'Grid view'} className="shrink-0">
               {layout === 'grid' ? <LayoutList size={17} /> : <Grid2x2 size={17} />}
+            </IconButton>
+            <IconButton onClick={() => setCleaning(true)} title="Delete unused files" className="shrink-0">
+              <Eraser size={17} />
             </IconButton>
           </div>
         </div>

@@ -1,8 +1,10 @@
 import clsx from 'clsx';
-import { ArrowLeft, Check, Copy, LayoutTemplate, Link2, Maximize2, Minimize2, MoreHorizontal, Plus, Repeat, Trash2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Check, Copy, Layers, LayoutTemplate, Link2, Maximize2, Minimize2, MoreHorizontal, Plus, Repeat, Trash2, X } from 'lucide-react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AppContext } from '../app/context';
 import { DocumentEditor } from '../app/DocumentEditor';
+import { FlashcardsDialog } from '../study/Flashcards';
 import { CardRepeatDialog } from '../calendar/CardDialog';
 import { PageIcon } from '../app/PageIcon';
 import { type Anchor, Dialog, IconButton, Menu, MenuDivider, MenuItem, toast } from '../components/ui';
@@ -27,6 +29,8 @@ export function RowDetail({ rowId, full, onToggleFull, onClose }: { rowId: strin
   const row = db.rows.find((r) => r.id === rowId) ?? (template && templateAsRow(template));
   const [menu, setMenu] = useState<Anchor | null>(null);
   const [repeating, setRepeating] = useState(false);
+  const [studying, setStudying] = useState(false);
+  const app = useContext(AppContext);
   const pf = primaryField(db.fields);
   const repeats = !!row?.repeat;
   const rowTitle = (row && pf && typeof row.cells[pf.id] === 'string' && (row.cells[pf.id] as string).trim()) || 'Untitled';
@@ -72,7 +76,12 @@ export function RowDetail({ rowId, full, onToggleFull, onClose }: { rowId: strin
     <div className="flex flex-1 items-center justify-center text-sm text-muted">This row was deleted.</div>
   );
 
-  const repeatDialog = repeating && <CardRepeatDialog pageId={pageId} rowId={rowId} onClose={() => setRepeating(false)} />;
+  const repeatDialog = (
+    <>
+      {repeating && <CardRepeatDialog pageId={pageId} rowId={rowId} onClose={() => setRepeating(false)} />}
+      {studying && app && <FlashcardsDialog pageId={pageId} rowId={rowId} pageTitle={rowTitle} workspaceId={app.workspace.id} onClose={() => setStudying(false)} />}
+    </>
+  );
   const moreMenu = template ? (
     <Menu anchor={menu} onClose={() => setMenu(null)} align="end">
       <MenuItem icon={full ? <Minimize2 size={15} /> : <Maximize2 size={15} />} label={full ? 'Open as a popup' : 'Expand to full page'} onClick={() => onToggleFull(!full)} />
@@ -98,6 +107,7 @@ export function RowDetail({ rowId, full, onToggleFull, onClose }: { rowId: strin
     <Menu anchor={menu} onClose={() => setMenu(null)} align="end">
       <MenuItem icon={full ? <Minimize2 size={15} /> : <Maximize2 size={15} />} label={full ? 'Open as a popup' : 'Expand to full page'} onClick={() => onToggleFull(!full)} />
       {!readOnly && <MenuItem icon={<Repeat size={15} />} label={repeats ? 'Repeat settings…' : 'Repeat…'} onClick={() => setRepeating(true)} />}
+      {app && <MenuItem icon={<Layers size={15} />} label="Flashcards & quiz" onClick={() => setStudying(true)} />}
       <MenuItem
         icon={<Copy size={15} />}
         label="Duplicate"

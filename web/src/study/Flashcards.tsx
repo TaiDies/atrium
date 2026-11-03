@@ -1,14 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Check, Layers, Plus, RotateCcw, Sparkles, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, FileText, Layers, Paperclip, Plus, RotateCcw, Sparkles, StickyNote, Table2, Trash2, X } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { Button, confirmDialog, Dialog, Spinner, toast, toastError } from '../components/ui';
+import { Button, confirmDialog, Dialog, Input, Spinner, toast, toastError } from '../components/ui';
 import { useAiAvailable } from '../editor/AiSelection';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/queries';
 
-// Flashcards kept with a page (shared by everyone who can see it), studied with spaced repetition on
-// each person's own schedule, and quizzes the AI makes from the page.
+// Flashcards kept with a page or a card (shared by everyone who can see it), studied with spaced
+// repetition on each person's own schedule, and quizzes the AI makes. The AI uses what the person picks:
+// in a page, the page and the pages, cards and files in or linked from it; in a card, parts of that card.
 
 export interface Flashcard {
   id: string;
@@ -25,7 +26,7 @@ const todayIso = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
-const deckKey = (pageId: string) => ['flashcards', pageId];
+const deckKey = (pageId: string, rowId: string | null) => ['flashcards', pageId, rowId ?? ''];
 export const dueKey = (workspaceId: string) => ['flashcards-due', workspaceId];
 
 const GRADES = [
@@ -128,6 +129,142 @@ export function StudySession({ cards, onFinished, workspaceId }: { cards: Flashc
   );
 }
 
+// ----- What the AI uses -----
+
+interface StudySource {
+  pageId: string;
+  rowId: string | null;
+  title: string;
+  kind: 'page' | 'database' | 'card';
+  sections: { title: string; words: number }[];
+  files: { id: string; name: string; readable: boolean }[];
+}
+interface Picked {
+  on: boolean;
+  sections: Set<number>;
+  files: Set<string>;
+}
+export interface MaterialItem {
+  pageId: string;
+  rowId: string | null;
+  sections?: number[];
+  files: string[];
+}
+
+const sourceKey = (s: { pageId: string; rowId: string | null }) => `${s.pageId}:${s.rowId ?? ''}`;
+const everything = (s: StudySource): Picked => ({ on: true, sections: new Set(s.sections.map((_, i) => i)), files: new Set(s.files.filter((f) => f.readable).map((f) => f.id)) });
+
+/** The sources the AI can use and what's ticked in each; the first (this page or card) starts ticked. */
+function useMaterial(pageId: string, rowId: string | null) {
+  const sources = useQuery({
+    queryKey: ['study-sources', pageId, rowId ?? ''],
+    queryFn: () => api<{ sources: StudySource[] }>(`/api/pages/${pageId}/study-sources${rowId ? `?row=${encodeURIComponent(rowId)}` : ''}`),
+  });
+  const [picked, setPicked] = useState<Record<string, Picked>>({});
+  useEffect(() => {
+    const first = sources.data?.sources[0];
+    if (first) setPicked((p) => (Object.keys(p).length ? p : { [sourceKey(first)]: everything(first) }));
+  }, [sources.data]);
+  const material: MaterialItem[] = (sources.data?.sources ?? []).flatMap((s) => {
+    const p = picked[sourceKey(s)];
+    if (!p?.on || (!p.sections.size && !p.files.size)) return [];
+    const allSections = p.sections.size === s.sections.length;
+    return [{ pageId: s.pageId, rowId: s.rowId, sections: allSections ? undefined : [...p.sections].sort((a, b) => a - b), files: [...p.files] }];
+  });
+  return { sources: sources.data?.sources, loading: sources.isPending, picked, setPicked, material };
+}
+type MaterialState = ReturnType<typeof useMaterial>;
+
+const KIND_ICON = { page: <FileText size={14} />, database: <Table2 size={14} />, card: <StickyNote size={14} /> };
+
+function SourceParts({ source, pick, onChange }: { source: StudySource; pick: Picked; onChange: (p: Picked) => void }) {
+  const toggle = <T,>(set: Set<T>, v: T, on: boolean) => {
+    const next = new Set(set);
+    if (on) next.add(v);
+    else next.delete(v);
+    return next;
+  };
+  return (
+    <div className="space-y-0.5 py-1 ps-7">
+      {source.sections.length === 0 && source.files.length === 0 && <p className="text-xs text-faint">Nothing written here yet.</p>}
+      {source.sections.map((sec, i) => (
+        <label key={i} className="flex cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" checked={pick.sections.has(i)} onChange={(e) => onChange({ ...pick, sections: toggle(pick.sections, i, e.target.checked) })} />
+          <span className="min-w-0 flex-1 truncate">{sec.title}</span>
+          <span className="shrink-0 text-[11px] text-faint">{sec.words} words</span>
+        </label>
+      ))}
+      {source.files.map((f) => (
+        <label key={f.id} className={clsx('flex items-center gap-2 text-sm', f.readable ? 'cursor-pointer' : 'opacity-50')} title={f.readable ? undefined : 'No text could be read from this file (a scan or a picture)'}>
+          <input type="checkbox" disabled={!f.readable} checked={pick.files.has(f.id)} onChange={(e) => onChange({ ...pick, files: toggle(pick.files, f.id, e.target.checked) })} />
+          <Paperclip size={13} className="shrink-0 text-muted" />
+          <span className="min-w-0 flex-1 truncate">{f.name}</span>
+          {!f.readable && <span className="shrink-0 text-[11px] text-faint">no text</span>}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Choosing what the AI makes cards or questions from. In a card, only that card's sections and files. */
+function MaterialPicker({ state, inCard }: { state: MaterialState; inCard: boolean }) {
+  const { sources, loading, picked, setPicked } = state;
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState('');
+  if (loading) return <Spinner />;
+  if (!sources?.length) return <p className="text-sm text-muted">Nothing to use here yet.</p>;
+  const set = (s: StudySource, p: Picked) => setPicked((all) => ({ ...all, [sourceKey(s)]: p }));
+  if (inCard) {
+    const s = sources[0];
+    return (
+      <div className="rounded-xl border border-line p-2.5">
+        <div className="mb-1 text-xs font-medium text-muted">Use these parts of the card</div>
+        <SourceParts source={s} pick={picked[sourceKey(s)] ?? everything(s)} onChange={(p) => set(s, p)} />
+      </div>
+    );
+  }
+  const shown = filter.trim() ? sources.filter((s) => s.title.toLowerCase().includes(filter.trim().toLowerCase())) : sources;
+  const count = Object.values(picked).filter((p) => p.on).length;
+  return (
+    <div className="rounded-xl border border-line p-2.5">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="flex-1 text-xs font-medium text-muted">
+          Use {count} of {sources.length} — tick pages and cards, open one to pick its sections and files
+        </span>
+      </div>
+      {sources.length > 8 && <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Find a page or card" className="mb-1.5 h-8" />}
+      <div className="max-h-64 space-y-0.5 overflow-y-auto">
+        {shown.map((s) => {
+          const k = sourceKey(s);
+          const p = picked[k];
+          const expanded = open.has(k);
+          return (
+            <div key={k} className={clsx(s.kind === 'card' && 'ms-4')}>
+              <div className="flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-hover">
+                <input type="checkbox" checked={!!p?.on} onChange={(e) => set(s, e.target.checked ? (p && (p.sections.size || p.files.size) ? { ...p, on: true } : everything(s)) : { ...(p ?? everything(s)), on: false })} />
+                <span className="text-muted">{KIND_ICON[s.kind]}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{s.title}</span>
+                {p?.on && (p.sections.size < s.sections.length || p.files.size < s.files.filter((f) => f.readable).length) && <span className="text-[11px] text-faint">part</span>}
+                {(s.sections.length > 1 || s.files.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setOpen((o) => (o.has(k) ? new Set([...o].filter((x) => x !== k)) : new Set([...o, k])))}
+                    className="rounded p-0.5 text-faint hover:text-fg"
+                    title={expanded ? 'Hide sections and files' : 'Pick sections and files'}
+                  >
+                    <ChevronDown size={14} className={clsx('transition-transform', !expanded && '-rotate-90')} />
+                  </button>
+                )}
+              </div>
+              {expanded && <SourceParts source={s} pick={p ?? { ...everything(s), on: false }} onChange={(np) => set(s, { ...np, on: np.sections.size > 0 || np.files.size > 0 })} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface QuizQuestion {
   question: string;
   choices: string[];
@@ -135,8 +272,8 @@ interface QuizQuestion {
   explanation: string;
 }
 
-/** A multiple-choice quiz the AI makes from the page. */
-function QuizPanel({ pageId }: { pageId: string }) {
+/** A multiple-choice quiz the AI makes from what's picked. */
+function QuizPanel({ pageId, rowId, state }: { pageId: string; rowId: string | null; state: MaterialState }) {
   const ai = useAiAvailable();
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null);
   const [picked, setPicked] = useState<Record<number, number>>({});
@@ -145,7 +282,7 @@ function QuizPanel({ pageId }: { pageId: string }) {
   const make = async () => {
     setBusy(true);
     try {
-      const { questions } = await api<{ questions: QuizQuestion[] }>(`/api/pages/${pageId}/quiz`, { method: 'POST', body: { count: 8 } });
+      const { questions } = await api<{ questions: QuizQuestion[] }>(`/api/pages/${pageId}/quiz`, { method: 'POST', body: { count: 8, row: rowId, material: state.material } });
       setQuestions(questions);
       setPicked({});
     } catch (err) {
@@ -158,11 +295,14 @@ function QuizPanel({ pageId }: { pageId: string }) {
   if (!ai) return <p className="py-6 text-center text-sm text-muted">Quizzes are made by the AI: set up an AI connection first (AI → Settings).</p>;
   if (!questions)
     return (
-      <div className="py-8 text-center">
-        <p className="text-sm text-muted">The AI reads this page and makes a multiple-choice quiz from it.</p>
-        <Button className="mt-4" variant="primary" onClick={make} loading={busy}>
-          <Sparkles size={14} /> Quiz me
-        </Button>
+      <div className="space-y-3 py-2">
+        <p className="text-sm text-muted">The AI reads what you pick and makes a multiple-choice quiz from it.</p>
+        <MaterialPicker state={state} inCard={!!rowId} />
+        <div className="text-center">
+          <Button variant="primary" onClick={make} loading={busy} disabled={!state.material.length}>
+            <Sparkles size={14} /> Quiz me
+          </Button>
+        </div>
       </div>
     );
   const answered = Object.keys(picked).length;
@@ -202,25 +342,29 @@ function QuizPanel({ pageId }: { pageId: string }) {
       ))}
       <div className="flex items-center justify-between rounded-xl bg-accent/5 px-4 py-3 text-sm">
         <span>{answered === questions.length ? `You got ${right} of ${questions.length} right.` : `${answered} of ${questions.length} answered`}</span>
-        <Button onClick={make} loading={busy}>
-          <RotateCcw size={14} /> New quiz
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setQuestions(null)}>Change what's used</Button>
+          <Button onClick={make} loading={busy}>
+            <RotateCcw size={14} /> New quiz
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-/** The cards of a page: edit them, add them, or have the AI suggest some. */
-function CardsPanel({ pageId, cards, canEdit }: { pageId: string; cards: Flashcard[]; canEdit: boolean }) {
+/** The flashcards of a page or card: edit them, add them, or have the AI suggest some. */
+function CardsPanel({ pageId, rowId, cards, canEdit, state }: { pageId: string; rowId: string | null; cards: Flashcard[]; canEdit: boolean; state: MaterialState }) {
   const ai = useAiAvailable();
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
   const [suggested, setSuggested] = useState<{ front: string; back: string; keep: boolean }[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: deckKey(pageId) });
+  const [picking, setPicking] = useState(false);
+  const refresh = () => queryClient.invalidateQueries({ queryKey: deckKey(pageId, rowId) });
 
   const add = async (list: { front: string; back: string }[]) => {
-    await api(`/api/pages/${pageId}/flashcards`, { method: 'POST', body: { cards: list } });
+    await api(`/api/pages/${pageId}/flashcards`, { method: 'POST', body: { cards: list, row: rowId ?? '' } });
     await refresh();
   };
   const submit = async (e: FormEvent) => {
@@ -237,8 +381,9 @@ function CardsPanel({ pageId, cards, canEdit }: { pageId: string; cards: Flashca
   const suggest = async () => {
     setBusy(true);
     try {
-      const { cards } = await api<{ cards: { front: string; back: string }[] }>(`/api/pages/${pageId}/flashcards/generate`, { method: 'POST', body: { count: 12 } });
+      const { cards } = await api<{ cards: { front: string; back: string }[] }>(`/api/pages/${pageId}/flashcards/generate`, { method: 'POST', body: { count: 12, row: rowId, material: state.material } });
       setSuggested(cards.map((c) => ({ ...c, keep: true })));
+      setPicking(false);
     } catch (err) {
       toastError(err);
     } finally {
@@ -307,12 +452,23 @@ function CardsPanel({ pageId, cards, canEdit }: { pageId: string; cards: Flashca
               <Plus size={14} /> Add card
             </Button>
             {ai && (
-              <Button type="button" onClick={suggest} loading={busy}>
-                <Sparkles size={14} /> Make cards from this page
+              <Button type="button" onClick={() => setPicking((v) => !v)}>
+                <Sparkles size={14} /> Make cards with AI
               </Button>
             )}
           </div>
         </form>
+      )}
+      {canEdit && ai && picking && (
+        <div className="space-y-2">
+          <MaterialPicker state={state} inCard={!!rowId} />
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setPicking(false)}>Cancel</Button>
+            <Button variant="primary" onClick={suggest} loading={busy} disabled={!state.material.length}>
+              <Sparkles size={14} /> Make cards
+            </Button>
+          </div>
+        </div>
       )}
       {cards.length === 0 && <p className="py-4 text-center text-sm text-muted">No cards yet.</p>}
       {cards.map((c) => (
@@ -344,9 +500,13 @@ function CardsPanel({ pageId, cards, canEdit }: { pageId: string; cards: Flashca
   );
 }
 
-/** "Flashcards & quiz" for a page. */
-export function FlashcardsDialog({ pageId, pageTitle, workspaceId, onClose }: { pageId: string; pageTitle: string; workspaceId: string; onClose: () => void }) {
-  const deck = useQuery({ queryKey: deckKey(pageId), queryFn: () => api<{ cards: Flashcard[]; canEdit: boolean }>(`/api/pages/${pageId}/flashcards`) });
+/** "Flashcards & quiz" for a page, or for one card of a database (`rowId`). */
+export function FlashcardsDialog({ pageId, rowId = null, pageTitle, workspaceId, onClose }: { pageId: string; rowId?: string | null; pageTitle: string; workspaceId: string; onClose: () => void }) {
+  const deck = useQuery({
+    queryKey: deckKey(pageId, rowId),
+    queryFn: () => api<{ cards: Flashcard[]; canEdit: boolean }>(`/api/pages/${pageId}/flashcards${rowId ? `?row=${encodeURIComponent(rowId)}` : ''}`),
+  });
+  const material = useMaterial(pageId, rowId);
   const cards = deck.data?.cards ?? [];
   const due = useMemo(() => cards.filter((c) => !c.due || c.due <= todayIso()), [cards]);
   const [tab, setTab] = useState<'study' | 'cards' | 'quiz'>('study');
@@ -385,9 +545,9 @@ export function FlashcardsDialog({ pageId, pageTitle, workspaceId, onClose }: { 
               <Spinner />
             </div>
           ) : tab === 'cards' ? (
-            <CardsPanel pageId={pageId} cards={cards} canEdit={!!deck.data?.canEdit} />
+            <CardsPanel pageId={pageId} rowId={rowId} cards={cards} canEdit={!!deck.data?.canEdit} state={material} />
           ) : tab === 'quiz' ? (
-            <QuizPanel pageId={pageId} />
+            <QuizPanel pageId={pageId} rowId={rowId} state={material} />
           ) : session ? (
             <StudySession cards={session} workspaceId={workspaceId} />
           ) : (

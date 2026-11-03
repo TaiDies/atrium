@@ -435,7 +435,7 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
         limits: Effective;
         ownLimits: Limits;
         roleIds: string[];
-        usage: { workspaces: number; storageBytes: number; aiTokensToday: number; aiTokensMonth: number };
+        usage: { workspaces: number; storageBytes: number; aiRequestsToday: number; aiRequestsMonth: number; aiTokensToday: number; aiTokensMonth: number };
       }>(`/users/${user.id}`),
   });
   const [name, setName] = useState(user.name);
@@ -578,6 +578,14 @@ function AccountDialog({ user, onClose, onChanged }: { user: AdminUser; onClose:
               <span className="sm:col-span-2">{limitText('uploadMb', data.limits.uploadMb)}</span>
               <span className="text-muted">People per workspace</span>
               <span className="sm:col-span-2">{limitText('members', data.limits.members)}</span>
+              <span className="text-muted">AI requests today</span>
+              <span className="sm:col-span-2">
+                {data.usage.aiRequestsToday} of {limitText('aiRequestsPerDay', data.limits.aiRequestsPerDay)}
+              </span>
+              <span className="text-muted">AI requests this month</span>
+              <span className="sm:col-span-2">
+                {data.usage.aiRequestsMonth} of {limitText('aiRequestsPerMonth', data.limits.aiRequestsPerMonth)}
+              </span>
               <span className="text-muted">AI tokens today</span>
               <span className="sm:col-span-2">
                 {tokens(data.usage.aiTokensToday)} of {limitText('aiTokensPerDay', data.limits.aiTokensPerDay)}

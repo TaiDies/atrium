@@ -3,17 +3,19 @@ import { z } from 'zod';
 import { accessMap, requireMember, requirePage } from '../access.js';
 import { aiAccess, complete } from '../ai.js';
 import { requireUser } from '../auth.js';
-import { readDoc } from '../blocks.js';
+import { databaseRows, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
 import { config } from '../config.js';
 import { one, query, tx } from '../db.js';
 import { useAi } from '../limits.js';
-import { databaseToCsv, docToMarkdown } from '../readable.js';
+import { cardProperties, databaseToCsv, docToMarkdown } from '../readable.js';
 import { addDays, today } from '../repeat.js';
 import { HttpError, idParams, parse } from '../util.js';
 
-// Flashcards kept with a page, reviewed with spaced repetition (each person on their own schedule), and
-// quizzes the AI makes from a page.
+// Flashcards kept with a page or a card, reviewed with spaced repetition (each person on their own
+// schedule), and quizzes the AI makes. The AI works from "material" the person picks: the page or card,
+// and — in a page — its sub-pages, cards and linked pages, down to which sections (headings) and which
+// files of each are included.
 
 const CARD = z.object({ front: z.string().trim().min(1, 'Write the question').max(2000), back: z.string().max(5000).default('') });
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -21,29 +23,161 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const CARD_COLUMNS = `c.id, c.page_id as "pageId", c.front, c.back,
   to_char(r.due, 'YYYY-MM-DD') as due, coalesce(r.interval_days, 0) as interval, coalesce(r.reps, 0) as reps`;
 
-/** The page as text, for the AI to make cards or a quiz from. */
-async function pageText(pageId: string, title: string, type: string) {
-  const isDb = (DATABASE_TYPES as readonly string[]).includes(type);
-  return readDoc(pageId, null, (doc) =>
-    isDb ? databaseToCsv(doc) : docToMarkdown(doc, title, { pageLink: () => ({ title: 'a page', href: null }), fileLink: () => null, eventLabel: () => null, boardLabel: () => null }),
+const noLinks = { pageLink: () => ({ title: 'a page', href: null }), fileLink: () => null, eventLabel: () => null, boardLabel: () => null };
+
+interface Section {
+  title: string;
+  text: string;
+}
+
+/** A document's Markdown split at its headings (the part before the first heading comes first). */
+function splitSections(markdown: string): Section[] {
+  const lines = markdown.split('\n').slice(1); // the first line is the title
+  const out: Section[] = [{ title: 'Before the first heading', text: '' }];
+  let fence = false;
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) fence = !fence;
+    const h = !fence && /^#{2,7} (.*)$/.exec(line);
+    if (h) out.push({ title: h[1].trim() || 'Untitled section', text: line + '\n' });
+    else out[out.length - 1].text += line + '\n';
+  }
+  return out.filter((sec, i) => i > 0 || sec.text.trim());
+}
+
+interface Source {
+  pageId: string;
+  rowId: string | null;
+  title: string;
+  kind: 'page' | 'database' | 'card';
+  sections: Section[];
+  /** Files in it: only ones whose text could be read are useful to the AI. */
+  files: { id: string; name: string; readable: boolean }[];
+}
+
+async function filesIn(pageId: string, rowId: string | null, extra: string[] = []) {
+  return query<{ id: string; name: string; readable: boolean }>(
+    `select f.id, f.filename as name, coalesce(length(f.text_content), 0) > 0 as readable from files f
+      where f.workspace_id = (select workspace_id from pages where id = $1)
+        and (f.id in (select file_id from file_refs where page_id = $1 and row_id = $2) or f.id = any($3::uuid[]))
+      order by f.filename`,
+    [pageId, rowId ?? '', extra],
   );
 }
 
-/** Asks the AI for JSON made from a page. */
-async function askAboutPage(userId: string, pageId: string, instruction: string): Promise<unknown> {
-  const page = await one<{ title: string; type: string }>('select title, type from pages where id = $1', [pageId]);
-  const text = (await pageText(pageId, page?.title ?? '', page?.type ?? 'document')).trim();
-  if (text.split('\n').filter((l) => l.trim()).length < 2) throw new HttpError(400, 'This page has too little in it to make cards from');
+/** A page or card as study material: its text by section, and its files. */
+async function sourceOf(pageId: string, rowId: string | null): Promise<Source | null> {
+  const page = await one<{ title: string; type: string }>('select title, type from pages where id = $1 and deleted_at is null', [pageId]);
+  if (!page) return null;
+  const isDb = (DATABASE_TYPES as readonly string[]).includes(page.type);
+  if (rowId) {
+    if (!isDb) return null;
+    const card = await readDoc(pageId, null, (doc) => ({ title: databaseRows(doc).find((r) => r.id === rowId)?.title ?? null, ...cardProperties(doc, rowId) }));
+    if (!card.title) return null;
+    const title = card.title;
+    const body = await readDoc(pageId, rowId, (doc) => docToMarkdown(doc, title, noLinks));
+    const sections = splitSections(body);
+    if (card.text) sections.unshift({ title: 'Properties', text: card.text + '\n' });
+    return { pageId, rowId, title, kind: 'card', sections, files: await filesIn(pageId, rowId, card.files) };
+  }
+  if (isDb) {
+    const csv = await readDoc(pageId, null, (doc) => databaseToCsv(doc));
+    return { pageId, rowId: null, title: page.title || 'Untitled', kind: 'database', sections: [{ title: 'All cards (as a table)', text: csv }], files: [] };
+  }
+  const md = await readDoc(pageId, null, (doc) => docToMarkdown(doc, page.title, noLinks));
+  return { pageId, rowId: null, title: page.title || 'Untitled', kind: 'page', sections: splitSections(md), files: await filesIn(pageId, null) };
+}
+
+const MAX_SOURCES = 150;
+
+/** What can be used from a page: itself, the pages inside it, cards of databases in or under it, and pages it links to. */
+async function sourcesFor(userId: string, pageId: string, workspaceId: string): Promise<Source[]> {
+  const access = await accessMap(userId, workspaceId);
+  const may = (id: string) => (access.get(id) ?? 'none') !== 'none';
+  const pages = await query<{ id: string; type: string }>(
+    `with recursive sub as (
+       select id, 0 as depth from pages where id = $1
+       union all select p.id, sub.depth + 1 from pages p join sub on p.parent_id = sub.id where p.deleted_at is null and sub.depth < 4
+     )
+     select p.id, p.type from pages p where p.id in (select id from sub)
+     union
+     select p.id, p.type from page_links l join pages p on p.id = l.target_page
+      where l.source_page = $1 and p.deleted_at is null and p.workspace_id = $2`,
+    [pageId, workspaceId],
+  );
+  const ordered = [...pages.filter((p) => p.id === pageId), ...pages.filter((p) => p.id !== pageId)].filter((p) => may(p.id));
+  const out: Source[] = [];
+  for (const p of ordered) {
+    if (out.length >= MAX_SOURCES) break;
+    const src = await sourceOf(p.id, null);
+    if (src) out.push(src);
+    if ((DATABASE_TYPES as readonly string[]).includes(p.type)) {
+      const rows = await readDoc(p.id, null, (doc) => databaseRows(doc));
+      for (const r of rows) {
+        if (out.length >= MAX_SOURCES) break;
+        const card = await sourceOf(p.id, r.id);
+        if (card) out.push(card);
+      }
+    }
+  }
+  return out;
+}
+
+const MATERIAL = z
+  .array(
+    z.object({
+      pageId: z.uuid(),
+      rowId: z.string().min(1).max(100).nullable().default(null),
+      /** Which sections (by position); left out = all of them. */
+      sections: z.array(z.number().int().min(0)).max(1000).optional(),
+      files: z.array(z.uuid()).max(100).default([]),
+    }),
+  )
+  .min(1)
+  .max(MAX_SOURCES);
+type Material = z.infer<typeof MATERIAL>;
+
+const MAX_TEXT = 60_000;
+
+/** The chosen material as one text for the AI (checking the person may see each part). */
+async function materialText(userId: string, workspaceId: string, material: Material): Promise<string> {
+  const access = await accessMap(userId, workspaceId);
+  const parts: string[] = [];
+  for (const m of material) {
+    if ((access.get(m.pageId) ?? 'none') === 'none') throw new HttpError(404, 'Page not found');
+    const src = await sourceOf(m.pageId, m.rowId);
+    if (!src) continue;
+    const chosen = m.sections ? src.sections.filter((_, i) => m.sections!.includes(i)) : src.sections;
+    let text = chosen.map((sec) => sec.text).join('\n').trim();
+    const fileIds = m.files.filter((id) => src.files.some((f) => f.id === id));
+    if (fileIds.length) {
+      const files = await query<{ filename: string; text_content: string | null }>('select filename, text_content from files where id = any($1::uuid[])', [fileIds]);
+      for (const f of files) if (f.text_content?.trim()) text += `\n\n[File: ${f.filename}]\n${f.text_content.trim()}`;
+    }
+    if (text.trim()) parts.push(`<source title="${src.title.replace(/"/g, "'")}" kind="${src.kind}">\n${text.trim()}\n</source>`);
+  }
+  const all = parts.join('\n\n');
+  if (all.split('\n').filter((l) => l.trim()).length < 3) throw new HttpError(400, 'There is too little in what you picked to make cards or questions from');
+  return all.slice(0, MAX_TEXT);
+}
+
+/** Asks the AI for JSON made from the chosen material. */
+async function askAbout(userId: string, workspaceId: string, material: Material, instruction: string): Promise<unknown> {
+  const text = await materialText(userId, workspaceId, material);
   const a = await aiAccess(userId);
   if (!a.active) throw new HttpError(400, 'Set up an AI connection first (AI → Settings)');
   await useAi(userId);
-  const system = `You make study material in ${config.appName} from a page the person gives you. Use only what the page says. Write in the page's language. Reply with ONLY JSON as described.`;
-  const answer = await complete(a.active, system, [{ role: 'user', content: `<page>\n${text.slice(0, 60_000)}\n</page>\n\n${instruction}` }], { json: true });
+  const system = `You make study material in ${config.appName} from what the person gives you (pages, cards and files). Use only what it says. Write in its language. Reply with ONLY JSON as described.`;
+  const answer = await complete(a.active, system, [{ role: 'user', content: `<material>\n${text}\n</material>\n\n${instruction}` }], { json: true });
   try {
     return JSON.parse(answer.replace(/^```(?:json)?\n([\s\S]*?)\n```\s*$/, '$1'));
   } catch {
     throw new HttpError(502, 'The AI gave an answer that could not be read. Try again.');
   }
+}
+
+/** The request's material, or by default the whole page (or card). */
+function materialOf(body: { material?: Material; row?: string | null }, pageId: string): Material {
+  return body.material ?? [{ pageId, rowId: body.row ?? null, files: [] }];
 }
 
 /**
@@ -76,24 +210,25 @@ export async function flashcardRoutes(app: FastifyInstance) {
   app.get('/pages/:id/flashcards', async (req) => {
     const { id } = parse(idParams, req.params);
     const page = await requirePage(req.user.id, id, 'view');
+    const { row } = parse(z.object({ row: z.string().max(100).default('') }), req.query);
     const cards = await query(
       `select ${CARD_COLUMNS} from flashcards c left join flashcard_reviews r on r.card_id = c.id and r.user_id = $2
-        where c.page_id = $1 order by c.position, c.created_at`,
-      [id, req.user.id],
+        where c.page_id = $1 and c.row_id = $3 order by c.position, c.created_at`,
+      [id, req.user.id, row],
     );
     return { cards, canEdit: page.access !== 'view' };
   });
 
   app.post('/pages/:id/flashcards', async (req) => {
     const { id } = parse(idParams, req.params);
-    const { cards } = parse(z.object({ cards: z.array(CARD).min(1).max(200) }), req.body);
+    const { cards, row } = parse(z.object({ cards: z.array(CARD).min(1).max(200), row: z.string().max(100).default('') }), req.body);
     const page = await requirePage(req.user.id, id, 'edit');
-    const last = await one<{ p: number }>('select coalesce(max(position), 0) as p from flashcards where page_id = $1', [id]);
+    const last = await one<{ p: number }>('select coalesce(max(position), 0) as p from flashcards where page_id = $1 and row_id = $2', [id, row]);
     await tx(async (c) => {
       let pos = last?.p ?? 0;
       for (const card of cards) {
         pos += 1;
-        await query('insert into flashcards (workspace_id, page_id, front, back, position, created_by) values ($1, $2, $3, $4, $5, $6)', [page.workspace_id, id, card.front, card.back, pos, req.user.id], c);
+        await query('insert into flashcards (workspace_id, page_id, row_id, front, back, position, created_by) values ($1, $2, $3, $4, $5, $6, $7)', [page.workspace_id, id, row, card.front, card.back, pos, req.user.id], c);
       }
     });
     return { added: cards.length };
@@ -158,14 +293,29 @@ export async function flashcardRoutes(app: FastifyInstance) {
     return { cards: cards.slice(0, 200), total: cards.length };
   });
 
-  // Cards the AI suggests from the page (not saved: the person picks which to keep).
+  // What the AI can use: in a card, just that card's sections and files; in a page, also what's in and linked from it.
+  app.get('/pages/:id/study-sources', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const { row } = parse(z.object({ row: z.string().min(1).max(100).optional() }), req.query);
+    const page = await requirePage(req.user.id, id, 'view');
+    const sources = row ? [await sourceOf(id, row)].filter((x) => !!x) : await sourcesFor(req.user.id, id, page.workspace_id);
+    return {
+      sources: sources.map((src) => ({ ...src, sections: src.sections.map((sec) => ({ title: sec.title, words: sec.text.split(/\s+/).filter(Boolean).length })) })),
+    };
+  });
+
+  const GENERATE = z.object({ material: MATERIAL.optional(), row: z.string().min(1).max(100).nullable().default(null) });
+
+  // Cards the AI suggests (not saved: the person picks which to keep).
   app.post('/pages/:id/flashcards/generate', async (req) => {
     const { id } = parse(idParams, req.params);
-    const { count } = parse(z.object({ count: z.number().int().min(1).max(50).default(12) }), req.body ?? {});
-    await requirePage(req.user.id, id, 'edit');
-    const json = (await askAboutPage(
+    const body = parse(GENERATE.extend({ count: z.number().int().min(1).max(50).default(12) }), req.body ?? {});
+    const { count } = body;
+    const page = await requirePage(req.user.id, id, 'edit');
+    const json = (await askAbout(
       req.user.id,
-      id,
+      page.workspace_id,
+      materialOf(body, id),
       `Make ${count} flashcards covering the most important facts, terms and ideas. JSON: {"cards": [{"front": "a short question", "back": "the answer, short"}]}`,
     )) as { cards?: unknown };
     const cards = (Array.isArray(json.cards) ? json.cards : [])
@@ -177,15 +327,17 @@ export async function flashcardRoutes(app: FastifyInstance) {
     return { cards };
   });
 
-  // A multiple-choice quiz from the page (made fresh each time).
+  // A multiple-choice quiz (made fresh each time).
   app.post('/pages/:id/quiz', async (req) => {
     const { id } = parse(idParams, req.params);
-    const { count } = parse(z.object({ count: z.number().int().min(1).max(30).default(8) }), req.body ?? {});
-    await requirePage(req.user.id, id, 'view');
-    const json = (await askAboutPage(
+    const body = parse(GENERATE.extend({ count: z.number().int().min(1).max(30).default(8) }), req.body ?? {});
+    const { count } = body;
+    const page = await requirePage(req.user.id, id, 'view');
+    const json = (await askAbout(
       req.user.id,
-      id,
-      `Make a quiz of ${count} multiple-choice questions testing understanding of the page. Each has 4 choices with exactly one correct. JSON: {"questions": [{"question": "…", "choices": ["…","…","…","…"], "answer": index of the correct choice (0-3), "explanation": "one sentence on why"}]}`,
+      page.workspace_id,
+      materialOf(body, id),
+      `Make a quiz of ${count} multiple-choice questions testing understanding of the material. Each has 4 choices with exactly one correct. JSON: {"questions": [{"question": "…", "choices": ["…","…","…","…"], "answer": index of the correct choice (0-3), "explanation": "one sentence on why"}]}`,
     )) as { questions?: unknown };
     const Q = z.object({ question: z.string().min(1).max(1000), choices: z.array(z.string().max(500)).min(2).max(6), answer: z.number().int().min(0), explanation: z.string().max(1000).default('') });
     const questions = (Array.isArray(json.questions) ? json.questions : [])

@@ -168,7 +168,7 @@ Atrium works with **Anthropic (Claude)**, **OpenAI or any OpenAI-compatible serv
 ones like Ollama or LM Studio — set the base address) and **Google Gemini**.
 
 - **For everyone:** admin panel → **AI**: provider, model, API key (and base address for compatible
-  servers); choose whether people may use their own key instead. Set AI limits (in tokens, per day and per month) under
+  servers); choose whether people may use their own key instead. Set AI limits (requests and tokens, per day and per month) under
   **Limits** — for everyone, per role or per person.
 - **Just for yourself:** in the app, open **AI assistant** → **AI settings** (the sliders button at the top) → pick a provider, paste
   your key, choose a model.
@@ -221,7 +221,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 In the admin panel: **Accounts** (everyone's accounts, their roles, usage and AI, delete accounts), **Roles** (permissions —
 use AI, create workspaces, invite people, upload files, start meetings, create groups and teams, publish pages, API tokens —
 and optional limits, given to people; everyone has the **Everyone** role), **Workspaces**, **Limits**
-(storage, workspaces, members, AI tokens a day and a month — for everyone, per role or per account), **Sign-ups & security**
+(storage, workspaces, members, AI requests and AI tokens, each a day and a month — for everyone, per role or per account), **Sign-ups & security**
 (open or closed sign-ups, email verification).
 
 ---

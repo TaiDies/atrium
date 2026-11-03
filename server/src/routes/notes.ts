@@ -26,6 +26,70 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { HttpError, idParams, parse } from '../util.js';
 
+/** Deletes a file: its blocks everywhere, its notes layer, and the stored file. */
+export async function deleteFile(access: Map<string, Access>, id: string) {
+  await removeEverywhere(access, { table: 'file_refs', column: 'file_id', id }, fileBlock(id));
+  closeFileDoc(id);
+  await query('delete from files where id = $1', [id]);
+  await unlink(path.join(config.uploadDir, id)).catch(() => {});
+}
+
+/** Files of a workspace nothing uses (only `uploadedBy`'s, if given). New uploads (under 10 minutes) are left alone. */
+async function unusedFiles(workspaceId: string, uploadedBy: string | null) {
+  const inState = (table: string, join: string) =>
+    `not exists (select 1 from ${table} ${join} and position(convert_to(f.id::text, 'UTF8') in x.state) > 0)`;
+  return query<{ id: string; name: string; size: string; createdAt: string }>(
+    `select f.id, f.filename as name, f.size::text as size, f.created_at as "createdAt" from files f
+      where f.workspace_id = $1 and not f.is_note and f.created_at < now() - interval '10 minutes'
+        and ($2::uuid is null or f.uploaded_by = $2)
+        and not exists (select 1 from file_refs r where r.file_id = f.id)
+        and not exists (select 1 from file_annotations a where a.file_id = f.id and coalesce(a.stroke_count, 0) > 0)
+        and not exists (select 1 from pages p where p.workspace_id = $1 and (p.cover like '%' || f.id::text || '%' or p.icon like '%' || f.id::text || '%'))
+        and not exists (select 1 from chat_messages m join chats c on c.id = m.chat_id where c.workspace_id = $1 and m.body like '%' || f.id::text || '%')
+        and not exists (select 1 from workspaces w where w.id = $1 and w.icon like '%' || f.id::text || '%')
+        and not exists (select 1 from teamspaces t where t.workspace_id = $1 and t.icon like '%' || f.id::text || '%')
+        and not exists (select 1 from templates t where t.workspace_id = $1 and t.icon like '%' || f.id::text || '%')
+        and ${inState('page_content x', 'join pages p on p.id = x.page_id where p.workspace_id = $1')}
+        and ${inState('row_documents x', 'join pages p on p.id = x.page_id where p.workspace_id = $1')}
+        and ${inState('page_versions x', 'join pages p on p.id = x.page_id where p.workspace_id = $1')}
+        and ${inState('(select data as state, workspace_id from templates) x', 'where x.workspace_id = $1')}
+        and ${inState('whiteboards x', 'where x.workspace_id = $1')}
+      order by f.created_at`,
+    [workspaceId, uploadedBy],
+  );
+}
+
+/**
+ * Files used only in a page and the pages and cards inside it — in no other page, card, cover, chat
+ * message, template or whiteboard — so they can go with it.
+ */
+export async function filesOnlyIn(pageId: string) {
+  const outside = (table: string) =>
+    `not exists (select 1 from ${table} x join pages p on p.id = x.page_id
+                  where p.workspace_id = f.workspace_id and p.id not in (select id from sub) and position(convert_to(f.id::text, 'UTF8') in x.state) > 0)`;
+  return query<{ id: string }>(
+    `with recursive sub as (
+       select id from pages where id = $1
+       union all select p.id from pages p join sub on p.parent_id = sub.id
+     )
+     select f.id from files f
+      where f.workspace_id = (select workspace_id from pages where id = $1) and not f.is_note
+        and (exists (select 1 from file_refs r where r.file_id = f.id and r.page_id in (select id from sub))
+             or exists (select 1 from pages p where p.id in (select id from sub) and p.cover like '%' || f.id::text || '%'))
+        and not exists (select 1 from file_refs r where r.file_id = f.id and r.page_id not in (select id from sub))
+        and not exists (select 1 from pages p where p.workspace_id = f.workspace_id and p.id not in (select id from sub)
+                          and (p.cover like '%' || f.id::text || '%' or p.icon like '%' || f.id::text || '%'))
+        and not exists (select 1 from chat_messages m join chats c on c.id = m.chat_id where c.workspace_id = f.workspace_id and m.body like '%' || f.id::text || '%')
+        and not exists (select 1 from workspaces w where w.id = f.workspace_id and w.icon like '%' || f.id::text || '%')
+        and not exists (select 1 from teamspaces t where t.workspace_id = f.workspace_id and t.icon like '%' || f.id::text || '%')
+        and ${outside('page_content')}
+        and ${outside('row_documents')}
+        and not exists (select 1 from templates t where t.workspace_id = f.workspace_id and position(convert_to(f.id::text, 'UTF8') in t.data) > 0)
+        and not exists (select 1 from whiteboards w where w.workspace_id = f.workspace_id and position(convert_to(f.id::text, 'UTF8') in w.state) > 0)`,
+    [pageId],
+  );
+}
+
 interface FileRow {
   id: string;
   workspace_id: string;
@@ -123,12 +187,33 @@ export async function noteRoutes(app: FastifyInstance) {
     const file = await fileOr404(id);
     const role = await requireMember(req.user.id, file.workspace_id);
     if (role !== 'owner' && file.uploaded_by !== req.user.id) throw new HttpError(403, 'Only the person who added this file or a workspace owner can delete it');
-    const access = await accessMap(req.user.id, file.workspace_id);
-    await removeEverywhere(access, { table: 'file_refs', column: 'file_id', id }, fileBlock(id));
-    closeFileDoc(id);
-    await query('delete from files where id = $1', [id]);
-    await unlink(path.join(config.uploadDir, id)).catch(() => {});
+    await deleteFile(await accessMap(req.user.id, file.workspace_id), id);
     return { ok: true };
+  });
+
+  // Files nothing uses any more (no page, card, cover, chat message, whiteboard, template or page
+  // history mentions them). Handwritten notes are kept. Members see only what they added themselves.
+  app.get('/workspaces/:id/files/unused', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const role = await requireMember(req.user.id, id);
+    const files = await unusedFiles(id, role === 'owner' ? null : req.user.id);
+    return { files, size: files.reduce((n, f) => n + Number(f.size), 0) };
+  });
+
+  app.post('/workspaces/:id/files/unused/delete', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const { ids } = parse(z.object({ ids: z.array(z.uuid()).min(1).max(5000) }), req.body);
+    const role = await requireMember(req.user.id, id);
+    // Checked again now: only files that are still unused go.
+    const unused = new Set((await unusedFiles(id, role === 'owner' ? null : req.user.id)).map((f) => f.id));
+    const access = await accessMap(req.user.id, id);
+    let deleted = 0;
+    for (const fileId of ids) {
+      if (!unused.has(fileId)) continue;
+      await deleteFile(access, fileId);
+      deleted += 1;
+    }
+    return { deleted };
   });
 
   app.get('/files/:id/locations', async (req) => {
