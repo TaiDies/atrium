@@ -1168,6 +1168,7 @@ export const fr: Record<string, string> = {
   "For a repeating task: it stays overdue on the first day not done, and each tick moves it to the next day. Once caught up you can keep going ahead.": "Pour une tâche répétée : elle reste en retard sur le premier jour non fait, et chaque coche la passe au jour suivant. Une fois à jour, vous pouvez continuer en avance.",
   "Nothing to undo": "Rien à annuler",
   "Untick the task first": "Décochez d’abord la tâche",
+  "Where you stopped": "Où vous vous êtes arrêté",
 };
 
 export const frPatterns: [RegExp, string][] = [
@@ -1227,4 +1228,9 @@ export const frPatterns: [RegExp, string][] = [
   [/^\+(\d+) more$/, "+$1 de plus"],
   [/^All caught up\. You can keep going with (.+)\.$/, "Vous êtes à jour. Vous pouvez continuer avec $1."],
   [/^Last time \((.+?)\): (.+)$/, "La dernière fois ($1) : $2"],
+  [/^Page (\d+) of (\d+)$/, "Page $1 sur $2"],
+  [/^(\d+)% through$/, "À $1 %"],
+  [/^Slide (\d+) of (\d+)$/, "Diapositive $1 sur $2"],
+  [/^Stopped at ([\d:]+)$/, "Arrêté à $1"],
+  [/^You stopped here (.+)$/, "Vous vous êtes arrêté ici $1"],
 ];

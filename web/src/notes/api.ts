@@ -1,3 +1,4 @@
+import type { SavedPosition } from '../lib/filePosition';
 import { useQuery } from '@tanstack/react-query';
 import { api, type PageType } from '../lib/api';
 import { queryClient } from '../lib/queries';
@@ -18,6 +19,8 @@ export interface WorkspaceFile {
   updatedAt: string;
   uploadedBy: string | null;
   locations: FileLocation[];
+  /** Where this person stopped in it. */
+  position?: SavedPosition | null;
 }
 
 export { useOutline } from '../lib/placement';

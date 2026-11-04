@@ -1,3 +1,4 @@
+import { usePositionSaver } from '../../lib/filePosition';
 import clsx from 'clsx';
 import {
   AlignCenter,
@@ -114,7 +115,9 @@ export const SlidesEditor = forwardRef<EditorHandle, Props>(function SlidesEdito
   const undo = useMemo(() => new Y.UndoManager([slidesArr, deckMap], { trackedOrigins: new Set([LOCAL]), captureTimeout: 400 }), [slidesArr, deckMap]);
   const [slides, setSlides] = useState<Slide[]>(() => readSlides(slidesArr));
   const [deck, setDeck] = useState<Deck>(() => readDeck(deckMap));
-  const [current, setCurrent] = useState(0);
+  // Opens on the slide this person was on last time, on any device.
+  const [current, setCurrent] = useState(() => (file.position?.position.kind === 'slide' ? file.position.position.slide - 1 : 0));
+  const savePlace = usePositionSaver(file.id);
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [presenting, setPresenting] = useState<number | null>(null);
@@ -137,6 +140,9 @@ export const SlidesEditor = forwardRef<EditorHandle, Props>(function SlidesEdito
   useEffect(() => {
     if (current > slides.length - 1) setCurrent(Math.max(0, slides.length - 1));
   }, [slides.length, current]);
+  useEffect(() => {
+    if (slides.length && current < slides.length) savePlace({ kind: 'slide', slide: current + 1, slides: slides.length });
+  }, [current, slides.length, savePlace]);
 
   // Presence: which slide each person is on and what they have selected.
   useEffect(() => {

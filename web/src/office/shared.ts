@@ -1,3 +1,4 @@
+import type { FilePosition } from '../lib/filePosition';
 import { useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { ApiError } from '../lib/api';
@@ -16,6 +17,8 @@ export interface OfficeFile {
   mimeType: string;
   size: number;
   url: string;
+  /** Where this person stopped in it. */
+  position?: { position: FilePosition } | null;
 }
 
 export const extOf = (name: string) => (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? '').toLowerCase();

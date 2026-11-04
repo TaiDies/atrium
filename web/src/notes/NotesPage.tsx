@@ -1,6 +1,8 @@
+import { positionLabel } from '../lib/filePosition';
 import { useOpenFile } from '../lib/openFile';
 import clsx from 'clsx';
 import {
+  BookmarkCheck,
   Download,
   Eraser,
   ExternalLink,
@@ -385,6 +387,17 @@ function useFileMenu(file: WorkspaceFile, onOpen: () => void, onSettings: () => 
   return { menu, openMenu: (e: React.MouseEvent<HTMLElement>) => (e.stopPropagation(), setAnchor(e.currentTarget.getBoundingClientRect())) };
 }
 
+/** "Page 12 of 40" — where this person stopped in the file, if they've opened it before. */
+function StoppedAt({ file }: { file: WorkspaceFile }) {
+  const label = positionLabel(file.position?.position);
+  if (!label) return null;
+  return (
+    <span className="mt-0.5 flex items-center gap-1 truncate text-xs font-medium text-accent" title={`You stopped here ${timeAgo(file.position!.updatedAt)}`}>
+      <BookmarkCheck size={11} className="shrink-0" /> {label}
+    </span>
+  );
+}
+
 function NoteCard({ file, onOpen, onSettings }: { file: WorkspaceFile; onOpen: () => void; onSettings: () => void }) {
   const kind = kindOf(file);
   const { menu, openMenu } = useFileMenu(file, onOpen, onSettings);
@@ -412,6 +425,7 @@ function NoteCard({ file, onOpen, onSettings }: { file: WorkspaceFile; onOpen: (
             {file.name.replace(/\.pdf$/i, kind === 'note' ? '' : '.pdf')}
           </div>
           <div className="truncate text-xs text-faint">{timeAgo(file.updatedAt)}</div>
+          <StoppedAt file={file} />
           {where && (
             <div className="mt-0.5 truncate text-xs text-muted" title={where}>
               {where}
@@ -443,6 +457,7 @@ function NoteRow({ file, onOpen, onSettings }: { file: WorkspaceFile; onOpen: ()
             {kindLabel(kind)} · {timeAgo(file.updatedAt)}
             {where ? ` · ${where}` : ''}
           </span>
+          <StoppedAt file={file} />
         </span>
       </button>
       <button data-menu-button onClick={openMenu} className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted hover:bg-active hover:text-fg" aria-label="More">

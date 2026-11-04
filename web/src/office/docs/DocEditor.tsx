@@ -55,6 +55,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
+import { useScrollPlace } from '../../lib/filePosition';
 import { forwardRef, type ReactNode, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { type Anchor, Avatar, Button, Dialog, IconButton, Popover, toastError } from '../../components/ui';
@@ -173,6 +174,7 @@ export const DocEditor = forwardRef<EditorHandle, Props>(function DocEditor({ fi
   const comments = useMemo(() => session.doc.getMap<CommentEntry>('comments'), [session]);
   const [setup, setSetup] = useState<PageSetup>(() => setupMap.get('setup') ?? DEFAULT_SETUP);
   const [zoom, setZoom] = useState(1);
+  const scroller = useRef<HTMLDivElement>(null);
   const [find, setFind] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentList, setCommentList] = useState<CommentEntry[]>([]);
@@ -261,6 +263,8 @@ export const DocEditor = forwardRef<EditorHandle, Props>(function DocEditor({ fi
   const { w, h } = pageSize(setup);
   const m = setup.margins;
 
+  useScrollPlace(scroller, file.id, file.position?.position, !!editor, zoom);
+
   return (
     <div className="flex h-full flex-col bg-sidebar">
       {!readOnly && editor && (
@@ -277,7 +281,7 @@ export const DocEditor = forwardRef<EditorHandle, Props>(function DocEditor({ fi
       )}
       {find && editor && <FindBar editor={editor} readOnly={readOnly} onClose={() => setFind(false)} />}
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 flex-1 overflow-auto px-3 py-6 sm:px-6">
+        <div ref={scroller} className="min-h-0 flex-1 overflow-auto px-3 py-6 sm:px-6">
           <div
             className="doc-paper mx-auto bg-white text-black shadow-pop"
             style={{ width: w * MM, minHeight: h * MM, padding: `${m.top * MM}px ${m.right * MM}px ${m.bottom * MM}px ${m.left * MM}px`, zoom } as React.CSSProperties}

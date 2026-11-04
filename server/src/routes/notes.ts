@@ -25,6 +25,7 @@ import { placeBlock, placeBody, removeEverywhere } from '../placement.js';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { positionsFor, type SavedPosition } from '../filePositions.js';
 
 /** Deletes a file: its blocks everywhere, its notes layer, and the stored file. */
 export async function deleteFile(access: Map<string, Access>, id: string) {
@@ -112,7 +113,7 @@ async function fileOr404(id: string) {
 
 const locationsFor = (ids: string[], access: Map<string, Access>) => locationsIn('file_refs', 'file_id', ids, access);
 
-function summary(f: FileRow, locations: Location[], strokes: number) {
+function summary(f: FileRow, locations: Location[], strokes: number, position: SavedPosition | null = null) {
   return {
     id: f.id,
     url: `/api/files/${f.id}`,
@@ -125,6 +126,8 @@ function summary(f: FileRow, locations: Location[], strokes: number) {
     updatedAt: f.updated_at,
     uploadedBy: f.uploaded_by,
     locations,
+    /** Where this person stopped in it. */
+    position,
   };
 }
 
@@ -143,11 +146,12 @@ export async function noteRoutes(app: FastifyInstance) {
     );
     const anyRefs = new Set((await query<{ file_id: string }>('select distinct file_id from file_refs where file_id = any($1::uuid[])', [files.map((f) => f.id)])).map((r) => r.file_id));
     const locations = await locationsFor(files.map((f) => f.id), access);
+    const positions = await positionsFor(req.user.id, files.map((f) => f.id));
     return {
       files: files
         // A file used only on pages hidden from this user stays hidden, unless they uploaded it.
         .filter((f) => !anyRefs.has(f.id) || locations.has(f.id) || f.uploaded_by === req.user.id)
-        .map((f) => summary(f, locations.get(f.id) ?? [], f.strokes ?? 0)),
+        .map((f) => summary(f, locations.get(f.id) ?? [], f.strokes ?? 0, positions.get(f.id) ?? null)),
     };
   });
 

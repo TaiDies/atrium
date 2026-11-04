@@ -1195,6 +1195,7 @@ export const ar: Record<string, string> = {
   "For a repeating task: it stays overdue on the first day not done, and each tick moves it to the next day. Once caught up you can keep going ahead.": "للمهمة المتكررة: تبقى متأخرة على أول يوم لم يُنجز، وكل علامة تنقلها إلى اليوم التالي. بعد أن تلحق يمكنك المتابعة مسبقًا.",
   "Nothing to undo": "لا شيء للتراجع عنه",
   "Untick the task first": "ألغِ العلامة عن المهمة أولًا",
+  "Where you stopped": "حيث توقفت",
 };
 
 /**
@@ -1258,4 +1259,9 @@ export const arPatterns: [RegExp, string][] = [
   [/^\+(\d+) more$/, "+$1 إضافية"],
   [/^All caught up\. You can keep going with (.+)\.$/, "أنت على اطلاع بكل شيء. يمكنك المتابعة مع $1."],
   [/^Last time \((.+?)\): (.+)$/, "آخر مرة ($1): $2"],
+  [/^Page (\d+) of (\d+)$/, "الصفحة $1 من $2"],
+  [/^(\d+)% through$/, "وصلت إلى $1%"],
+  [/^Slide (\d+) of (\d+)$/, "الشريحة $1 من $2"],
+  [/^Stopped at ([\d:]+)$/, "توقفت عند $1"],
+  [/^You stopped here (.+)$/, "توقفت هنا $1"],
 ];

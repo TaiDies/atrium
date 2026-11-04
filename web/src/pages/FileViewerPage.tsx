@@ -26,7 +26,7 @@ import {
   Undo2,
 } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import * as Y from 'yjs';
@@ -36,6 +36,7 @@ import { type Anchor, Menu, MenuItem, Popover, toastError } from '../components/
 import { api, downloadUrl } from '../lib/api';
 import { type CollabSession, useCollab } from '../lib/collab';
 import { useMe } from '../lib/queries';
+import { type FilePosition, type SavedPosition, usePositionSaver } from '../lib/filePosition';
 import {
   flattenPdf,
   HIGHLIGHTER_COLORS,
@@ -66,6 +67,8 @@ interface FileInfo {
   size: number;
   isNote: boolean;
   url: string;
+  /** Where this person stopped in it. */
+  position?: SavedPosition | null;
 }
 
 function formatSize(bytes: number) {
@@ -148,12 +151,12 @@ export function FileViewerPage({ overlay }: { overlay?: { fileId: string; name?:
             )}
             {kind === 'video' && (
               <div className="flex min-h-full items-center justify-center p-4">
-                <video src={file.url} controls className="max-h-[calc(100vh-6rem)] max-w-full rounded" />
+                <Media file={file} kind="video" className="max-h-[calc(100vh-6rem)] max-w-full rounded" />
               </div>
             )}
             {kind === 'audio' && (
               <div className="flex min-h-full items-center justify-center p-4">
-                <audio src={file.url} controls className="w-full max-w-lg" />
+                <Media file={file} kind="audio" className="w-full max-w-lg" />
               </div>
             )}
             {kind === 'other' && <Message text="This file type can't be previewed. Use Download to save it." />}
@@ -162,6 +165,27 @@ export function FileViewerPage({ overlay }: { overlay?: { fileId: string; name?:
       </main>
     </div>
   );
+}
+
+/** A video or audio file that starts where this person stopped, and remembers where they stop. */
+function Media({ file, kind, className }: { file: FileInfo; kind: 'video' | 'audio'; className: string }) {
+  const savePlace = usePositionSaver(file.id);
+  const start = useRef(file.position?.position.kind === 'time' ? file.position.position.seconds : 0);
+  const props = {
+    src: file.url,
+    controls: true,
+    className,
+    onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => {
+      const el = e.currentTarget;
+      // Near the very end counts as finished: start again from the beginning.
+      if (start.current > 0 && (!el.duration || start.current < el.duration - 3)) el.currentTime = start.current;
+    },
+    onTimeUpdate: (e: React.SyntheticEvent<HTMLMediaElement>) => {
+      const el = e.currentTarget;
+      if (el.duration) savePlace({ kind: 'time', seconds: Math.round(el.currentTime), duration: Math.round(el.duration) });
+    },
+  };
+  return kind === 'video' ? <video {...props} /> : <audio {...props} />;
 }
 
 function DownloadLink({ file }: { file: FileInfo }) {
@@ -299,6 +323,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   const [width, setWidth] = useState(0);
   const [page, setPage] = useState(1);
   const [lastSize, setLastSize] = useState<{ w: number; h: number } | null>(null);
+  const [firstSize, setFirstSize] = useState<{ w: number; h: number } | null>(null);
   const [mode, setMode] = useState<InkMode>(file.isNote ? 'pen' : 'read');
   const [prefs, setPrefs] = useState(loadToolPrefs);
   const [downloadMenu, setDownloadMenu] = useState<Anchor | null>(null);
@@ -334,8 +359,10 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
         loading = task;
         const loaded = await task.promise;
         const last = (await loaded.getPage(loaded.numPages)).getViewport({ scale: 1 });
+        const first = (await loaded.getPage(1)).getViewport({ scale: 1 });
         if (cancelled) return;
         setLastSize({ w: last.width, h: last.height });
+        setFirstSize({ w: first.width, h: first.height });
         setDoc(loaded);
       } catch {
         if (!cancelled) setError(true);
@@ -472,10 +499,162 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     }
   };
 
+  const total = (doc?.numPages ?? 0) + extraPages;
+  // ----- Where you are: saved per person, restored on any device; zoom keeps the middle of the screen in place -----
+  const pageEl = useCallback((n: number) => scroller.current?.querySelector<HTMLElement>(`#ink-page-${n}`) ?? null, []);
+  /** The page at a point down the pages (in scroll coordinates), and how far down it that point is. */
+  const pageAt = useCallback(
+    (y: number) => {
+      const count = scroller.current?.querySelectorAll('[id^="ink-page-"]').length ?? 0;
+      let lo = 1;
+      let hi = count;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        const el = pageEl(mid);
+        if (el && el.offsetTop <= y) lo = mid;
+        else hi = mid - 1;
+      }
+      const el = pageEl(lo);
+      return el ? { page: lo, offset: Math.min(1, Math.max(0, (y - el.offsetTop) / el.offsetHeight)), el } : null;
+    },
+    [pageEl],
+  );
+  const savePlace = usePositionSaver(src ? null : file.id);
+  const restoreTo = useRef<FilePosition | null>(src ? null : (file.position?.position ?? null));
+  const restored = useRef(!restoreTo.current || restoreTo.current.kind !== 'page');
+  const touched = useRef(false);
+
+  // Back to where this person stopped: re-applied while the pages above it get their real sizes.
+  useEffect(() => {
+    const target = restoreTo.current;
+    if (!doc || width === 0 || restored.current || target?.kind !== 'page') return;
+    const apply = () => {
+      const el = scroller.current;
+      const page = pageEl(Math.min(target.page, total));
+      if (!el || !page || touched.current) return;
+      el.scrollTop = page.offsetTop + target.offset * page.offsetHeight - 8;
+    };
+    const timers = [0, 150, 400, 900, 1600].map((ms) => setTimeout(apply, ms));
+    const done = setTimeout(() => (restored.current = true), 1700);
+    return () => {
+      timers.forEach(clearTimeout);
+      clearTimeout(done);
+    };
+  }, [doc, width, total, pageEl]);
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let frame: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      if (!restored.current || frame) return;
+      frame = setTimeout(() => {
+        frame = undefined;
+        const at = pageAt(el.scrollTop + 8);
+        if (at && total > 0) savePlace({ kind: 'page', page: at.page, pages: total, offset: Math.round(at.offset * 1000) / 1000 });
+      }, 120);
+    };
+    const touch = () => {
+      touched.current = true;
+      restored.current = true;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    for (const t of ['wheel', 'touchstart', 'pointerdown', 'keydown']) el.addEventListener(t, touch, { passive: true });
+    return () => {
+      clearTimeout(frame);
+      el.removeEventListener('scroll', onScroll);
+      for (const t of ['wheel', 'touchstart', 'pointerdown', 'keydown']) el.removeEventListener(t, touch);
+    };
+  }, [pageAt, savePlace, total]);
+
+  /** The zoom as a number, even when fitting the width (so zooming from Fit doesn't jump). */
+  const zoomNow = useCallback(() => {
+    if (zoom !== 'fit') return zoom;
+    const first = pageEl(1);
+    return first && firstSize ? first.offsetWidth / firstSize.w / (96 / 72) : 1;
+  }, [zoom, firstSize, pageEl]);
+  const anchor = useRef<{ page: number; fy: number; fx: number } | null>(null);
+  /** Zooms keeping what's in the middle of the screen in the middle. */
+  const zoomTo = useCallback(
+    (next: Zoom) => {
+      const el = scroller.current;
+      if (el) {
+        const at = pageAt(el.scrollTop + el.clientHeight / 2);
+        if (at) anchor.current = { page: at.page, fy: at.offset, fx: Math.min(1, Math.max(0, (el.scrollLeft + el.clientWidth / 2 - at.el.offsetLeft) / at.el.offsetWidth)) };
+      }
+      setZoom(typeof next === 'number' ? Math.min(4, Math.max(0.25, next)) : next);
+    },
+    [pageAt],
+  );
+  const zoomBy = (factor: number) => zoomTo(zoomNow() * factor);
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const el = scroller.current;
+    anchor.current = null;
+    if (!a || !el) return;
+    const page = pageEl(a.page);
+    if (!page) return;
+    el.scrollTop = page.offsetTop + a.fy * page.offsetHeight - el.clientHeight / 2;
+    el.scrollLeft = page.offsetLeft + a.fx * page.offsetWidth - el.clientWidth / 2;
+  }, [zoom, pageEl]);
+
+  // Ctrl + mouse wheel (and pinching a touchpad) zooms the pages; pinching with two fingers too.
+  const content = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let factor = 1;
+    let frame = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      factor *= Math.exp(-e.deltaY * 0.0025);
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          const f = factor;
+          factor = 1;
+          zoomTo(zoomNow() * f);
+        });
+    };
+    let pinch: { d: number; f: number } | null = null;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      pinch = { d: dist(e.touches), f: 1 };
+      const c = content.current;
+      if (c) c.style.transformOrigin = `${el.scrollLeft + el.clientWidth / 2}px ${el.scrollTop + el.clientHeight / 2}px`;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      pinch.f = dist(e.touches) / pinch.d;
+      if (content.current) content.current.style.transform = `scale(${pinch.f})`;
+    };
+    const onEnd = () => {
+      if (!pinch) return;
+      const f = pinch.f;
+      pinch = null;
+      if (content.current) content.current.style.transform = '';
+      if (Math.abs(f - 1) > 0.02) zoomTo(zoomNow() * f);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [zoomTo, zoomNow]);
+
   if (error) return <Message text="This PDF couldn't be displayed. Use Download to save it." />;
 
-  const zoomBy = (factor: number) => setZoom((z) => Math.min(4, Math.max(0.25, (z === 'fit' ? 1 : z) * factor)));
-  const total = (doc?.numPages ?? 0) + extraPages;
   const strokeSizes = mode === 'highlighter' ? HIGHLIGHTER_SIZES : PEN_SIZES;
   const strokePrefs = mode === 'highlighter' ? prefs.highlighter : mode === 'shape' ? prefs.shape : prefs.pen;
   const inkSettings: InkSettings = {
@@ -610,16 +789,17 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
         </div>
       </Popover>
 
-      <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto">
+      <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto" style={{ touchAction: 'pan-x pan-y' }}>
         {!doc && <Spinner />}
         {doc && width > 0 && (
-          <div className="flex flex-col items-center gap-3 px-2 py-4 sm:px-6">
+          <div ref={content} className="flex w-max min-w-full flex-col items-center gap-3 px-2 py-4 sm:px-6">
             {Array.from({ length: total }, (_, i) => (
               <PdfPage
                 key={i}
                 doc={doc}
                 index={i + 1}
                 blank={i >= doc.numPages ? lastSize : null}
+                estimate={firstSize}
                 zoom={zoom}
                 available={width - 16}
                 onVisible={setPage}
@@ -644,7 +824,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
             <RoundButton label="Zoom in" onClick={() => zoomBy(1.2)}>
               <Plus size={15} />
             </RoundButton>
-            <RoundButton label="Fit to width" onClick={() => setZoom('fit')}>
+            <RoundButton label="Fit to width" onClick={() => zoomTo('fit')}>
               <ScanLine size={15} />
             </RoundButton>
             <RoundButton label={darkPages ? 'Light pages' : 'Dark pages'} onClick={() => setDarkPages(!darkPages)}>
@@ -718,6 +898,8 @@ interface PageProps {
   index: number;
   /** Set for blank pages added after the PDF's own pages: the size to draw them at. */
   blank: { w: number; h: number } | null;
+  /** The size to draw it at until its own is known (the first page's). */
+  estimate: { w: number; h: number } | null;
   zoom: Zoom;
   available: number;
   onVisible: (n: number) => void;
@@ -730,7 +912,7 @@ interface PageProps {
 }
 
 /** One page: sized up front from its viewport, drawn only once it scrolls near the screen, with its handwriting on top. */
-const PdfPage = memo(function PdfPage({ doc, index, blank, zoom, available, onVisible, items, ink, actions, onPen, dark }: PageProps) {
+const PdfPage = memo(function PdfPage({ doc, index, blank, estimate, zoom, available, onVisible, items, ink, actions, onPen, dark }: PageProps) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textLayer = useRef<HTMLDivElement>(null);
@@ -756,7 +938,9 @@ const PdfPage = memo(function PdfPage({ doc, index, blank, zoom, available, onVi
     };
   }, [doc, index, blank]);
 
-  const scale = size ? (zoom === 'fit' ? Math.min(available, 1100) / size.w : zoom * (96 / 72)) : 1;
+  // Until its own size is known, a page is drawn the size of the first one, so the pages above keep their place.
+  const known = size ?? estimate;
+  const scale = known ? (zoom === 'fit' ? Math.min(available, 1100) / known.w : zoom * (96 / 72)) : 1;
 
   useEffect(() => {
     const el = box.current;
@@ -807,8 +991,8 @@ const PdfPage = memo(function PdfPage({ doc, index, blank, zoom, available, onVi
     };
   }, [near, size, scale, doc, index, blank]);
 
-  const w = size ? size.w * scale : Math.min(available, 800);
-  const h = size ? size.h * scale : w * 1.3;
+  const w = known ? known.w * scale : Math.min(available, 800);
+  const h = known ? known.h * scale : w * 1.3;
   return (
     <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h }}>
       {!blank && <canvas ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}

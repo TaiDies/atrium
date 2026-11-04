@@ -16,7 +16,7 @@ export interface PlanDrop {
   title: string;
 }
 
-const START_HOUR = 6;
+const START_HOUR = 0;
 const END_HOUR = 24;
 const HOUR_PX = 48;
 const SNAP = 15;
@@ -189,7 +189,7 @@ export function DayPlan({ workspaceId, day, onOpen, onChanged }: { workspaceId: 
       <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-line bg-surface">
         <div
           ref={grid}
-          className="relative ms-12 border-s border-line"
+          className="relative my-3 ms-12 border-s border-line"
           style={{ height: hours.length * HOUR_PX }}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes(PLAN_DRAG)) return;

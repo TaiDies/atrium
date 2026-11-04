@@ -1,9 +1,10 @@
-import { AudioLines, Download, ExternalLink, FileText, Link2, Sparkles } from 'lucide-react';
+import { AudioLines, BookmarkCheck, Download, ExternalLink, FileText, Link2, Sparkles } from 'lucide-react';
 import { type Anchor, Menu, MenuDivider, MenuItem, toast } from '../components/ui';
 import { type RefObject, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { downloadUrl, viewerUrl } from '../lib/api';
 import { useOpenFile } from '../lib/openFile';
+import { positionLabel, useFilePositions } from '../lib/filePosition';
 
 interface Target {
   key: string;
@@ -11,6 +12,8 @@ interface Target {
   right: number;
   url: string;
   name: string;
+  /** Not for pictures: they have no place to stop at. */
+  showPlace: boolean;
 }
 
 const SELECTOR = ['file', 'image', 'video', 'audio'].map((t) => `[data-content-type="${t}"]`).join(',');
@@ -103,6 +106,7 @@ export function FileActions({
             right: Math.max(4, box.right - rect.right + 4),
             url,
             name: el.getAttribute('data-name') || decodeURIComponent(url.split('/').pop() ?? 'file'),
+            showPlace: el.getAttribute('data-content-type') !== 'image',
           });
         });
         setTargets((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
@@ -121,6 +125,8 @@ export function FileActions({
       window.removeEventListener('resize', measure);
     };
   }, [container]);
+
+  const places = useFilePositions(targets.filter((t) => t.showPlace).map((t) => t.url));
 
   const menu = (
     <Menu anchor={context?.at ?? null} onClose={() => setContext(null)}>
@@ -164,7 +170,12 @@ export function FileActions({
     <div className="pointer-events-none absolute inset-0 z-10">
       {menu}
       {targets.map((t) => (
-        <div key={t.key} className="pointer-events-auto absolute flex gap-1" style={{ top: t.top, right: t.right }}>
+        <div key={t.key} className="pointer-events-auto absolute flex items-center gap-1" style={{ top: t.top, right: t.right }}>
+          {t.showPlace && places.data && positionLabel(places.data(t.url)) && (
+            <span className="flex h-8 items-center gap-1 rounded-md border border-line bg-surface/95 px-2 text-xs font-medium text-accent shadow-sm backdrop-blur sm:h-7" title="Where you stopped">
+              <BookmarkCheck size={12} /> {positionLabel(places.data(t.url))}
+            </span>
+          )}
           <a
             href={viewerUrl(t.url, t.name)}
             target="_blank"
