@@ -1257,4 +1257,5 @@ export const arPatterns: [RegExp, string][] = [
   [/^Choose a database for “(.+)”$/, "اختر قاعدة بيانات لـ”$1“"],
   [/^\+(\d+) more$/, "+$1 إضافية"],
   [/^All caught up\. You can keep going with (.+)\.$/, "أنت على اطلاع بكل شيء. يمكنك المتابعة مع $1."],
+  [/^Last time \((.+?)\): (.+)$/, "آخر مرة ($1): $2"],
 ];

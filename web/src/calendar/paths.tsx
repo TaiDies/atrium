@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronRight, GitFork, PartyPopper, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, GitFork, History, PartyPopper, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button, Dialog, Input, Spinner, toastError } from '../components/ui';
@@ -49,7 +49,7 @@ export interface PathChoice {
 export interface PathState {
   done: string[];
   today: PathChoice | null;
-  history?: { date: string }[];
+  history?: { date: string; choice: Pick<PathChoice, 'trail' | 'labels' | 'step'> }[];
 }
 
 interface Progress {
@@ -73,6 +73,18 @@ export const choiceOf = (e: { startDate: string; pathState?: PathState | null })
 
 /** A repeating task with paths keeps missed days: it waits on the first day not done, and ticking it moves it on. */
 export const keepsMissedDays = (e: { paths?: Paths | null; repeat?: unknown }) => !!e.paths && e.paths.catchUp !== false && !!e.repeat;
+
+/** The path of the last day a task was ticked off for. */
+export function lastDayOf(state: PathState | null | undefined): LastDay | null {
+  const h = [...(state?.history ?? [])].reverse().find((x) => x.choice.trail.length);
+  return h ? { date: h.date, labels: h.choice.labels, step: h.choice.step } : null;
+}
+
+export interface LastDay {
+  date: string;
+  labels: string[];
+  step: PathStep | null;
+}
 
 /** Takes back the last day a task was ticked off for. */
 export async function undoLastDay(eventId: string, onDone?: () => void) {
@@ -221,6 +233,7 @@ export function PathLine({
   ahead = false,
   date,
   canUndo = false,
+  last = null,
   onChoose,
 }: {
   workspaceId: string;
@@ -231,9 +244,19 @@ export function PathLine({
   /** The day the task is on. */
   date: string;
   canUndo?: boolean;
+  /** The path of the last day ticked off, shown above today's. */
+  last?: LastDay | null;
   onChoose: () => void;
 }) {
   const navigate = useNavigate();
+  const lastLine = last && (
+    <span className="mt-0.5 flex min-w-0 max-w-full items-center gap-1.5 text-xs text-faint">
+      <History size={12} className="shrink-0" />
+      <span className="min-w-0 truncate">
+        {`Last time (${shortDay(last.date)}): ${last.labels.join(' › ')}${last.step ? ` · ${last.step.title}` : ''}`}
+      </span>
+    </span>
+  );
   const undo = canUndo && (
     <button
       onClick={(e) => {
@@ -256,6 +279,7 @@ export function PathLine({
     return (
       <span className="flex flex-col items-start">
         {caughtUp}
+        {lastLine}
         <span className="mt-1 flex items-center gap-2 text-xs">
           {!done && (
             <button
@@ -276,6 +300,7 @@ export function PathLine({
   return (
     <span className="flex flex-col items-start">
       {caughtUp}
+      {lastLine}
       <span className="mt-0.5 flex min-w-0 max-w-full items-center gap-1.5 text-xs text-muted">
         <GitFork size={12} className="shrink-0" />
         <span className="shrink-0">{choice.labels.join(' › ')}</span>
@@ -319,6 +344,12 @@ export function PathLine({
       </span>
     </span>
   );
+}
+
+/** "Nov 4" for a YYYY-MM-DD day. */
+function shortDay(date: string) {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /** "Friday, Nov 6" for a YYYY-MM-DD day. */

@@ -3,7 +3,7 @@ import { BellRing, CalendarCheck2, CalendarDays, Check, ExternalLink, PenTool, R
 import { useEffect, useRef, useState } from 'react';
 import { type CalendarEvent, COLOR_HEX, STATUS_LABELS, updateEvent, useEvent } from '../calendar/api';
 import { EventDialog } from '../calendar/EventDialog';
-import { ChoosePathDialog, choiceOf, keepsMissedDays, PathLine } from '../calendar/paths';
+import { ChoosePathDialog, choiceOf, keepsMissedDays, lastDayOf, PathLine } from '../calendar/paths';
 import { today as todayDate } from '../calendar/repeat';
 import { describeRepeat } from '../calendar/RepeatEditor';
 import { Popover, toastError } from '../components/ui';
@@ -85,6 +85,7 @@ export function EventBlockView({ eventId, editable }: { eventId: string; editabl
               ahead={keepsMissedDays(e) && e.startDate > todayDate()}
               date={e.startDate}
               canUndo={!!e.pathState?.history?.length}
+              last={lastDayOf(e.pathState)}
               onChoose={() => setChoosing(true)}
             />}
         </div>

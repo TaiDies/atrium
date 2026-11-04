@@ -7,7 +7,7 @@ import { databaseRows, editDoc, readDoc } from '../blocks.js';
 import { query } from '../db.js';
 import { DONE_STATUS, fieldsOf, isRowDone, statusFieldOf } from '../docIndex.js';
 import { addDays, isDate, today, validRule } from '../repeat.js';
-import { currentChoice, keepsMissedDays, type PathChoice, pathCards, type Paths, type PathState } from '../paths.js';
+import { currentChoice, keepsMissedDays, lastDay, type PathChoice, pathCards, type Paths, type PathState } from '../paths.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // The daily task list: everything with a done/not-done state that falls on a day — calendar events
@@ -49,6 +49,8 @@ export interface Task {
   ahead?: boolean;
   /** Its last finished day can be taken back. */
   canUndo?: boolean;
+  /** The path of the last day ticked off. */
+  last?: { date: string; labels: string[]; step: PathChoice['step'] } | null;
 }
 
 function choiceOf(state: PathState | null, date: string) {
@@ -129,7 +131,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
       status: e.status,
       color: e.color,
       eventId: e.id,
-      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start), ahead, canUndo: !!e.pathState?.history?.length } : {}),
+      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start), ahead, canUndo: !!e.pathState?.history?.length, last: lastDay(e.pathState) } : {}),
     });
   }
 

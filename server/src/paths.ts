@@ -214,6 +214,12 @@ async function loadEvent(eventId: string) {
 export const currentChoice = (state: PathState | null, date: string) => (state?.today && state.today.date === date ? state.today : null);
 
 /** Whether a task keeps its missed days: it repeats, has paths, and catching up isn't turned off. */
+/** The last day ticked off with a path chosen: its date, the answers and the step. */
+export function lastDay(state: PathState | null) {
+  const h = [...(state?.history ?? [])].reverse().find((x) => x.choice.trail.length);
+  return h ? { date: h.date, labels: h.choice.labels, step: h.choice.step } : null;
+}
+
 export const keepsMissedDays = (e: { paths: Paths | null; repeat: unknown }) => !!e.paths && e.paths.catchUp !== false && validRule(e.repeat);
 
 /** The task's paths, today's choice and the progress of every path (counts, next step), for the picker. */

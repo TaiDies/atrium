@@ -1226,4 +1226,5 @@ export const esPatterns: [RegExp, string][] = [
   [/^Choose a database for “(.+)”$/, "Elige una base de datos para “$1”"],
   [/^\+(\d+) more$/, "+$1 más"],
   [/^All caught up\. You can keep going with (.+)\.$/, "Estás al día. Puedes seguir con $1."],
+  [/^Last time \((.+?)\): (.+)$/, "La última vez ($1): $2"],
 ];

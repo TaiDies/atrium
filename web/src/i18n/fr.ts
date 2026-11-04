@@ -1226,4 +1226,5 @@ export const frPatterns: [RegExp, string][] = [
   [/^Choose a database for “(.+)”$/, "Choisissez une base pour « $1 »"],
   [/^\+(\d+) more$/, "+$1 de plus"],
   [/^All caught up\. You can keep going with (.+)\.$/, "Vous êtes à jour. Vous pouvez continuer avec $1."],
+  [/^Last time \((.+?)\): (.+)$/, "La dernière fois ($1) : $2"],
 ];

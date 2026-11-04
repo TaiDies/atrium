@@ -11,7 +11,7 @@ import type { CalendarCard } from '../calendar/api';
 import { COLOR_HEX, createEvent, type EventColor, updateEvent } from '../calendar/api';
 import { CardDialog } from '../calendar/CardDialog';
 import { EventDialog } from '../calendar/EventDialog';
-import { ChoosePathDialog, type PathChoice, PathLine, undoLastDay } from '../calendar/paths';
+import { ChoosePathDialog, type LastDay, type PathChoice, PathLine, undoLastDay } from '../calendar/paths';
 import { IconButton, toastError } from '../components/ui';
 import { api, type PageType } from '../lib/api';
 import { OPTION_COLORS } from '../database/model';
@@ -48,6 +48,7 @@ interface Task {
   /** Keeps missed days and is done up to today: it's on a day ahead. */
   ahead?: boolean;
   canUndo?: boolean;
+  last?: LastDay | null;
 }
 
 interface Finished {
@@ -606,7 +607,7 @@ function TaskRow({
             {color && <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />}
           </button>
         </div>
-        {t.paths && <PathLine workspaceId={workspaceId} eventId={t.eventId!} choice={t.choice ?? null} done={t.done} ahead={t.ahead} date={t.date} canUndo={t.canUndo} onChoose={onChoose} />}
+        {t.paths && <PathLine workspaceId={workspaceId} eventId={t.eventId!} choice={t.choice ?? null} done={t.done} ahead={t.ahead} date={t.date} canUndo={t.canUndo} last={t.last} onChoose={onChoose} />}
       </div>
     </div>
   );
