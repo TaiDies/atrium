@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { CalendarCheck2, CalendarDays, Trash2, X } from 'lucide-react';
+import { CalendarCheck2, CalendarDays, GitFork, Trash2, X } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { useApp } from '../app/context';
 import { LocationList, PlacePicker } from '../components/Placement';
@@ -20,6 +20,7 @@ import {
   updateEvent,
   useEvent,
 } from './api';
+import { describePaths, PathsEditor } from './paths';
 import { RepeatEditor } from './RepeatEditor';
 import type { RepeatRule } from './repeat';
 
@@ -66,7 +67,9 @@ export function EventDialog({
     status: draft?.status ?? null,
     repeat: null,
     reminder: null,
+    paths: null,
   });
+  const [editingPaths, setEditingPaths] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Fill the form once the event has loaded.
@@ -83,6 +86,7 @@ export function EventDialog({
       status: ev.status,
       repeat: ev.repeat,
       reminder: ev.reminder,
+      paths: ev.paths,
     });
   }, [ev?.id, ev?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -95,7 +99,7 @@ export function EventDialog({
     if (form.endDate && form.endDate < form.startDate) return toast('The end is before the start', 'error');
     setSaving(true);
     try {
-      const body: EventInput = { ...form, endTime: allDay ? null : form.endTime, title: form.title.trim() };
+      const body: EventInput = { ...form, endTime: allDay ? null : form.endTime, title: form.title.trim(), paths: isTask ? form.paths : null };
       if (id) {
         await updateEvent(workspace.id, id, body);
         toast('Saved');
@@ -247,6 +251,19 @@ export function EventDialog({
           />
 
           <RepeatEditor value={form.repeat} onChange={(repeat) => set({ repeat })} defaultStart={form.startDate} kind={isTask ? 'task' : 'event'} />
+
+          {isTask && (
+            <button
+              type="button"
+              onClick={() => setEditingPaths(true)}
+              className="flex w-full items-center gap-2 rounded-lg border border-line px-3 py-2 text-start text-sm hover:bg-hover"
+            >
+              <GitFork size={15} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate">{form.paths ? describePaths(form.paths) : 'Paths: ask a question each day, with answers that lead to steps'}</span>
+              <span className="shrink-0 text-xs text-muted">{form.paths ? 'Edit' : 'Set up'}</span>
+            </button>
+          )}
+          {editingPaths && <PathsEditor workspaceId={workspace.id} value={form.paths} onSave={(paths) => set({ paths })} onClose={() => setEditingPaths(false)} />}
 
           {id && ev && (
             <>

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type PageType } from '../lib/api';
 import type { Location, PlaceTarget } from '../lib/placement';
 import { queryClient } from '../lib/queries';
+import type { Paths, PathState } from './paths';
 import type { RepeatRule } from './repeat';
 
 export type EventColor = 'gray' | 'brown' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'pink' | 'red' | 'aqua';
@@ -54,6 +55,9 @@ export interface CalendarEvent {
   repeat: RepeatRule | null;
   /** Minutes before the start to remind people (0 = at the start); null for none. */
   reminder: number | null;
+  /** Tasks: questions whose answers lead to steps, and how far along they are. */
+  paths: Paths | null;
+  pathState: PathState | null;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -95,7 +99,7 @@ export interface CalendarData {
   blocks: CalendarBlock[];
 }
 
-export type EventInput = Partial<Omit<CalendarEvent, 'id' | 'workspaceId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'locations'>>;
+export type EventInput = Partial<Omit<CalendarEvent, 'id' | 'workspaceId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'locations' | 'pathState'>>;
 
 const calendarKey = (workspaceId: string) => ['calendar', workspaceId] as const;
 

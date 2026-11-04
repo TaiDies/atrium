@@ -7,6 +7,7 @@ import { databaseRows, editDoc, readDoc } from '../blocks.js';
 import { query } from '../db.js';
 import { DONE_STATUS, fieldsOf, isRowDone, statusFieldOf } from '../docIndex.js';
 import { addDays, isDate, today, validRule } from '../repeat.js';
+import { currentChoice, type PathChoice, pathCards, type PathState } from '../paths.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // The daily task list: everything with a done/not-done state that falls on a day — calendar events
@@ -41,6 +42,14 @@ export interface Task {
   /** Cards: the date property the task comes from. */
   fieldId?: string;
   fieldName?: string;
+  /** Events with paths: whether there's a choice to make, and today's (null until chosen). */
+  paths?: boolean;
+  choice?: Pick<PathChoice, 'labels' | 'step'> | null;
+}
+
+function choiceOf(state: PathState | null, date: string) {
+  const c = currentChoice(state, date);
+  return c ? { labels: c.labels, step: c.step } : null;
 }
 
 /** Every task due on `day` (and the unfinished ones from before it) that this person can see. */
@@ -49,9 +58,12 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
   const visible = (pageId: string) => (access.get(pageId) ?? 'none') !== 'none';
   const since = addDays(day, -OVERDUE_DAYS);
   const tasks: Task[] = [];
+  const inPath = await pathCards(workspaceId);
+  const pathCard = (pageId: string, rowId: string | null | undefined) => !!rowId && inPath.has(`${pageId}:${rowId}`);
 
-  const events = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string; color: string }>(
-    `select id, title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status, color
+  const events = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string; color: string; hasPaths: boolean; pathState: PathState | null }>(
+    `select id, title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status, color,
+            paths is not null as "hasPaths", path_state as "pathState"
        from events
       where workspace_id = $1 and status is not null
         and ((start_date <= $2 and coalesce(end_date, start_date) >= $2)
@@ -61,6 +73,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
   );
   // Where each event sits in a page or card (the first place this person can see), to jump straight to it.
   const placed = new Map<string, { pageId: string; rowId: string; blockId: string | null; pageTitle: string; pageIcon: string; pageType: string }>();
+  const hidden = new Set<string>();
   if (events.length) {
     const refs = await query<{ eventId: string; pageId: string; rowId: string; blockId: string | null; pageTitle: string; pageIcon: string; pageType: string }>(
       `select r.event_id as "eventId", r.page_id as "pageId", r.row_id as "rowId", r.block_id as "blockId", p.title as "pageTitle", p.icon as "pageIcon", p.type as "pageType"
@@ -70,6 +83,8 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
       [events.map((e) => e.id)],
     );
     for (const r of refs) if (visible(r.pageId) && !placed.has(r.eventId)) placed.set(r.eventId, r);
+    // Tasks inside a card that's a step of a path come up through the path instead.
+    for (const r of refs) if (pathCard(r.pageId, r.rowId)) hidden.add(r.eventId);
   }
   const rowTitles = new Map<string, Map<string, string>>();
   const rowTitle = async (pageId: string, rowId: string) => {
@@ -77,6 +92,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
     return rowTitles.get(pageId)!.get(rowId) ?? null;
   };
   for (const e of events) {
+    if (hidden.has(e.id) && !e.hasPaths) continue;
     const last = e.end ?? e.start;
     const at = placed.get(e.id);
     tasks.push({
@@ -102,6 +118,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
       status: e.status,
       color: e.color,
       eventId: e.id,
+      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start) } : {}),
     });
   }
 
@@ -118,7 +135,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
   const seenCards = new Set<string>();
   for (const c of cards) {
     const key = `card:${c.pageId}:${c.rowId}`;
-    if (!visible(c.pageId) || seenCards.has(key)) continue;
+    if (!visible(c.pageId) || seenCards.has(key) || pathCard(c.pageId, c.rowId)) continue;
     seenCards.add(key);
     const last = c.end ?? c.date;
     tasks.push({
@@ -151,7 +168,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
     [workspaceId, day, since],
   );
   for (const b of blocks) {
-    if (!visible(b.pageId)) continue;
+    if (!visible(b.pageId) || pathCard(b.pageId, b.rowId)) continue;
     let rowTitle: string | null = null;
     if (b.rowId) {
       if (!rowTitles.has(b.pageId)) rowTitles.set(b.pageId, new Map((await readDoc(b.pageId, null, databaseRows)).map((r) => [r.id, r.title])));
@@ -184,7 +201,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
 }
 
 /** Ticks a card off (sets its status to a "done" option) or reopens it. */
-function setCardDone(doc: Y.Doc, rowId: string, done: boolean): boolean {
+export function setCardDone(doc: Y.Doc, rowId: string, done: boolean): boolean {
   const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === rowId);
   const cells = row?.get('cells');
   if (!row || !(cells instanceof Y.Map)) return false;

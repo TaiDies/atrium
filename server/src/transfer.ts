@@ -49,6 +49,9 @@ interface ExportEvent {
   color: string;
   status: string | null;
   repeat: unknown;
+  /** Tasks with paths (absent in older exports). */
+  paths?: unknown;
+  pathState?: unknown;
 }
 
 interface ExportBoard {
@@ -171,7 +174,7 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
   for (const b of boards) if (b.state) idsIn(decode(b.state)).forEach((id) => referenced.add(id));
   const events = await query<ExportEvent & { start: string }>(
     `select id, title, description, to_char(start_date, 'YYYY-MM-DD') as "startDate", start_time as "startTime", to_char(end_date, 'YYYY-MM-DD') as "endDate",
-            end_time as "endTime", color, status, repeat from events where workspace_id = $1 ${whole ? '' : 'and id = any($2::uuid[])'}`,
+            end_time as "endTime", color, status, repeat, paths, path_state as "pathState" from events where workspace_id = $1 ${whole ? '' : 'and id = any($2::uuid[])'}`,
     whole ? [workspaceId] : [workspaceId, [...referenced]],
   );
   const files = await query<{ id: string; filename: string; mime_type: string; is_note: boolean; annotations: Buffer | null }>(
@@ -243,7 +246,19 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
     source: { workspace: workspace.name, scope: whole ? 'workspace' : subpages ? 'pages' : 'page' },
     pages,
     files: manifestFiles,
-    events: events.map(({ id, title, description, startDate, startTime, endDate, endTime, color, status, repeat }) => ({ id, title, description, startDate, startTime, endDate, endTime, color, status, repeat })),
+    events: events.map(({ id, title, description, startDate, startTime, endDate, endTime, color, status, repeat, paths, pathState }) => ({
+      id,
+      title,
+      description,
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      color,
+      status,
+      repeat,
+      ...(paths ? { paths, pathState } : {}),
+    })),
     whiteboards: boards.map((b) => ({ id: b.id, title: b.title, state: b64(b.state) })),
   };
   zip[MANIFEST] = strToU8(JSON.stringify(manifest));
@@ -335,6 +350,9 @@ export async function importExport(userId: string, workspaceId: string, zipBytes
   for (const e of manifest.events) map.set(e.id.toLowerCase(), randomUUID());
   for (const b of manifest.whiteboards) map.set(b.id.toLowerCase(), randomUUID());
   const id = (old: string) => map.get(old.toLowerCase())!;
+  // Paths point at databases and cards by id: those made by the import get their new ids.
+  const remapJson = (v: unknown) =>
+    v ? JSON.stringify(v).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (m) => map.get(m.toLowerCase()) ?? m) : null;
 
   // Attachments go to disk first; if anything later fails, they're removed again.
   const written: string[] = [];
@@ -364,9 +382,24 @@ export async function importExport(userId: string, workspaceId: string, zipBytes
       }
       for (const e of manifest.events) {
         await c.query(
-          `insert into events (id, workspace_id, title, description, start_date, start_time, end_date, end_time, color, status, repeat, created_by)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-          [id(e.id), workspaceId, e.title, e.description, e.startDate, e.startTime, e.endDate, e.endTime, e.color, e.status, e.repeat ? JSON.stringify(e.repeat) : null, userId],
+          `insert into events (id, workspace_id, title, description, start_date, start_time, end_date, end_time, color, status, repeat, created_by, paths, path_state)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [
+            id(e.id),
+            workspaceId,
+            e.title,
+            e.description,
+            e.startDate,
+            e.startTime,
+            e.endDate,
+            e.endTime,
+            e.color,
+            e.status,
+            e.repeat ? JSON.stringify(e.repeat) : null,
+            userId,
+            remapJson(e.paths),
+            remapJson(e.pathState),
+          ],
         );
       }
       for (const b of manifest.whiteboards) {

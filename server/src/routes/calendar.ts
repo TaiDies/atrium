@@ -10,6 +10,7 @@ import { fieldsOf, pruneWorkspaceRowRefs } from '../docIndex.js';
 import { locationsFor } from '../locations.js';
 import { placeBody, placeBlock, removeEverywhere } from '../placement.js';
 import { isDate, today, validRule } from '../repeat.js';
+import { applyPathStep, checkPaths, choosePath, pathsSchema, pathsView } from '../paths.js';
 import { syncCardStatuses } from '../taskStatus.js';
 import { emit } from '../webhooks.js';
 import { HttpError, idParams, parse } from '../util.js';
@@ -31,11 +32,13 @@ const eventFields = {
   repeat,
   /** Minutes before the start to remind people (0 = at the start); null for none. */
   reminder: z.number().int().min(0).max(40320).nullable(),
+  /** Tasks: questions with answers that lead to steps (see paths.ts). */
+  paths: pathsSchema,
 };
 
 const EVENT_COLUMNS = `e.id, e.workspace_id as "workspaceId", e.title, e.description, to_char(e.start_date, 'YYYY-MM-DD') as "startDate",
   e.start_time as "startTime", to_char(e.end_date, 'YYYY-MM-DD') as "endDate", e.end_time as "endTime", e.color, e.status, e.repeat, e.reminder,
-  e.created_by as "createdBy", e.created_at as "createdAt", e.updated_at as "updatedAt"`;
+  e.paths, e.path_state as "pathState", e.created_by as "createdBy", e.created_at as "createdAt", e.updated_at as "updatedAt"`;
 
 interface EventRow {
   id: string;
@@ -163,15 +166,17 @@ export async function calendarRoutes(app: FastifyInstance) {
         status: eventFields.status.default(null),
         repeat: repeat.default(null),
         reminder: eventFields.reminder.default(null),
+        paths: eventFields.paths.default(null),
         // Also put an event block on a page or card straight away.
         place: placeBody.shape.target.optional(),
       }),
       req.body,
     );
     checkSpan(body.startDate, body.endDate);
+    checkPaths(body.paths);
     const row = await one<EventRow>(
-      `insert into events (workspace_id, title, description, start_date, start_time, end_date, end_time, color, status, repeat, reminder, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+      `insert into events (workspace_id, title, description, start_date, start_time, end_date, end_time, color, status, repeat, reminder, created_by, paths)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
       [
         id,
         body.title,
@@ -185,6 +190,7 @@ export async function calendarRoutes(app: FastifyInstance) {
         body.repeat ? JSON.stringify(body.repeat) : null,
         body.reminder,
         req.user.id,
+        body.paths ? JSON.stringify(body.paths) : null,
       ],
     );
     if (body.place) {
@@ -219,6 +225,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     await requireMember(req.user.id, event.workspaceId);
     const body = parse(z.object(eventFields).partial(), req.body);
     checkSpan(body.startDate ?? event.startDate, body.endDate === undefined ? event.endDate : body.endDate);
+    if (body.paths !== undefined) checkPaths(body.paths);
     const columns: Record<string, string> = {
       title: 'title',
       description: 'description',
@@ -230,13 +237,14 @@ export async function calendarRoutes(app: FastifyInstance) {
       status: 'status',
       repeat: 'repeat',
       reminder: 'reminder',
+      paths: 'paths',
     };
     const sets: string[] = [];
     const values: unknown[] = [id];
     for (const [key, column] of Object.entries(columns)) {
       const v = (body as Record<string, unknown>)[key];
       if (v === undefined) continue;
-      values.push(key === 'repeat' && v !== null ? JSON.stringify(v) : v);
+      values.push((key === 'repeat' || key === 'paths') && v !== null ? JSON.stringify(v) : v);
       sets.push(`${column} = $${values.length}`);
     }
     if (sets.length) await query(`update events set ${sets.join(', ')}, updated_at = now() where id = $1`, values);
@@ -252,12 +260,31 @@ export async function calendarRoutes(app: FastifyInstance) {
         await query('delete from task_completions where workspace_id = $1 and key = $2 and completed_on = $3', [event.workspaceId, `event:${id}`, today()]);
       }
     }
+    if (body.status !== undefined && (body.status === 'done') !== (event.status === 'done')) await applyPathStep(id, body.status === 'done', req.user.id);
     if (body.status !== undefined && body.status !== event.status) await syncCardStatuses(id);
     const locations = await locationsFor('event_refs', 'event_id', [id], await accessMap(req.user.id, event.workspaceId));
     const updated = await eventOr404(id);
     emit(event.workspaceId, 'event.updated', updated);
     if (updated.status === 'done' && event.status !== 'done') emit(event.workspaceId, 'task.completed', { kind: 'event', id, title: updated.title });
     return { event: { ...updated, locations: locations.get(id) ?? [] } };
+  });
+
+  // Tasks with paths: what to choose from today (with each path's progress), and choosing.
+  app.get('/events/:id/paths', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const event = await eventOr404(id);
+    await requireMember(req.user.id, event.workspaceId);
+    return pathsView(req.user.id, id);
+  });
+
+  app.post('/events/:id/paths/choose', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const event = await eventOr404(id);
+    await requireMember(req.user.id, event.workspaceId);
+    const { trail } = parse(z.object({ trail: z.array(z.string().max(64)).max(6).nullable() }), req.body);
+    const view = await choosePath(req.user.id, id, trail);
+    emit(event.workspaceId, 'event.updated', await eventOr404(id));
+    return view;
   });
 
   app.delete('/events/:id', async (req) => {
