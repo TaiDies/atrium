@@ -1188,6 +1188,17 @@ export const ar: Record<string, string> = {
   "Set up": "إعداد",
   "This task is already done today. Untick it to choose again.": "هذه المهمة منجزة اليوم. ألغِ العلامة لتختار من جديد.",
   "Choose an answer for every question": "اختر إجابة لكل سؤال",
+  "Today’s path": "مسار اليوم",
+  "Finish more": "أنجز المزيد",
+  "Finish more steps today: get ahead, or catch up": "أنجز خطوات أكثر اليوم: تقدّم أو عوّض ما فاتك",
+  "Finish several steps at once: to get ahead, or to catch up on days you missed. Each one is marked done today.": "أنجز عدة خطوات دفعة واحدة: لتتقدّم أو لتعوّض الأيام التي فاتتك. تُسجَّل كل خطوة منجزة اليوم.",
+  "Finished more today": "أُنجز إضافيًا اليوم",
+  "How many to finish now?": "كم خطوة تريد إنجازها الآن؟",
+  "Fewer": "أقل",
+  "Finish 1 step": "أنجز خطوة واحدة",
+  "Nothing left on this path": "لم يبقَ شيء في هذا المسار",
+  "That step is no longer there": "لم تعد هذه الخطوة موجودة",
+  "You can't edit this path's database": "لا يمكنك تعديل قاعدة بيانات هذا المسار",
 };
 
 /**
@@ -1249,4 +1260,8 @@ export const arPatterns: [RegExp, string][] = [
   [/^Also set (.+) to the day$/, "واضبط $1 على اليوم أيضًا"],
   [/^(.+) · (\d+) paths?$/, "$1 · $2 مسارات"],
   [/^Choose a database for “(.+)”$/, "اختر قاعدة بيانات لـ”$1“"],
+  [/^\+(\d+) more$/, "+$1 إضافية"],
+  [/^Finish (\d+) steps$/, "أنجز $1 خطوات"],
+  [/^of (\d+) not done yet$/, "من $1 لم تُنجز بعد"],
+  [/^Starting with (.+), in order\.$/, "بدءًا من $1، بالترتيب."],
 ];

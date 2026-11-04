@@ -1161,6 +1161,17 @@ export const fr: Record<string, string> = {
   "Set up": "Configurer",
   "This task is already done today. Untick it to choose again.": "Cette tâche est déjà faite aujourd’hui. Décochez-la pour choisir à nouveau.",
   "Choose an answer for every question": "Choisissez une réponse à chaque question",
+  "Today’s path": "Parcours du jour",
+  "Finish more": "En finir plus",
+  "Finish more steps today: get ahead, or catch up": "Finir plus d’étapes aujourd’hui : prendre de l’avance ou rattraper",
+  "Finish several steps at once: to get ahead, or to catch up on days you missed. Each one is marked done today.": "Finissez plusieurs étapes d’un coup : pour prendre de l’avance ou rattraper les jours manqués. Chacune est marquée faite aujourd’hui.",
+  "Finished more today": "Finies en plus aujourd’hui",
+  "How many to finish now?": "Combien en finir maintenant ?",
+  "Fewer": "Moins",
+  "Finish 1 step": "Finir 1 étape",
+  "Nothing left on this path": "Plus rien sur ce parcours",
+  "That step is no longer there": "Cette étape n’existe plus",
+  "You can't edit this path's database": "Vous ne pouvez pas modifier la base de ce parcours",
 };
 
 export const frPatterns: [RegExp, string][] = [
@@ -1218,4 +1229,8 @@ export const frPatterns: [RegExp, string][] = [
   [/^Also set (.+) to the day$/, "Mettre aussi $1 au jour"],
   [/^(.+) · (\d+) paths?$/, "$1 · $2 parcours"],
   [/^Choose a database for “(.+)”$/, "Choisissez une base pour « $1 »"],
+  [/^\+(\d+) more$/, "+$1 de plus"],
+  [/^Finish (\d+) steps$/, "Finir $1 étapes"],
+  [/^of (\d+) not done yet$/, "sur $1 pas encore faites"],
+  [/^Starting with (.+), in order\.$/, "En commençant par $1, dans l’ordre."],
 ];

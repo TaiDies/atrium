@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { accessMap } from './access.js';
+import { accessMap, atLeast } from './access.js';
 import { editDoc, readDoc } from './blocks.js';
 import { one, query } from './db.js';
 import { type FieldInfo, fieldsOf, isDoneOption, isRowDone, statusFieldOf } from './docIndex.js';
@@ -13,6 +13,8 @@ import { HttpError } from './util.js';
 // steps, or the cards of a database (filtered and sorted). Each day you pick a path and get its next
 // unfinished step; ticking the task off finishes that step (a card is set to done, its own tasks are
 // ticked and, if chosen, the day is written into one of its dates). Unticking puts it all back.
+// To get ahead or catch up, more steps can be finished on the same day ("Finish more"), each one
+// undoable on its own.
 
 export interface PathSource {
   /** The database whose cards are the steps. */
@@ -54,10 +56,22 @@ export interface PathChoice {
   applied?: { events: string[]; status: boolean; dateField: string | null; prevDate: unknown } | null;
 }
 
+type Applied = NonNullable<PathChoice['applied']>;
+
+/** A step finished on top of the day's one. */
+export interface PathExtra {
+  trail: string[];
+  labels: string[];
+  step: PathStep;
+  applied: Applied;
+}
+
 export interface PathState {
   /** Typed steps that are finished, and cards finished in databases with no status. */
   done: string[];
   today: PathChoice | null;
+  /** Extra steps finished on the task's date `date`. */
+  more?: { date: string; items: PathExtra[] } | null;
 }
 
 const id = z.string().min(1).max(64);
@@ -163,17 +177,17 @@ async function sourceCards(src: PathSource, done: Set<string>) {
 }
 
 /** How many steps are left on a path, and the next one. */
-async function leafProgress(o: PathOption, state: PathState): Promise<{ total: number; left: number; next: PathStep | null }> {
+async function leafProgress(o: PathOption, state: PathState, skip: string | null = null): Promise<{ total: number; left: number; next: PathStep | null }> {
   const done = new Set(state.done);
   if (o.source) {
     const page = await one<{ id: string }>(`select id from pages where id = $1 and deleted_at is null`, [o.source.pageId]);
     if (!page) return { total: 0, left: 0, next: null };
     const cards = await sourceCards(o.source, done);
-    const open = cards.filter((c) => !c.done);
+    const open = cards.filter((c) => !c.done && cardKey(o.source!.pageId, c.rowId) !== skip);
     return { total: cards.length, left: open.length, next: open[0] ? { kind: 'card', pageId: o.source.pageId, rowId: open[0].rowId, title: open[0].title } : null };
   }
   const steps = o.steps ?? [];
-  const open = steps.filter((s) => !done.has(s.id));
+  const open = steps.filter((s) => !done.has(s.id) && s.id !== skip);
   return { total: steps.length, left: open.length, next: open[0] ? { kind: 'step', id: open[0].id, title: open[0].title || 'Untitled step' } : null };
 }
 
@@ -200,6 +214,9 @@ async function loadEvent(eventId: string) {
 /** Today's choice, if it was made for the task's current date. */
 export const currentChoice = (state: PathState | null, date: string) => (state?.today && state.today.date === date ? state.today : null);
 
+/** The extra steps finished on the task's current date. */
+export const currentMore = (state: PathState | null, date: string) => (state?.more && state.more.date === date ? state.more.items : []);
+
 /** The task's paths, today's choice and the progress of every path (counts, next step), for the picker. */
 export async function pathsView(userId: string, eventId: string) {
   const e = await loadEvent(eventId);
@@ -214,7 +231,8 @@ export async function pathsView(userId: string, eventId: string) {
     }
     progress[leaf.id] = await leafProgress(leaf, state).catch(() => ({ total: 0, left: 0, next: null }));
   }
-  return { paths: e.paths, choice: currentChoice(state, e.startDate), progress };
+  const more = currentMore(state, e.startDate).map((x) => ({ labels: x.labels, step: x.step }));
+  return { paths: e.paths, choice: currentChoice(state, e.startDate), more, progress };
 }
 
 /** Picks today's path (or clears the choice with null). */
@@ -248,75 +266,132 @@ export async function applyPathStep(eventId: string, done: boolean, editor: stri
   const state = e.pathState;
   const choice = currentChoice(state, e.startDate);
   if (!e.paths || !state || !choice?.step) return;
-  const step = choice.step;
-  const leaf = walk(e.paths, choice.trail)?.at(-1);
-  const key = step.kind === 'card' ? cardKey(step.pageId, step.rowId) : step.id;
   if (done && !choice.applied) {
-    const applied: NonNullable<PathChoice['applied']> = { events: [], status: false, dateField: null, prevDate: null };
-    if (step.kind === 'card') {
-      // The card's own tasks are ticked too (not this one, if it sits in the card).
-      const own = await query<{ id: string }>(
-        `select e.id from event_refs r join events e on e.id = r.event_id
-          where r.page_id = $1 and r.row_id = $2 and e.status is not null and e.status <> 'done' and e.id <> $3`,
-        [step.pageId, step.rowId, eventId],
-      );
-      if (own.length) await query(`update events set status = 'done', updated_at = now() where id = any($1::uuid[])`, [own.map((x) => x.id)]);
-      applied.events = own.map((x) => x.id);
-      const dateField = leaf?.source?.pageId === step.pageId ? leaf.source.dateField : null;
-      await editDoc(
-        step.pageId,
-        null,
-        (doc) => {
-          const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === step.rowId);
-          const cells = row?.get('cells');
-          if (!(cells instanceof Y.Map)) return;
-          if (dateField && fieldsOf(doc).some((f) => f.id === dateField && f.type === 'date')) {
-            applied.dateField = dateField;
-            applied.prevDate = cells.get(dateField) ?? null;
-            cells.set(dateField, e.startDate);
-          }
-          try {
-            applied.status = setCardDone(doc, step.rowId, true);
-          } catch {
-            // No status property: the path remembers it's finished instead.
-          }
-          row!.set('updatedAt', Date.now());
-        },
-        { editor },
-      ).catch((err) => console.error('Could not finish a path card', err));
-    }
-    if (!state.done.includes(key)) state.done.push(key);
-    choice.applied = applied;
+    // Finished already as an extra step: move on to the next one.
+    const leaf = walk(e.paths, choice.trail)?.at(-1);
+    if (state.done.includes(stepKey(choice.step)) && leaf) choice.step = (await leafProgress(leaf, state)).next;
+    if (!choice.step) return;
+    choice.applied = await finishStep(eventId, e.startDate, leaf, choice.step, state, editor);
   } else if (!done && choice.applied) {
-    const applied = choice.applied;
-    if (step.kind === 'card') {
-      if (applied.events.length) await query(`update events set status = 'todo', updated_at = now() where id = any($1::uuid[]) and status = 'done'`, [applied.events]);
-      await editDoc(
-        step.pageId,
-        null,
-        (doc) => {
-          const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === step.rowId);
-          const cells = row?.get('cells');
-          if (!(cells instanceof Y.Map)) return;
-          if (applied.dateField) {
-            if (applied.prevDate === null) cells.delete(applied.dateField);
-            else cells.set(applied.dateField, applied.prevDate);
-          }
-          if (applied.status) {
-            try {
-              setCardDone(doc, step.rowId, false);
-            } catch {
-              // Nothing to put back.
-            }
-          }
-        },
-        { editor },
-      ).catch((err) => console.error('Could not reopen a path card', err));
-    }
-    state.done = state.done.filter((k) => k !== key);
+    await reopenStep(choice.step, choice.applied, state, editor);
     choice.applied = null;
   } else return;
   await query('update events set path_state = $2 where id = $1', [eventId, JSON.stringify(state)]);
+}
+
+/**
+ * Finishes the next `count` steps of a path right away, on top of the day's one: to get ahead, or to
+ * catch up on days that were missed.
+ */
+export async function finishMore(userId: string, eventId: string, trail: string[], count: number, editor: string) {
+  const e = await loadEvent(eventId);
+  if (!e.paths) throw new HttpError(400, 'This task has no paths');
+  const answers = walk(e.paths, trail);
+  const leaf = answers?.at(-1);
+  if (!answers || !leaf || !isLeaf(leaf)) throw new HttpError(400, 'Choose an answer for every question');
+  if (leaf.source && !atLeast((await accessMap(userId, e.workspaceId)).get(leaf.source.pageId) ?? 'none', 'edit'))
+    throw new HttpError(403, "You can't edit this path's database");
+  const state = e.pathState ?? emptyState();
+  if (!state.more || state.more.date !== e.startDate) state.more = { date: e.startDate, items: [] };
+  // Today's chosen step, if not finished yet, stays for the task itself.
+  const today = currentChoice(state, e.startDate);
+  const reserved = today?.step && !today.applied ? stepKey(today.step) : null;
+  let finished = 0;
+  while (finished < count) {
+    const { next } = await leafProgress(leaf, state, reserved);
+    if (!next) break;
+    const applied = await finishStep(eventId, e.startDate, leaf, next, state, editor);
+    state.more.items.push({ trail, labels: answers.map((a) => a.label), step: next, applied });
+    finished++;
+  }
+  if (!finished) throw new HttpError(400, 'Nothing left on this path');
+  await query('update events set path_state = $2, updated_at = now() where id = $1', [eventId, JSON.stringify(state)]);
+  return pathsView(userId, eventId);
+}
+
+/** Puts back one of the day's extra steps. */
+export async function undoMore(userId: string, eventId: string, index: number, editor: string) {
+  const e = await loadEvent(eventId);
+  const state = e.pathState;
+  const items = currentMore(state, e.startDate);
+  const item = items[index];
+  if (!state || !item) throw new HttpError(404, 'That step is no longer there');
+  await reopenStep(item.step, item.applied, state, editor);
+  items.splice(index, 1);
+  await query('update events set path_state = $2, updated_at = now() where id = $1', [eventId, JSON.stringify(state)]);
+  return pathsView(userId, eventId);
+}
+
+const stepKey = (step: PathStep) => (step.kind === 'card' ? cardKey(step.pageId, step.rowId) : step.id);
+
+/** Finishes a step: a card is set to done, its own tasks are ticked and the day goes into its date. */
+async function finishStep(eventId: string, day: string, leaf: PathOption | undefined, step: PathStep, state: PathState, editor: string): Promise<Applied> {
+  const applied: Applied = { events: [], status: false, dateField: null, prevDate: null };
+  if (step.kind === 'card') {
+    // The card's own tasks are ticked too (not this one, if it sits in the card).
+    const own = await query<{ id: string }>(
+      `select e.id from event_refs r join events e on e.id = r.event_id
+        where r.page_id = $1 and r.row_id = $2 and e.status is not null and e.status <> 'done' and e.id <> $3`,
+      [step.pageId, step.rowId, eventId],
+    );
+    if (own.length) await query(`update events set status = 'done', updated_at = now() where id = any($1::uuid[])`, [own.map((x) => x.id)]);
+    applied.events = own.map((x) => x.id);
+    const dateField = leaf?.source?.pageId === step.pageId ? leaf.source.dateField : null;
+    await editDoc(
+      step.pageId,
+      null,
+      (doc) => {
+        const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === step.rowId);
+        const cells = row?.get('cells');
+        if (!(cells instanceof Y.Map)) return;
+        if (dateField && fieldsOf(doc).some((f) => f.id === dateField && f.type === 'date')) {
+          applied.dateField = dateField;
+          applied.prevDate = cells.get(dateField) ?? null;
+          cells.set(dateField, day);
+        }
+        try {
+          applied.status = setCardDone(doc, step.rowId, true);
+        } catch {
+          // No status property: the path remembers it's finished instead.
+        }
+        row!.set('updatedAt', Date.now());
+      },
+      { editor },
+    ).catch((err) => console.error('Could not finish a path card', err));
+  }
+  const key = stepKey(step);
+  if (!state.done.includes(key)) state.done.push(key);
+  return applied;
+}
+
+/** Puts back what finishing a step changed. */
+async function reopenStep(step: PathStep, applied: Applied, state: PathState, editor: string) {
+  if (step.kind === 'card') {
+    if (applied.events.length) await query(`update events set status = 'todo', updated_at = now() where id = any($1::uuid[]) and status = 'done'`, [applied.events]);
+    await editDoc(
+      step.pageId,
+      null,
+      (doc) => {
+        const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === step.rowId);
+        const cells = row?.get('cells');
+        if (!(cells instanceof Y.Map)) return;
+        if (applied.dateField) {
+          if (applied.prevDate === null) cells.delete(applied.dateField);
+          else cells.set(applied.dateField, applied.prevDate);
+        }
+        if (applied.status) {
+          try {
+            setCardDone(doc, step.rowId, false);
+          } catch {
+            // Nothing to put back.
+          }
+        }
+      },
+      { editor },
+    ).catch((err) => console.error('Could not reopen a path card', err));
+  }
+  const key = stepKey(step);
+  state.done = state.done.filter((k) => k !== key);
 }
 
 /**

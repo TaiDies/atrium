@@ -11,7 +11,7 @@ import type { CalendarCard } from '../calendar/api';
 import { COLOR_HEX, createEvent, type EventColor, updateEvent } from '../calendar/api';
 import { CardDialog } from '../calendar/CardDialog';
 import { EventDialog } from '../calendar/EventDialog';
-import { ChoosePathDialog, type PathChoice, PathLine } from '../calendar/paths';
+import { ChoosePathDialog, type PathChoice, PathLine, type PathMode } from '../calendar/paths';
 import { IconButton, toastError } from '../components/ui';
 import { api, type PageType } from '../lib/api';
 import { OPTION_COLORS } from '../database/model';
@@ -45,6 +45,7 @@ interface Task {
   fieldName?: string;
   paths?: boolean;
   choice?: Pick<PathChoice, 'labels' | 'step'> | null;
+  more?: number;
 }
 
 interface Finished {
@@ -130,7 +131,7 @@ export function TodayPage() {
     placeholderData: (prev) => prev,
   });
   const [eventDialog, setEventDialog] = useState<string | null>(null);
-  const [choosing, setChoosing] = useState<Task | null>(null);
+  const [choosing, setChoosing] = useState<{ task: Task; mode: PathMode } | null>(null);
   const [cardDialog, setCardDialog] = useState<CalendarCard | null>(null);
   const [adding, setAdding] = useState('');
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -177,7 +178,7 @@ export function TodayPage() {
 
   const toggle = async (t: Task) => {
     // A task with paths asks which one first.
-    if (t.paths && !t.choice && !t.done) return setChoosing(t);
+    if (t.paths && !t.choice && !t.done) return setChoosing({ task: t, mode: 'choose' });
     const done = !t.done;
     setPending((p) => ({ ...p, [t.key]: done }));
     try {
@@ -342,7 +343,7 @@ export function TodayPage() {
                     task={t}
                     onToggle={() => toggle(t)}
                     onOpen={() => openTask(t)}
-                    onChoose={() => setChoosing(t)}
+                    onChoose={(mode) => setChoosing({ task: t, mode })}
                     today={day}
                     workspaceId={workspace.id}
                   />
@@ -358,7 +359,7 @@ export function TodayPage() {
                     task={t}
                     onToggle={() => toggle(t)}
                     onOpen={() => openTask(t)}
-                    onChoose={() => setChoosing(t)}
+                    onChoose={(mode) => setChoosing({ task: t, mode })}
                     today={day}
                     workspaceId={workspace.id}
                   />
@@ -418,7 +419,15 @@ export function TodayPage() {
         )}
       </div>
 
-      {choosing && <ChoosePathDialog eventId={choosing.eventId!} title={choosing.title} onClose={() => setChoosing(null)} onChosen={refresh} />}
+      {choosing && (
+        <ChoosePathDialog
+          eventId={choosing.task.eventId!}
+          title={choosing.task.title}
+          mode={choosing.mode}
+          onClose={() => setChoosing(null)}
+          onChosen={refresh}
+        />
+      )}
       {reviewing && <ReviewDialog workspaceId={workspace.id} onClose={() => setReviewing(false)} />}
       {eventDialog && (
         <EventDialog
@@ -553,7 +562,7 @@ function TaskRow({
   task: Task;
   onToggle: () => void;
   onOpen: () => void;
-  onChoose: () => void;
+  onChoose: (mode: PathMode) => void;
   today: string;
   workspaceId: string;
 }) {
@@ -602,7 +611,7 @@ function TaskRow({
             {color && <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />}
           </button>
         </div>
-        {t.paths && <PathLine workspaceId={workspaceId} choice={t.choice ?? null} done={t.done} onChoose={onChoose} />}
+        {t.paths && <PathLine workspaceId={workspaceId} choice={t.choice ?? null} done={t.done} more={t.more} onChoose={onChoose} />}
       </div>
     </div>
   );

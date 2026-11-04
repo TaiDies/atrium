@@ -7,7 +7,7 @@ import { databaseRows, editDoc, readDoc } from '../blocks.js';
 import { query } from '../db.js';
 import { DONE_STATUS, fieldsOf, isRowDone, statusFieldOf } from '../docIndex.js';
 import { addDays, isDate, today, validRule } from '../repeat.js';
-import { currentChoice, type PathChoice, pathCards, type PathState } from '../paths.js';
+import { currentChoice, currentMore, type PathChoice, pathCards, type PathState } from '../paths.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // The daily task list: everything with a done/not-done state that falls on a day — calendar events
@@ -45,6 +45,8 @@ export interface Task {
   /** Events with paths: whether there's a choice to make, and today's (null until chosen). */
   paths?: boolean;
   choice?: Pick<PathChoice, 'labels' | 'step'> | null;
+  /** How many more steps were finished today on top of the day's one. */
+  more?: number;
 }
 
 function choiceOf(state: PathState | null, date: string) {
@@ -118,7 +120,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
       status: e.status,
       color: e.color,
       eventId: e.id,
-      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start) } : {}),
+      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start), more: currentMore(e.pathState, e.start).length } : {}),
     });
   }
 
