@@ -3,7 +3,8 @@ import { BellRing, CalendarCheck2, CalendarDays, Check, ExternalLink, PenTool, R
 import { useEffect, useRef, useState } from 'react';
 import { type CalendarEvent, COLOR_HEX, STATUS_LABELS, updateEvent, useEvent } from '../calendar/api';
 import { EventDialog } from '../calendar/EventDialog';
-import { ChoosePathDialog, choiceOf, moreOf, PathLine, type PathMode } from '../calendar/paths';
+import { ChoosePathDialog, choiceOf, keepsMissedDays, PathLine } from '../calendar/paths';
+import { today as todayDate } from '../calendar/repeat';
 import { describeRepeat } from '../calendar/RepeatEditor';
 import { Popover, toastError } from '../components/ui';
 import { useDirectory } from '../lib/directory';
@@ -32,7 +33,7 @@ function when(e: Pick<CalendarEvent, 'startDate' | 'startTime' | 'endDate' | 'en
 export function EventBlockView({ eventId, editable }: { eventId: string; editable: boolean }) {
   const event = useEvent(eventId || null);
   const [open, setOpen] = useState(false);
-  const [choosing, setChoosing] = useState<PathMode | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const dir = useDirectory();
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function EventBlockView({ eventId, editable }: { eventId: string; editabl
           <button
             onClick={(ev) => {
               ev.stopPropagation();
-              if (e?.paths && !done && !choiceOf(e)) return setChoosing('choose');
+              if (e?.paths && !done && !choiceOf(e)) return setChoosing(true);
               if (e && dir && editable) updateEvent(dir.workspaceId, e.id, { status: done ? 'todo' : 'done' }).catch(toastError);
             }}
             className="flex size-[18px] shrink-0 items-center justify-center rounded border-2"
@@ -76,7 +77,16 @@ export function EventBlockView({ eventId, editable }: { eventId: string; editabl
               {isTask && ` · ${STATUS_LABELS[e.status!]}`}
             </div>
           )}
-          {e?.paths && isTask && dir && <PathLine workspaceId={dir.workspaceId} choice={choiceOf(e)} done={done} more={moreOf(e)} onChoose={setChoosing} />}
+          {e?.paths && isTask && dir && <PathLine
+              workspaceId={dir.workspaceId}
+              eventId={e.id}
+              choice={choiceOf(e)}
+              done={done}
+              ahead={keepsMissedDays(e) && e.startDate > todayDate()}
+              date={e.startDate}
+              canUndo={!!e.pathState?.history?.length}
+              onChoose={() => setChoosing(true)}
+            />}
         </div>
         {e?.repeat && (
           <span className="flex shrink-0 items-center gap-1 text-xs text-faint" title={describeRepeat(e.repeat)}>
@@ -86,7 +96,7 @@ export function EventBlockView({ eventId, editable }: { eventId: string; editabl
         {isTask ? <CalendarCheck2 size={15} className="shrink-0 text-faint" /> : null}
       </div>
       {open && e && <EventDialog eventId={e.id} onClose={() => setOpen(false)} />}
-      {choosing && e && <ChoosePathDialog eventId={e.id} title={e.title} mode={choosing} onClose={() => setChoosing(null)} />}
+      {choosing && e && <ChoosePathDialog eventId={e.id} title={e.title} onClose={() => setChoosing(false)} />}
     </div>
   );
 }

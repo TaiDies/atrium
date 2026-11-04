@@ -11,7 +11,7 @@ import type { CalendarCard } from '../calendar/api';
 import { COLOR_HEX, createEvent, type EventColor, updateEvent } from '../calendar/api';
 import { CardDialog } from '../calendar/CardDialog';
 import { EventDialog } from '../calendar/EventDialog';
-import { ChoosePathDialog, type PathChoice, PathLine, type PathMode } from '../calendar/paths';
+import { ChoosePathDialog, type PathChoice, PathLine, undoLastDay } from '../calendar/paths';
 import { IconButton, toastError } from '../components/ui';
 import { api, type PageType } from '../lib/api';
 import { OPTION_COLORS } from '../database/model';
@@ -45,7 +45,9 @@ interface Task {
   fieldName?: string;
   paths?: boolean;
   choice?: Pick<PathChoice, 'labels' | 'step'> | null;
-  more?: number;
+  /** Keeps missed days and is done up to today: it's on a day ahead. */
+  ahead?: boolean;
+  canUndo?: boolean;
 }
 
 interface Finished {
@@ -131,7 +133,7 @@ export function TodayPage() {
     placeholderData: (prev) => prev,
   });
   const [eventDialog, setEventDialog] = useState<string | null>(null);
-  const [choosing, setChoosing] = useState<{ task: Task; mode: PathMode } | null>(null);
+  const [choosing, setChoosing] = useState<Task | null>(null);
   const [cardDialog, setCardDialog] = useState<CalendarCard | null>(null);
   const [adding, setAdding] = useState('');
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -167,7 +169,8 @@ export function TodayPage() {
         at: null as string | null,
       })),
   ];
-  const open = overdue.length + dueToday.length;
+  // A task that's caught up and on a day ahead can go on, but isn't left to do today.
+  const open = overdue.length + dueToday.filter((t) => !t.ahead).length;
   const total = open + finished.length;
 
   const refresh = () => {
@@ -178,7 +181,7 @@ export function TodayPage() {
 
   const toggle = async (t: Task) => {
     // A task with paths asks which one first.
-    if (t.paths && !t.choice && !t.done) return setChoosing({ task: t, mode: 'choose' });
+    if (t.paths && !t.choice && !t.done) return setChoosing(t);
     const done = !t.done;
     setPending((p) => ({ ...p, [t.key]: done }));
     try {
@@ -343,7 +346,7 @@ export function TodayPage() {
                     task={t}
                     onToggle={() => toggle(t)}
                     onOpen={() => openTask(t)}
-                    onChoose={(mode) => setChoosing({ task: t, mode })}
+                    onChoose={() => setChoosing(t)}
                     today={day}
                     workspaceId={workspace.id}
                   />
@@ -359,7 +362,7 @@ export function TodayPage() {
                     task={t}
                     onToggle={() => toggle(t)}
                     onOpen={() => openTask(t)}
-                    onChoose={(mode) => setChoosing({ task: t, mode })}
+                    onChoose={() => setChoosing(t)}
                     today={day}
                     workspaceId={workspace.id}
                   />
@@ -386,7 +389,7 @@ export function TodayPage() {
                   return (
                     <div key={f.key} className="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-hover">
                       <button
-                        onClick={() => task && toggle(task)}
+                        onClick={() => task && (task.paths && !task.done && task.canUndo ? undoLastDay(task.eventId!, refresh) : toggle(task))}
                         disabled={!task}
                         title={task ? 'Mark as not done' : undefined}
                         className="flex size-5 shrink-0 items-center justify-center rounded-full bg-green-500 text-white"
@@ -419,15 +422,7 @@ export function TodayPage() {
         )}
       </div>
 
-      {choosing && (
-        <ChoosePathDialog
-          eventId={choosing.task.eventId!}
-          title={choosing.task.title}
-          mode={choosing.mode}
-          onClose={() => setChoosing(null)}
-          onChosen={refresh}
-        />
-      )}
+      {choosing && <ChoosePathDialog eventId={choosing.eventId!} title={choosing.title} onClose={() => setChoosing(null)} onChosen={refresh} />}
       {reviewing && <ReviewDialog workspaceId={workspace.id} onClose={() => setReviewing(false)} />}
       {eventDialog && (
         <EventDialog
@@ -562,7 +557,7 @@ function TaskRow({
   task: Task;
   onToggle: () => void;
   onOpen: () => void;
-  onChoose: (mode: PathMode) => void;
+  onChoose: () => void;
   today: string;
   workspaceId: string;
 }) {
@@ -611,7 +606,7 @@ function TaskRow({
             {color && <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />}
           </button>
         </div>
-        {t.paths && <PathLine workspaceId={workspaceId} choice={t.choice ?? null} done={t.done} more={t.more} onChoose={onChoose} />}
+        {t.paths && <PathLine workspaceId={workspaceId} eventId={t.eventId!} choice={t.choice ?? null} done={t.done} ahead={t.ahead} date={t.date} canUndo={t.canUndo} onChoose={onChoose} />}
       </div>
     </div>
   );

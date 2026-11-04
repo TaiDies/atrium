@@ -7,7 +7,7 @@ import { databaseRows, editDoc, readDoc } from '../blocks.js';
 import { query } from '../db.js';
 import { DONE_STATUS, fieldsOf, isRowDone, statusFieldOf } from '../docIndex.js';
 import { addDays, isDate, today, validRule } from '../repeat.js';
-import { currentChoice, currentMore, type PathChoice, pathCards, type PathState } from '../paths.js';
+import { currentChoice, keepsMissedDays, type PathChoice, pathCards, type Paths, type PathState } from '../paths.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // The daily task list: everything with a done/not-done state that falls on a day — calendar events
@@ -45,8 +45,10 @@ export interface Task {
   /** Events with paths: whether there's a choice to make, and today's (null until chosen). */
   paths?: boolean;
   choice?: Pick<PathChoice, 'labels' | 'step'> | null;
-  /** How many more steps were finished today on top of the day's one. */
-  more?: number;
+  /** A task that keeps missed days and is done up to today: it's on a day ahead, and can go on. */
+  ahead?: boolean;
+  /** Its last finished day can be taken back. */
+  canUndo?: boolean;
 }
 
 function choiceOf(state: PathState | null, date: string) {
@@ -63,13 +65,15 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
   const inPath = await pathCards(workspaceId);
   const pathCard = (pageId: string, rowId: string | null | undefined) => !!rowId && inPath.has(`${pageId}:${rowId}`);
 
-  const events = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string; color: string; hasPaths: boolean; pathState: PathState | null }>(
+  const events = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string; color: string; hasPaths: boolean; pathState: PathState | null; paths: Paths | null; repeat: unknown }>(
     `select id, title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status, color,
-            paths is not null as "hasPaths", path_state as "pathState"
+            paths is not null as "hasPaths", path_state as "pathState", paths, repeat
        from events
       where workspace_id = $1 and status is not null
         and ((start_date <= $2 and coalesce(end_date, start_date) >= $2)
-          or (status <> 'done' and coalesce(end_date, start_date) between $3 and $2))
+          or (status <> 'done' and coalesce(end_date, start_date) between $3 and $2)
+          -- Repeating tasks with paths stay listed however many days behind or ahead they are.
+          or (paths is not null and repeat is not null))
       order by start_time nulls first, title`,
     [workspaceId, day, since],
   );
@@ -95,6 +99,11 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
   };
   for (const e of events) {
     if (hidden.has(e.id) && !e.hasPaths) continue;
+    const catchUp = keepsMissedDays(e);
+    const ahead = catchUp && e.start > day;
+    const usual = (e.start <= day && (e.end ?? e.start) >= day) || (e.status !== 'done' && (e.end ?? e.start) >= since && (e.end ?? e.start) <= day);
+    // A task that keeps missed days is listed however far behind it is, and ahead once it's caught up.
+    if (!usual && !(catchUp && (ahead ? !!e.pathState?.history?.length : e.status !== 'done'))) continue;
     const last = e.end ?? e.start;
     const at = placed.get(e.id);
     tasks.push({
@@ -120,7 +129,7 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
       status: e.status,
       color: e.color,
       eventId: e.id,
-      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start), more: currentMore(e.pathState, e.start).length } : {}),
+      ...(e.hasPaths ? { paths: true, choice: choiceOf(e.pathState, e.start), ahead, canUndo: !!e.pathState?.history?.length } : {}),
     });
   }
 

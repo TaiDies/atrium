@@ -4,6 +4,7 @@ import { runRepeatingTemplates } from './routes/templates.js';
 import { runDigests } from './digest.js';
 import { query } from './db.js';
 import { fieldsOf, isRowDone } from './docIndex.js';
+import { keepsMissedDays, type Paths } from './paths.js';
 import { addDays, daysBetween, isDate, latestOnOrBefore, nextAfter, type RepeatRule, today, validRule } from './repeat.js';
 
 // Repeating cards and events. On each new date of the pattern (or, for "when done" rules, as soon
@@ -66,11 +67,13 @@ async function resetCards(day: string) {
 }
 
 async function resetEvents(day: string) {
-  const events = await query<{ id: string; start: string; end: string | null; status: string | null; repeat: unknown }>(
-    `select id, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", status, repeat from events where repeat is not null`,
+  const events = await query<{ id: string; start: string; end: string | null; status: string | null; repeat: unknown; paths: Paths | null }>(
+    `select id, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", status, repeat, paths from events where repeat is not null`,
   );
   for (const e of events) {
     if (!validRule(e.repeat)) continue;
+    // Tasks with paths that keep missed days stay on the first day not done; ticking moves them on.
+    if (keepsMissedDays(e)) continue;
     const target = resetTarget(e.repeat, e.start, e.status === 'done', day);
     if (!target) continue;
     const end = e.end ? addDays(e.end, daysBetween(e.start, target)) : null;

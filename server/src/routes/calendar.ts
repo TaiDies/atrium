@@ -10,7 +10,7 @@ import { fieldsOf, pruneWorkspaceRowRefs } from '../docIndex.js';
 import { locationsFor } from '../locations.js';
 import { placeBody, placeBlock, removeEverywhere } from '../placement.js';
 import { isDate, today, validRule } from '../repeat.js';
-import { applyPathStep, checkPaths, choosePath, finishMore, pathsSchema, pathsView, undoMore } from '../paths.js';
+import { applyPathStep, checkPaths, choosePath, pathsSchema, pathsView, undoLastDay } from '../paths.js';
 import { syncCardStatuses } from '../taskStatus.js';
 import { emit } from '../webhooks.js';
 import { HttpError, idParams, parse } from '../util.js';
@@ -287,23 +287,12 @@ export async function calendarRoutes(app: FastifyInstance) {
     return view;
   });
 
-  // Finishing more steps of a path on the same day (getting ahead, or catching up), and undoing one.
-  app.post('/events/:id/paths/more', async (req) => {
+  // Taking back the last day a task with paths was ticked off for (it moved on to the next day).
+  app.post('/events/:id/paths/undo', async (req) => {
     const { id } = parse(idParams, req.params);
     const event = await eventOr404(id);
     await requireMember(req.user.id, event.workspaceId);
-    const { trail, count } = parse(z.object({ trail: z.array(z.string().max(64)).min(1).max(6), count: z.number().int().min(1).max(50) }), req.body);
-    const view = await finishMore(req.user.id, id, trail, count, req.user.id);
-    emit(event.workspaceId, 'event.updated', await eventOr404(id));
-    return view;
-  });
-
-  app.post('/events/:id/paths/more/undo', async (req) => {
-    const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
-    const { index } = parse(z.object({ index: z.number().int().min(0) }), req.body);
-    const view = await undoMore(req.user.id, id, index, req.user.id);
+    const view = await undoLastDay(req.user.id, id, req.user.id);
     emit(event.workspaceId, 'event.updated', await eventOr404(id));
     return view;
   });

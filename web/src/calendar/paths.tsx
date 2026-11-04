@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowLeft, Check, ChevronRight, GitFork, Minus, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, GitFork, PartyPopper, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button, Dialog, Input, Spinner, toastError } from '../components/ui';
@@ -33,6 +33,8 @@ export interface PathOption {
 export interface Paths {
   question: string;
   options: PathOption[];
+  /** Repeating tasks: missed days wait to be done one by one (on unless turned off). */
+  catchUp?: boolean;
 }
 
 export type PathStep = { kind: 'step'; id: string; title: string } | { kind: 'card'; pageId: string; rowId: string; title: string };
@@ -42,17 +44,13 @@ export interface PathChoice {
   trail: string[];
   labels: string[];
   step: PathStep | null;
-  applied?: unknown;
 }
 
 export interface PathState {
   done: string[];
   today: PathChoice | null;
-  more?: { date: string; items: unknown[] } | null;
+  history?: { date: string }[];
 }
-
-/** Opening the picker to choose today's path, or to finish more steps (getting ahead, catching up). */
-export type PathMode = 'choose' | 'more';
 
 interface Progress {
   total: number;
@@ -64,7 +62,6 @@ interface Progress {
 interface PathsView {
   paths: Paths | null;
   choice: PathChoice | null;
-  more: { labels: string[]; step: PathStep }[];
   progress: Record<string, Progress>;
 }
 
@@ -74,76 +71,32 @@ const isLeaf = (o: PathOption) => !o.options?.length;
 /** Today's choice of a task, if it was made for the task's current date. */
 export const choiceOf = (e: { startDate: string; pathState?: PathState | null }) => (e.pathState?.today?.date === e.startDate ? e.pathState.today : null);
 
-/** How many more steps were finished on the task's current date. */
-export const moreOf = (e: { startDate: string; pathState?: PathState | null }) => (e.pathState?.more?.date === e.startDate ? e.pathState.more.items.length : 0);
+/** A repeating task with paths keeps missed days: it waits on the first day not done, and ticking it moves it on. */
+export const keepsMissedDays = (e: { paths?: Paths | null; repeat?: unknown }) => !!e.paths && e.paths.catchUp !== false && !!e.repeat;
+
+/** Takes back the last day a task was ticked off for. */
+export async function undoLastDay(eventId: string, onDone?: () => void) {
+  try {
+    await api(`/api/events/${eventId}/paths/undo`, { method: 'POST' });
+    refreshPaths(eventId);
+    onDone?.();
+  } catch (err) {
+    toastError(err);
+  }
+}
 
 // ---------- choosing ----------
 
-/**
- * Asks the task's questions one by one, showing how far along each path is, and picks today's step.
- * In "more" mode the last answer instead finishes a number of its next steps right away.
- */
-export function ChoosePathDialog({
-  eventId,
-  title,
-  mode: initialMode = 'choose',
-  onClose,
-  onChosen,
-}: {
-  eventId: string;
-  title: string;
-  mode?: PathMode;
-  onClose: () => void;
-  onChosen?: () => void;
-}) {
+/** Asks the task's questions one by one, showing how far along each path is, and picks today's step. */
+export function ChoosePathDialog({ eventId, title, onClose, onChosen }: { eventId: string; title: string; onClose: () => void; onChosen?: () => void }) {
   const view = useQuery({
     queryKey: ['event-paths', eventId],
     queryFn: () => api<PathsView>(`/api/events/${eventId}/paths`),
     staleTime: 0,
   });
-  const [mode, setMode] = useState<PathMode>(initialMode);
   const [trail, setTrail] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [picked, setPicked] = useState<PathOption | null>(null);
-  const [count, setCount] = useState(1);
   const paths = view.data?.paths;
-  const choice = view.data?.choice;
-
-  /** Steps that can be finished now on a path (today's chosen step is kept for the task itself). */
-  const available = (o: PathOption) => {
-    const left = view.data?.progress[o.id]?.left ?? 0;
-    const keeps = choice?.step && !choice.applied && choice.trail.at(-1) === o.id ? 1 : 0;
-    return Math.max(0, left - keeps);
-  };
-
-  const finishMore = async () => {
-    if (!picked) return;
-    setBusy(picked.id);
-    try {
-      const v = await api<PathsView>(`/api/events/${eventId}/paths/more`, { method: 'POST', body: { trail: [...trail, picked.id], count } });
-      queryClient.setQueryData(['event-paths', eventId], v);
-      refreshPaths(eventId);
-      onChosen?.();
-      setPicked(null);
-      setTrail([]);
-      setCount(1);
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const undoMore = async (index: number) => {
-    try {
-      const v = await api<PathsView>(`/api/events/${eventId}/paths/more/undo`, { method: 'POST', body: { index } });
-      queryClient.setQueryData(['event-paths', eventId], v);
-      refreshPaths(eventId);
-      onChosen?.();
-    } catch (err) {
-      toastError(err);
-    }
-  };
 
   let options = paths?.options ?? [];
   let question = paths?.question ?? '';
@@ -158,11 +111,6 @@ export function ChoosePathDialog({
 
   const choose = async (o: PathOption) => {
     if (!isLeaf(o)) return setTrail([...trail, o.id]);
-    if (mode === 'more') {
-      setPicked(o);
-      setCount(1);
-      return;
-    }
     setBusy(o.id);
     try {
       await api(`/api/events/${eventId}/paths/choose`, {
@@ -195,106 +143,40 @@ export function ChoosePathDialog({
           <p className="text-sm text-muted">This task has no paths.</p>
         ) : (
           <>
-            <div className="flex gap-1 self-start rounded-lg bg-hover p-0.5 text-xs font-medium">
-              {(['choose', 'more'] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => {
-                    setMode(m);
-                    setPicked(null);
-                    setTrail([]);
-                  }}
-                  className={clsx('rounded-md px-2.5 py-1', mode === m ? 'bg-surface text-fg shadow-sm' : 'text-muted hover:text-fg')}
-                >
-                  {m === 'choose' ? 'Today’s path' : 'Finish more'}
-                </button>
-              ))}
-            </div>
-            {mode === 'more' && (
-              <p className="text-xs text-muted">
-                Finish several steps at once: to get ahead, or to catch up on days you missed. Each one is marked done today.
-              </p>
+            {answers.length > 0 && (
+              <button onClick={() => setTrail(trail.slice(0, -1))} className="flex items-center gap-1 self-start text-xs text-muted hover:text-fg">
+                <ArrowLeft size={13} /> {answers.map((a) => a.label).join(' › ')}
+              </button>
             )}
-            {mode === 'more' && (view.data?.more.length ?? 0) > 0 && (
-              <div className="flex flex-col gap-1 rounded-lg border border-line px-3 py-2">
-                <span className="text-xs font-medium text-muted">Finished more today</span>
-                {view.data!.more.map((x, i) => (
-                  <span key={i} className="flex min-w-0 items-center gap-2 text-sm">
-                    <Check size={13} className="shrink-0 text-accent" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {x.step.title} <span className="text-xs text-faint">· {x.labels.join(' › ')}</span>
-                    </span>
-                    <button onClick={() => void undoMore(i)} className="shrink-0 text-xs text-faint hover:text-fg">
-                      Undo
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {picked ? (
-              <div className="flex flex-col gap-3">
-                <button onClick={() => setPicked(null)} className="flex items-center gap-1 self-start text-xs text-muted hover:text-fg">
-                  <ArrowLeft size={13} /> {[...answers, picked].map((a) => a.label).join(' › ')}
-                </button>
-                <p className="text-[15px] font-medium">How many to finish now?</p>
-                <div className="flex items-center gap-2">
-                  <Button variant="secondary" onClick={() => setCount(Math.max(1, count - 1))} disabled={count <= 1} aria-label="Fewer">
-                    <Minus size={14} />
-                  </Button>
-                  <span className="w-10 text-center text-lg font-semibold tabular-nums">{count}</span>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setCount(Math.min(available(picked), count + 1))}
-                    disabled={count >= available(picked)}
-                    aria-label="More"
+            <p className="text-[15px] font-medium">{question || 'Which one?'}</p>
+            <div className="flex flex-col gap-2">
+              {options.map((o) => {
+                const p = isLeaf(o) ? view.data?.progress[o.id] : undefined;
+                const left = leftUnder(o);
+                const finished = isLeaf(o) ? !p?.next : left === 0;
+                if (p?.hidden) return null;
+                return (
+                  <button
+                    key={o.id}
+                    onClick={() => void choose(o)}
+                    disabled={finished || busy !== null}
+                    className={clsx(
+                      'flex items-center gap-3 rounded-lg border border-line px-3.5 py-3 text-start transition-colors',
+                      finished ? 'opacity-55' : 'hover:border-accent hover:bg-hover',
+                    )}
                   >
-                    <Plus size={14} />
-                  </Button>
-                  <span className="text-xs text-muted">of {available(picked)} not done yet</span>
-                </div>
-                <p className="text-xs text-muted">Starting with {view.data?.progress[picked.id]?.next?.title ?? 'the next step'}, in order.</p>
-                <Button onClick={() => void finishMore()} disabled={busy !== null} className="self-start">
-                  {busy ? <Spinner /> : count === 1 ? 'Finish 1 step' : `Finish ${count} steps`}
-                </Button>
-              </div>
-            ) : (
-              <>
-                {answers.length > 0 && (
-                  <button onClick={() => setTrail(trail.slice(0, -1))} className="flex items-center gap-1 self-start text-xs text-muted hover:text-fg">
-                    <ArrowLeft size={13} /> {answers.map((a) => a.label).join(' › ')}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{o.label || 'Untitled'}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted">
+                        {finished ? 'All done' : p?.next ? `Next: ${p.next.title} · ${p.left} of ${p.total} left` : left !== null ? `${left} left` : ''}
+                      </span>
+                    </span>
+                    {busy === o.id ? <Spinner /> : <ChevronRight size={16} className="shrink-0 text-faint" />}
                   </button>
-                )}
-                <p className="text-[15px] font-medium">{question || 'Which one?'}</p>
-                <div className="flex flex-col gap-2">
-                  {options.map((o) => {
-                    const p = isLeaf(o) ? view.data?.progress[o.id] : undefined;
-                    const left = leftUnder(o);
-                    const finished = isLeaf(o) ? !p?.next || (mode === 'more' && available(o) === 0) : left === 0;
-                    if (p?.hidden) return null;
-                    return (
-                      <button
-                        key={o.id}
-                        onClick={() => void choose(o)}
-                        disabled={finished || busy !== null}
-                        className={clsx(
-                          'flex items-center gap-3 rounded-lg border border-line px-3.5 py-3 text-start transition-colors',
-                          finished ? 'opacity-55' : 'hover:border-accent hover:bg-hover',
-                        )}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{o.label || 'Untitled'}</span>
-                          <span className="mt-0.5 block truncate text-xs text-muted">
-                            {finished ? 'All done' : p?.next ? `Next: ${p.next.title} · ${p.left} of ${p.total} left` : left !== null ? `${left} left` : ''}
-                          </span>
-                        </span>
-                        {busy === o.id ? <Spinner /> : <ChevronRight size={16} className="shrink-0 text-faint" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-            {mode === 'choose' && view.data?.choice && (
+                );
+              })}
+            </div>
+            {view.data?.choice && (
               <button
                 onClick={async () => {
                   try {
@@ -327,86 +209,122 @@ function refreshPaths(eventId: string) {
   queryClient.invalidateQueries({ queryKey: ['tasks'] });
 }
 
-/** Under a task: today's path and step (opening the card), or a button to choose one. */
+/**
+ * Under a task: today's path and step (opening the card), or a button to choose one. A task that keeps
+ * missed days also says when it's all caught up (it's then on a day ahead), and can undo its last day.
+ */
 export function PathLine({
   workspaceId,
+  eventId,
   choice,
   done,
-  more = 0,
+  ahead = false,
+  date,
+  canUndo = false,
   onChoose,
 }: {
   workspaceId: string;
+  eventId: string;
   choice: Pick<PathChoice, 'labels' | 'step'> | null;
   done: boolean;
-  /** Steps finished today on top of the day's one. */
-  more?: number;
-  onChoose: (mode: PathMode) => void;
+  ahead?: boolean;
+  /** The day the task is on. */
+  date: string;
+  canUndo?: boolean;
+  onChoose: () => void;
 }) {
   const navigate = useNavigate();
-  const open = (mode: PathMode) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChoose(mode);
-  };
-  const extra = (
-    <>
-      {more > 0 && <span className="shrink-0 text-accent">+{more} more</span>}
-      <button onClick={open('more')} className="shrink-0 text-faint hover:text-fg" title="Finish more steps today: get ahead, or catch up">
-        Finish more
-      </button>
-    </>
+  const undo = canUndo && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        void undoLastDay(eventId);
+      }}
+      className="shrink-0 text-faint hover:text-fg"
+      title="Take back the last day you ticked off"
+    >
+      Undo last day
+    </button>
+  );
+  const caughtUp = ahead && (
+    <span className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-green-600 dark:text-green-400">
+      <PartyPopper size={12} className="shrink-0" />
+      All caught up. You can keep going with {dayLabel(date)}.
+    </span>
   );
   if (!choice)
     return (
-      <span className="mt-1 flex min-w-0 items-center gap-2 text-xs">
-        {!done && (
-          <button
-            onClick={open('choose')}
-            className="flex shrink-0 items-center gap-1 rounded-md bg-accent/10 px-2 py-0.5 font-medium text-accent hover:bg-accent/20"
-          >
-            <GitFork size={12} /> Choose today’s path
-          </button>
-        )}
-        {extra}
+      <span className="flex flex-col items-start">
+        {caughtUp}
+        <span className="mt-1 flex items-center gap-2 text-xs">
+          {!done && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onChoose();
+              }}
+              className="flex items-center gap-1 rounded-md bg-accent/10 px-2 py-0.5 font-medium text-accent hover:bg-accent/20"
+            >
+              <GitFork size={12} /> {ahead ? 'Choose the next path' : 'Choose today’s path'}
+            </button>
+          )}
+          {undo}
+        </span>
       </span>
     );
   const step = choice.step;
   return (
-    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
-      <GitFork size={12} className="shrink-0" />
-      <span className="shrink-0">{choice.labels.join(' › ')}</span>
-      {step ? (
-        <>
-          <span className="shrink-0">·</span>
-          {step.kind === 'card' ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(
-                  locationPath(workspaceId, {
-                    pageId: step.pageId,
-                    rowId: step.rowId,
-                  }),
-                );
-              }}
-              className="min-w-0 truncate font-medium text-fg hover:underline"
-            >
-              {step.title}
-            </button>
-          ) : (
-            <span className="min-w-0 truncate font-medium text-fg">{step.title}</span>
-          )}
-        </>
-      ) : (
-        <span>· nothing left on this path</span>
-      )}
-      {!done && (
-        <button onClick={open('choose')} className="shrink-0 text-faint hover:text-fg">
-          Change
-        </button>
-      )}
-      {extra}
+    <span className="flex flex-col items-start">
+      {caughtUp}
+      <span className="mt-0.5 flex min-w-0 max-w-full items-center gap-1.5 text-xs text-muted">
+        <GitFork size={12} className="shrink-0" />
+        <span className="shrink-0">{choice.labels.join(' › ')}</span>
+        {step ? (
+          <>
+            <span className="shrink-0">·</span>
+            {step.kind === 'card' ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(
+                    locationPath(workspaceId, {
+                      pageId: step.pageId,
+                      rowId: step.rowId,
+                    }),
+                  );
+                }}
+                className="min-w-0 truncate font-medium text-fg hover:underline"
+              >
+                {step.title}
+              </button>
+            ) : (
+              <span className="min-w-0 truncate font-medium text-fg">{step.title}</span>
+            )}
+          </>
+        ) : (
+          <span>· nothing left on this path</span>
+        )}
+        {!done && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onChoose();
+            }}
+            className="shrink-0 text-faint hover:text-fg"
+          >
+            Change
+          </button>
+        )}
+        {undo}
+      </span>
     </span>
   );
+}
+
+/** "Friday, Nov 6" for a YYYY-MM-DD day. */
+function dayLabel(date: string) {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 // ---------- editing ----------
@@ -449,6 +367,20 @@ export function PathsEditor({
           />
           <Answers options={paths.options} onChange={(options) => setPaths({ ...paths, options })} databases={databases} level={1} />
         </div>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={paths.catchUp !== false}
+            onChange={(e) => setPaths({ ...paths, catchUp: e.target.checked ? undefined : false })}
+          />
+          <span>
+            Missed days wait for you
+            <span className="block text-xs text-muted">
+              For a repeating task: it stays overdue on the first day not done, and each tick moves it to the next day. Once caught up you can keep going ahead.
+            </span>
+          </span>
+        </label>
         <div className="flex items-center gap-2">
           {value && (
             <Button
