@@ -21,7 +21,8 @@ FROM node:24-alpine
 # LibreOffice converts documents, spreadsheets and presentations between formats (Word, Excel,
 # PowerPoint, OpenDocument, RTF, CSV, PDF) for the built-in editors and the exact-layout view.
 # Liberation fonts match Arial/Times/Courier metrics so Office files keep their layout.
-RUN apk add --no-cache libreoffice-writer libreoffice-calc libreoffice-impress \
+# ffmpeg does the quick video edits (trim, mute, rotate).
+RUN apk add --no-cache libreoffice-writer libreoffice-calc libreoffice-impress ffmpeg \
       ttf-liberation font-noto font-noto-arabic font-noto-cjk fontconfig \
   && fc-cache -f
 ENV NODE_ENV=production \

@@ -33,6 +33,12 @@ const MIME: Record<string, string> = {
   html: 'text/html',
   txt: 'text/plain',
   md: 'text/markdown',
+  // Pictures and videos saved by the quick editors.
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
 };
 const NEW_EXT: Record<OfficeKind, string> = { document: 'docx', spreadsheet: 'xlsx', presentation: 'pptx' };
 

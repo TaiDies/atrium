@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
+  Pencil,
   Moon,
   Sun,
   ArrowLeft,
@@ -57,6 +58,8 @@ import { isOffice, kindOf } from '../notes/api';
 import { loadPdfjs, pdfAssets } from '../notes/pdf';
 
 const OfficeView = lazy(() => import('../office/OfficeView'));
+const ImageEditor = lazy(() => import('../media/ImageEditor'));
+const VideoEditor = lazy(() => import('../media/VideoEditor'));
 import 'pdfjs-dist/web/pdf_viewer.css';
 
 interface FileInfo {
@@ -105,6 +108,10 @@ export function FileViewerPage({ overlay }: { overlay?: { fileId: string; name?:
   const detected = file ? kindOf(file) : null;
   const kind = detected === 'note' ? 'pdf' : detected;
   const office = !!kind && isOffice(kind);
+  // Pictures and videos can be edited quickly (crop, turn, trim…).
+  const [editing, setEditing] = useState(false);
+  const [version, setVersion] = useState(0);
+  const editable = !!file && (kind === 'image' || kind === 'video');
 
   const back = () => {
     if (overlay) return overlay.onClose();
@@ -125,7 +132,16 @@ export function FileViewerPage({ overlay }: { overlay?: { fileId: string; name?:
           <div className="truncate text-sm font-medium">{name}</div>
           {file && <div className="truncate text-xs text-muted">{formatSize(file.size)}</div>}
         </div>
-        {file && kind !== 'pdf' && !office && <DownloadLink file={file} />}
+        {file && editable && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line px-2.5 text-sm hover:bg-hover"
+            title={kind === 'image' ? 'Crop, turn, flip, change the colours or the size' : 'Trim, take the sound out, turn or flip'}
+          >
+            <Pencil size={15} /> Edit
+          </button>
+        )}
+        {file && kind !== 'pdf' && !office && !editing && <DownloadLink file={file} />}
         {file && (kind === 'pdf' || office) && <span id="viewer-actions" className="flex shrink-0 items-center gap-2" />}
       </header>
       <main className="min-h-0 flex-1">
@@ -142,11 +158,32 @@ export function FileViewerPage({ overlay }: { overlay?: { fileId: string; name?:
             />
           </Suspense>
         )}
-        {file && kind !== 'pdf' && !office && (
-          <div className="h-full overflow-auto">
+        {file && editing && (
+          <Suspense fallback={<Spinner />}>
+            {kind === 'image' ? (
+              <ImageEditor
+                file={file}
+                onDone={(saved) => {
+                  setEditing(false);
+                  if (saved) setVersion((v) => v + 1);
+                }}
+              />
+            ) : (
+              <VideoEditor
+                file={file}
+                onDone={(saved) => {
+                  setEditing(false);
+                  if (saved) setVersion((v) => v + 1);
+                }}
+              />
+            )}
+          </Suspense>
+        )}
+        {file && kind !== 'pdf' && !office && !editing && (
+          <div key={version} className="h-full overflow-auto">
             {kind === 'image' && (
               <div className="flex min-h-full items-center justify-center p-4">
-                <img src={file.url} alt={file.name} className="max-h-[calc(100vh-6rem)] max-w-full rounded shadow-pop" />
+                <img src={version ? `${file.url}?v=${version}` : file.url} alt={file.name} className="max-h-[calc(100vh-6rem)] max-w-full rounded shadow-pop" />
               </div>
             )}
             {kind === 'video' && (
