@@ -41,12 +41,14 @@ export function useFilePositions(urls: string[]) {
   const ids = useMemo(() => [...new Set(urls.map(fileIdOf).filter((x): x is string => !!x))].sort(), [urls]);
   return useQuery({
     queryKey: ['file-positions', ids.join(',')],
-    queryFn: async () => new Map(Object.entries((await api<{ positions: Record<string, SavedPosition> }>(`/api/file-positions?ids=${ids.join(',')}`)).positions)),
+    // A plain object, not a Map: the query cache is saved on the device for offline use (as JSON), and a
+    // Map would come back from it as an empty object.
+    queryFn: async () => (await api<{ positions: Record<string, SavedPosition> }>(`/api/file-positions?ids=${ids.join(',')}`)).positions,
     enabled: ids.length > 0,
     staleTime: 30_000,
-    select: (m) => (url: string) => {
+    select: (positions) => (url: string) => {
       const id = fileIdOf(url);
-      return id ? (m.get(id)?.position ?? null) : null;
+      return (id && positions && typeof positions === 'object' ? positions[id]?.position : null) ?? null;
     },
   });
 }
