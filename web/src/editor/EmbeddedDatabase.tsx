@@ -7,6 +7,7 @@ import { pageTitle } from '../lib/api';
 import { useCollab } from '../lib/collab';
 import { useDirectory } from '../lib/directory';
 import { usePublicDoc } from '../lib/publicDoc';
+import { MAX_NESTED_DATABASES, useOpenDatabases } from '../database/nesting';
 
 const DATABASE_TYPES = ['grid', 'board', 'calendar', 'timeline', 'chart', 'form', 'list', 'gallery', 'feed'];
 
@@ -48,11 +49,20 @@ export function EmbeddedDatabase({
   editable?: boolean;
 }) {
   const dir = useDirectory();
+  const open = useOpenDatabases();
   const page = dir?.pages.find((p) => p.id === pageId);
   if (!dir) return null;
   if (linked && !pageId) return <DatabaseChooser editable={editable} onPick={(id) => onChange?.({ pageId: id, viewId: '' })} />;
   if (!page) {
     return <div className="rounded-md border border-dashed border-line px-3 py-4 text-sm text-faint italic">This database was moved to the trash or deleted.</div>;
+  }
+  if (open.includes(page.id) || open.length >= MAX_NESTED_DATABASES) {
+    return (
+      <div className="rounded-md border border-dashed border-line px-3 py-4 text-sm text-faint">
+        <span className="font-medium text-muted">{pageTitle(page)}</span> is already open around this card, so it isn’t shown again here (it would show
+        itself inside itself without end).
+      </div>
+    );
   }
   return (
     <div className="my-1 w-full">

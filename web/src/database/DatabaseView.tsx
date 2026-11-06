@@ -1,3 +1,4 @@
+import { OpenDatabases, useOpenDatabases } from './nesting';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowDownUp, ChevronDown, Copy, Eye, EyeOff, ListFilter, Pencil, Plus, Trash2, X, Lock } from 'lucide-react';
@@ -29,7 +30,17 @@ export function ViewIcon({ type, size = 15 }: { type: ViewType; size?: number })
   return <PageTypeIcon type={type} size={size} className="shrink-0" />;
 }
 
-export function DatabaseView({
+/** Keeps track of which databases are open around this one (see nesting.ts). */
+export function DatabaseView(props: Parameters<typeof DatabaseViewInner>[0]) {
+  const open = useOpenDatabases();
+  return (
+    <OpenDatabases.Provider value={[...open, props.pageId]}>
+      <DatabaseViewInner {...props} />
+    </OpenDatabases.Provider>
+  );
+}
+
+function DatabaseViewInner({
   doc,
   pageId,
   pageType,
