@@ -36,6 +36,22 @@ function editorDictionary() {
   return code === 'en' ? null : ((blockNoteLocales as Record<string, unknown>)[code] as typeof blockNoteLocales.en | undefined) ?? null;
 }
 
+/**
+ * Keeps each group's items next to each other, groups in the order they first appear. The menu shows
+ * a heading whenever the group changes and tracks headings by name, so a group split in two showed
+ * its heading twice and left copies behind as the list changed while typing.
+ */
+function groupTogether<T extends { group?: string }>(items: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const key = item.group ?? '';
+    const list = groups.get(key);
+    if (list) list.push(item);
+    else groups.set(key, [item]);
+  }
+  return [...groups.values()].flat();
+}
+
 export function DocumentEditor({
   session,
   user,
@@ -195,10 +211,11 @@ export function DocumentEditor({
             // Items whose name starts with what was typed come first ("embed" → Embed, not File).
             const q = query.trim().toLowerCase();
             const items = filterSuggestionItems(slashItems(editor, parentPageId), query);
-            return q ? [...items.filter((i) => i.title.toLowerCase().startsWith(q)), ...items.filter((i) => !i.title.toLowerCase().startsWith(q))] : items;
+            const ranked = q ? [...items.filter((i) => i.title.toLowerCase().startsWith(q)), ...items.filter((i) => !i.title.toLowerCase().startsWith(q))] : items;
+            return groupTogether(ranked);
           }}
         />
-        <SuggestionMenuController triggerCharacter="@" getItems={async (query) => mentionItems(editor, parentPageId, query)} />
+        <SuggestionMenuController triggerCharacter="@" getItems={async (query) => groupTogether(await mentionItems(editor, parentPageId, query))} />
         {commentsOpen && (
           <aside className="fixed top-12 end-0 bottom-0 z-30 flex w-[min(360px,100vw)] flex-col border-s border-line bg-bg shadow-xl">
             <div className="flex items-center gap-1 border-b border-line px-3 py-2">
