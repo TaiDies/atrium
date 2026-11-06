@@ -24,6 +24,7 @@ import { whiteboardRoutes } from './routes/whiteboards.js';
 import { transferRoutes } from './routes/transfer.js';
 import { officeRoutes } from './routes/office.js';
 import { mediaRoutes } from './routes/media.js';
+import { statsRoutes } from './routes/stats.js';
 import { startScheduler } from './scheduler.js';
 import { backfillDocIndex } from './docIndex.js';
 import { pageRoutes } from './routes/pages.js';
@@ -75,6 +76,7 @@ await app.register(
     await api.register(transferRoutes);
     await api.register(officeRoutes);
     await api.register(mediaRoutes);
+    await api.register(statsRoutes);
     await api.register(publicRoutes);
     await api.register(taskRoutes);
     await api.register(notificationRoutes);

@@ -7,6 +7,7 @@ import { EmojiPicker, randomEmoji } from '../components/EmojiPicker';
 import { type Anchor, Avatar, Button, confirmDialog, FullScreenSpinner, IconButton, Menu, MenuDivider, MenuItem, Popover, toast, toastError } from '../components/ui';
 import { api, ApiError, canEdit, type PageDetail, pageTitle, uploadFile } from '../lib/api';
 import { ShareDialog } from './ShareDialog';
+import { StatsIcon, StatsSheet } from './StatsSheet';
 import { rememberVisit } from './SearchDialog';
 import { type Peer, useCollab, usePeers } from '../lib/collab';
 import { COVERS, coverStyle, isImageCover, randomCover } from '../lib/covers';
@@ -245,6 +246,7 @@ function PageHeader({
   const navigate = useNavigate();
   const [menu, setMenu] = useState<Anchor | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [counting, setCounting] = useState(false);
@@ -318,6 +320,10 @@ function PageHeader({
         </Button>
       )}
       <ShareDialog page={page} open={sharing} onClose={() => setSharing(false)} />
+      <IconButton onClick={() => setShowStats(true)} title="Stats: every task and card, day by day (downloads for Excel)">
+        <StatsIcon size={16} />
+      </IconButton>
+      {showStats && <StatsSheet pageId={page.id} title={page.title} onClose={() => setShowStats(false)} />}
       {onToggleComments && (
         <IconButton onClick={onToggleComments} title="Comments">
           <MessageSquare size={16} />

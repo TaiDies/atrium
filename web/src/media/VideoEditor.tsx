@@ -32,6 +32,8 @@ export default function VideoEditor({ file, onDone }: { file: EditFile; onDone: 
   const [end, setEnd] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mute, setMute] = useState(false);
+  /** Loudness in percent; the preview can only play up to 100%, the saved video goes louder. */
+  const [volume, setVolume] = useState(100);
   const [rotate, setRotate] = useState<0 | 90 | 180 | 270>(0);
   const [flip, setFlip] = useState(false);
   const [busy, setBusy] = useState<'replace' | 'copy' | null>(null);
@@ -89,7 +91,10 @@ export default function VideoEditor({ file, onDone }: { file: EditFile; onDone: 
   };
 
   const trimmed = duration > 0 && (start > 0.05 || end < duration - 0.05);
-  const changed = trimmed || mute || rotate !== 0 || flip;
+  const changed = trimmed || mute || volume !== 100 || rotate !== 0 || flip;
+  useEffect(() => {
+    if (video.current) video.current.volume = Math.min(1, volume / 100);
+  }, [volume]);
 
   const save = async (asCopy: boolean) => {
     video.current?.pause();
@@ -97,7 +102,7 @@ export default function VideoEditor({ file, onDone }: { file: EditFile; onDone: 
     try {
       const res = await api<{ name: string }>(`/api/files/${file.id}/video-edit`, {
         method: 'POST',
-        body: { start: trimmed ? Math.round(start * 100) / 100 : 0, end: trimmed ? Math.round(end * 100) / 100 : null, mute, rotate, flip, asCopy },
+        body: { start: trimmed ? Math.round(start * 100) / 100 : 0, end: trimmed ? Math.round(end * 100) / 100 : null, mute, volume, rotate, flip, asCopy },
       });
       toast(asCopy ? `Saved a copy, “${res.name}”, in Files` : 'Saved');
       queryClient.invalidateQueries({ queryKey: ['file-info', file.id] });
@@ -190,6 +195,20 @@ export default function VideoEditor({ file, onDone }: { file: EditFile; onDone: 
           >
             {mute ? <VolumeX size={15} /> : <Volume2 size={15} />} {mute ? 'No sound' : 'Sound on'}
           </button>
+          <label className={clsx('flex items-center gap-2 text-xs text-muted', mute && 'opacity-40')} title="How loud the saved video is">
+            Volume
+            <input
+              type="range"
+              min={0}
+              max={300}
+              step={5}
+              value={volume}
+              disabled={mute}
+              onChange={(e) => setVolume(Number(e.target.value))}
+              className="w-28 accent-[var(--color-accent)]"
+            />
+            <span className="w-10 tabular-nums">{volume}%</span>
+          </label>
           <IconButton label="Turn left" onClick={() => setRotate((r) => (((r + 270) % 360) as 0 | 90 | 180 | 270))}>
             <RotateCcw size={16} />
           </IconButton>

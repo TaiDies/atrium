@@ -66,7 +66,7 @@ export interface PathState {
   done: string[];
   today: PathChoice | null;
   /** Days finished by ticking (newest last), to undo them: the day, and its finished choice. */
-  history?: { date: string; choice: PathChoice }[];
+  history?: { date: string; choice: PathChoice; /** When it was ticked off. */ at?: string }[];
 }
 
 const id = z.string().min(1).max(64);
@@ -281,7 +281,8 @@ export async function applyPathStep(eventId: string, done: boolean, editor: stri
   if (done && keepsMissedDays(e)) {
     const next = nextAfter(e.repeat as RepeatRule, e.startDate);
     if (next) {
-      state.history = [...(state.history ?? []), { date: e.startDate, choice: choice ?? { date: e.startDate, trail: [], labels: [], step: null } }].slice(-30);
+      // Kept for a long plan's worth of days: Undo and the page's stats read it.
+      state.history = [...(state.history ?? []), { date: e.startDate, choice: choice ?? { date: e.startDate, trail: [], labels: [], step: null }, at: new Date().toISOString() }].slice(-1000);
       state.today = null;
       const end = e.endDate ? addDays(e.endDate, daysBetween(e.startDate, next)) : null;
       await query(`update events set start_date = $2, end_date = $3, status = 'todo', path_state = $4, updated_at = now() where id = $1`, [

@@ -60,6 +60,8 @@ const editBody = z.object({
   start: z.number().min(0).max(1e6).default(0),
   end: z.number().min(0).max(1e6).nullable().default(null),
   mute: z.boolean().default(false),
+  /** Loudness in percent (100 = as it is, up to 300). */
+  volume: z.number().min(0).max(300).default(100),
   /** Turn clockwise by this much. */
   rotate: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).default(0),
   flip: z.boolean().default(false),
@@ -95,8 +97,11 @@ export async function mediaRoutes(app: FastifyInstance) {
     if (body.start > 0) args.push('-ss', String(body.start));
     if (body.end !== null) args.push('-to', String(body.end));
     args.push('-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p');
-    if (body.mute) args.push('-an');
-    else args.push('-c:a', 'aac', '-b:a', '160k');
+    if (body.mute || body.volume === 0) args.push('-an');
+    else {
+      if (body.volume !== 100) args.push('-af', `volume=${(body.volume / 100).toFixed(2)}`);
+      args.push('-c:a', 'aac', '-b:a', '160k');
+    }
     args.push('-movflags', '+faststart', out);
 
     await turn();
