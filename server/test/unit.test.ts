@@ -4,7 +4,12 @@ import { describe, it } from 'node:test';
 import { runFormula } from '../../web/src/database/formula.ts';
 import { groupTogether } from '../../web/src/lib/groupTogether.ts';
 import { checkOutboundUrl, isPrivate } from '../src/netGuard.ts';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { zipSync } from 'fflate';
 import { limiter, loginDelayMs } from '../src/rateLimit.ts';
+import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
   it('slows sign-ins for a guessed account instead of refusing them', () => {
@@ -90,5 +95,42 @@ describe('slash menu grouping', () => {
     const out = groupTogether([{ group: 'A' }, { group: 'B' }, { group: 'A' }, { group: 'B' }]);
     const runs = out.map((i) => i.group).filter((g, i, a) => i === 0 || a[i - 1] !== g);
     assert.equal(new Set(runs).size, runs.length);
+  });
+});
+
+describe('zip import unpacking', () => {
+  const withZip = async (files: Record<string, Uint8Array>, run: (zip: string, dir: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzip-test-'));
+    try {
+      const zip = join(dir, 'in.zip');
+      writeFileSync(zip, zipSync(files));
+      await run(zip, dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  it('unpacks each entry to its own file on disk', () =>
+    withZip({ 'a.txt': new TextEncoder().encode('hello'), 'sub/b.bin': new Uint8Array(70_000).fill(7) }, async (zip, dir) => {
+      const out = await unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 10 });
+      assert.equal(readFileSync(out.get('a.txt')!.file, 'utf8'), 'hello');
+      assert.equal(out.get('sub/b.bin')!.size, 70_000);
+    }));
+  it('refuses more entries than allowed', () =>
+    withZip({ a: new Uint8Array(1), b: new Uint8Array(1), c: new Uint8Array(1) }, async (zip, dir) => {
+      await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 2 }), (e: { status?: number }) => e.status === 413);
+    }));
+  it('stops a small zip that unpacks to too much, counting real bytes', () =>
+    withZip({ zeros: new Uint8Array(5_000_000) }, async (zip, dir) => {
+      await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1_000_000, maxEntries: 10 }), (e: { status?: number }) => e.status === 413);
+    }));
+  it('refuses something that is not a zip', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzip-test-'));
+    try {
+      writeFileSync(join(dir, 'x.zip'), 'not a zip at all');
+      const out = await unzipToDisk(join(dir, 'x.zip'), dir, { maxBytes: 1e6, maxEntries: 10 }).catch((e) => e);
+      assert.ok(out instanceof Map ? out.size === 0 : out.status === 400);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -3,6 +3,7 @@
 //   BASE_URL=http://localhost:3100 SERVER_LOG=server.log node test/security.integration.mjs
 // SERVER_LOG is the server's output with MAIL_TRANSPORT=log, where the emailed codes appear.
 import { readFileSync } from 'node:fs';
+import { strToU8, zipSync } from 'fflate';
 
 const B = process.env.BASE_URL ?? 'http://localhost:3100';
 const LOG = process.env.SERVER_LOG;
@@ -145,6 +146,25 @@ let member;
 {
   const r = await req('/api/link-preview?url=' + encodeURIComponent('http://169.254.169.254/latest/meta-data/'), { cookie: owner.cookie });
   check('link previews never reach cloud metadata', r.status === 400, `got ${r.status}`);
+}
+
+// --- zip import
+{
+  const upload = async (bytes) => {
+    const form = new FormData();
+    form.append('file', new Blob([bytes]), 'export.zip');
+    const r = await fetch(`${B}/api/workspaces/${ws}/import-export`, { method: 'POST', headers: { cookie: owner.cookie, 'x-forwarded-for': freshIp() }, body: form });
+    return r.status;
+  };
+  const page = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: `Round trip ${stamp}`, type: 'document' }, cookie: owner.cookie })).data.page;
+  const exported = new Uint8Array(await (await fetch(`${B}/api/pages/${page.id}/export`, { headers: { cookie: owner.cookie } })).arrayBuffer());
+  check('an exported page imports again', (await upload(exported)) === 201);
+  check('a .zip that is not an export is refused', (await upload(zipSync({ 'hello.txt': strToU8('hi') }))) === 400);
+  const bad = zipSync({ 'atrium-export.json': strToU8(JSON.stringify({ format: 'atrium-export', version: 1, pages: [{ id: '../../etc' }] })) });
+  check('an export with a malformed manifest is refused', (await upload(bad)) === 400);
+  const lots = {};
+  for (let i = 0; i <= 50_000; i++) lots[`f${i}`] = new Uint8Array(0);
+  check('a .zip with too many entries is refused', (await upload(zipSync(lots))) === 413);
 }
 
 // --- public form flooding

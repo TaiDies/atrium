@@ -5,7 +5,7 @@ import { requireUser } from '../auth.js';
 import { one, query } from '../db.js';
 import { checkStorage } from '../limits.js';
 import { isDate, latestOnOrBefore, nextAfter, type RepeatRule, today, validRule } from '../repeat.js';
-import { buildExport, importExport } from '../transfer.js';
+import { buildExport, importExportBytes } from '../transfer.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // Templates: a page saved (with everything under it) to make new pages from, by hand or on a
@@ -50,7 +50,7 @@ export function firstRun(rule: RepeatRule, from: string): string | null {
 /** Makes a page from a template; returns the new page's id. */
 export async function useTemplate(userId: string, t: TemplateRow, parentId: string | null, title?: string) {
   await checkStorage(userId, t.data.length);
-  const result = await importExport(userId, t.workspace_id, new Uint8Array(t.data), parentId);
+  const result = await importExportBytes(userId, t.workspace_id, new Uint8Array(t.data), parentId);
   const pageId = result.top[0];
   if (pageId && title !== undefined) await query('update pages set title = $2 where id = $1', [pageId, title.slice(0, 300)]);
   return pageId;
