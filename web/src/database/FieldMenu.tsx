@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { type Anchor, confirmDialog, MenuDivider, MenuItem, Popover } from '../components/ui';
 import { FieldIcon } from './cells';
 import { AiFieldSettings } from './AiFill';
+import { DoneQuestionsSettings } from './DoneQuestions';
 import { useDb } from './context';
 import { CONFIG_TYPES, FieldConfig, type FieldExtra, refreshRelated } from './FieldConfig';
 import { FIELD_TYPES, type Field, fieldKind, type FieldType, fieldTypeLabel, type View } from './model';
@@ -126,6 +127,7 @@ export function FieldMenu({ field: opened, view, anchor, onClose }: { field: Fie
           </p>
         </div>
       )}
+      {(field.type === 'checkbox' || (field.type === 'select' && (field.options?.length ?? 0) > 0)) && <DoneQuestionsSettings field={field} />}
       {field.type === 'ai' && <AiFieldSettings field={field} />}
       {field.type === 'unique_id' && (
         <label className="mx-1 mb-1 flex items-center gap-2 px-1.5 text-xs text-muted">

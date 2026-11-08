@@ -2,7 +2,7 @@ import { OpenDatabases, useOpenDatabases } from './nesting';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowDownUp, ChevronDown, Copy, Eye, EyeOff, ListFilter, Pencil, Plus, Trash2, X, Lock } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import * as Y from 'yjs';
 import { PageTypeIcon } from '../app/PageIcon';
@@ -23,6 +23,7 @@ import type { LinkedView } from '../editor/EmbeddedDatabase';
 import { NewButton } from './CardTemplates';
 import { DatabaseMenu } from './DatabaseMenu';
 import { RowDetail } from './RowDetail';
+import { type DoneAsk, DoneQuestionsDialog, doneQuestionsFor } from './DoneQuestions';
 import { computeDatabase, useRelated } from './computed';
 import { TimelineView } from './TimelineView';
 
@@ -109,6 +110,33 @@ function DatabaseViewInner({
       }),
     };
   }, [stored, related, cardFiles.data, wantsFiles, cardTasks.data, wantsTasks]);
+  // Marking a card done can ask questions first (set on the checkbox or status property): the change
+  // waits until they're answered, and is dropped if they're cancelled.
+  const storedRef = useRef(stored);
+  storedRef.current = stored;
+  const [asking, setAsking] = useState<(DoneAsk & { apply: (answers: Record<string, unknown>) => void }) | null>(null);
+  const guardedActions = useMemo<typeof liveActions>(
+    () => ({
+      ...liveActions,
+      updateCell(rowId, fieldId, value) {
+        const ask = doneQuestionsFor(storedRef.current, rowId, { [fieldId]: value });
+        if (!ask) return liveActions.updateCell(rowId, fieldId, value);
+        setAsking({
+          ...ask,
+          apply: (answers) => {
+            for (const [id, v] of Object.entries(answers)) liveActions.updateCell(rowId, id, v);
+            liveActions.updateCell(rowId, fieldId, value);
+          },
+        });
+      },
+      moveRow(rowId, toIndex, cellPatch) {
+        const ask = cellPatch && doneQuestionsFor(storedRef.current, rowId, cellPatch);
+        if (!ask) return liveActions.moveRow(rowId, toIndex, cellPatch);
+        setAsking({ ...ask, apply: (answers) => liveActions.moveRow(rowId, toIndex, { ...cellPatch, ...answers }) });
+      },
+    }),
+    [liveActions],
+  );
   // Viewers can browse everything, but changes are refused (the server ignores them too).
   const actions = useMemo(
     () =>
@@ -123,8 +151,8 @@ function DatabaseViewInner({
               };
             },
           }) as typeof liveActions)
-        : liveActions,
-    [liveActions, readOnly],
+        : guardedActions,
+    [liveActions, guardedActions, readOnly],
   );
   const [params, setParams] = useSearchParams();
   const [viewId, setViewId] = useState<string | null>(() => getLocal<string | null>(`atrium-view-${pageId}`, null));
@@ -201,6 +229,16 @@ function DatabaseViewInner({
               return next;
             })
           }
+        />
+      )}
+      {asking && (
+        <DoneQuestionsDialog
+          ask={asking}
+          onCancel={() => setAsking(null)}
+          onDone={(answers) => {
+            asking.apply(answers);
+            setAsking(null);
+          }}
         />
       )}
     </DatabaseContext.Provider>

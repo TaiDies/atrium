@@ -145,6 +145,8 @@ export interface Field {
   taskDone?: string;
   /** …and the one it goes back to when a task is reopened (none: it stays). */
   taskUndone?: string;
+  /** Checkbox and status/select properties: properties to fill in when a card is marked done (see DoneQuestions). */
+  askOnDone?: { fieldId: string; required?: boolean }[];
   /** AI autofill properties: what the AI should write for each card. */
   aiPrompt?: string;
   /** Worked out while reading (not stored): titles of linked cards, for relations. */
@@ -335,6 +337,7 @@ function readFields(arr: Y.Array<YRecord>): Field[] {
       taskDone: typeof m.get('taskDone') === 'string' ? (m.get('taskDone') as string) : undefined,
       taskUndone: typeof m.get('taskUndone') === 'string' ? (m.get('taskUndone') as string) : undefined,
       aiPrompt: typeof m.get('aiPrompt') === 'string' ? (m.get('aiPrompt') as string) : undefined,
+      askOnDone: Array.isArray(m.get('askOnDone')) ? (m.get('askOnDone') as Field['askOnDone']) : undefined,
     }));
 }
 
