@@ -95,10 +95,14 @@ export async function officeRoutes(app: FastifyInstance) {
     if (Number(file.size) === 0) throw new HttpError(404, 'This file is empty');
     const out = await convert(await readFile(path.join(config.uploadDir, id)), file.filename, kind, to);
     const name = `${file.filename.replace(/\.[^.]+$/, '')}.${to}`;
+    // The editors fetch this; opened directly, a converted document (HTML especially, which is made from the
+    // uploaded file) must not run as a page of this site: HTML always downloads, and nothing runs scripts.
+    const inline = !download && to !== 'html' && to !== 'htm';
     return reply
       .header('Content-Type', mimeFor(to))
-      .header('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`)
+      .header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`)
       .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "sandbox; default-src 'none'")
       .send(out);
   });
 

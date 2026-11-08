@@ -35,7 +35,11 @@ const newCode = () => {
   return [0, 3, 6].map((i) => [...b.subarray(i, i + 3)].map((x) => a[x % a.length]).join('')).join('-');
 };
 
-const origin = (req: FastifyRequest) => (req.headers.origin as string | undefined) ?? `${req.protocol}://${req.headers.host}`;
+// Links in emails use PUBLIC_URL when it's set; otherwise the address this request came to (never the
+// request's Origin header, which the sender chooses).
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const origin = (req: FastifyRequest) => config.publicUrl || `${req.protocol}://${req.headers.host}`;
 
 const perms = z.object({ talk: z.boolean(), camera: z.boolean(), screen: z.boolean(), chat: z.boolean() });
 
@@ -73,7 +77,7 @@ async function invite(req: FastifyRequest, meeting: { id: string; code: string; 
         p.email,
         `Invitation: ${meeting.title}`,
         `${req.user.name} invited you to a meeting in ${config.appName}: ${meeting.title}\nWhen: ${when}\nJoin: ${url}`,
-        `<p>${req.user.name} invited you to a meeting in ${config.appName}:</p><p><b>${meeting.title.replace(/</g, '&lt;')}</b><br>When: ${when}</p><p><a href="${url}">Join the meeting</a></p>`,
+        `<p>${escapeHtml(req.user.name)} invited you to a meeting in ${escapeHtml(config.appName)}:</p><p><b>${escapeHtml(meeting.title)}</b><br>When: ${when}</p><p><a href="${url}">Join the meeting</a></p>`,
       ).catch(() => {});
     }
   }

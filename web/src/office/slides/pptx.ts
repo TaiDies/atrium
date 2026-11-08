@@ -186,8 +186,9 @@ function textHtml(txBody: Xml | null, theme: ThemeColors, defaultSize: number, d
         if (pi === 0) firstSize = size;
       }
       const color = colorIn(kid(rPr, 'solidFill'), theme);
-      if (color && color !== defaultColor) styles.push(`color: ${color}`);
-      const face = attr(kid(rPr, 'latin'), 'typeface');
+      // Values from the file go into a style attribute: only a real colour, and a font name with no quotes or brackets.
+      if (color && color !== defaultColor && /^#[0-9a-f]{3,8}$/i.test(color)) styles.push(`color: ${color}`);
+      const face = attr(kid(rPr, 'latin'), 'typeface')?.replace(/[^\p{L}\p{N} ._-]/gu, '').trim();
       if (face && !face.startsWith('+')) styles.push(`font-family: '${face}'`);
       let t = esc(text);
       if (styles.length) t = `<span style="${styles.join('; ')}">${t}</span>`;

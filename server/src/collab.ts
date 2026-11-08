@@ -55,6 +55,18 @@ export function liveElementCount(doc: Y.Doc) {
   return n;
 }
 
+/**
+ * Guests only see what's shared with them: a whiteboard or file only when it sits on a page they can
+ * open, and read-only unless they can edit that page.
+ */
+async function guestAccess(userId: string, workspaceId: string, table: 'board_refs' | 'file_refs', column: 'board_id' | 'file_id', id: string, connectionConfig: { readOnly: boolean }) {
+  const refs = await query<{ page_id: string }>(`select page_id from ${table} where ${column} = $1`, [id]);
+  const access = await accessMap(userId, workspaceId);
+  const levels = refs.map((r) => access.get(r.page_id) ?? 'none');
+  if (!levels.some((l) => l !== 'none')) throw new Error('Forbidden');
+  if (!levels.some((l) => atLeast(l, 'edit'))) connectionConfig.readOnly = true;
+}
+
 export const hocuspocus = new Hocuspocus<CollabContext>({
   name: 'atrium',
   quiet: true,
@@ -73,22 +85,24 @@ export const hocuspocus = new Hocuspocus<CollabContext>({
     if (!context.user) throw new Error('Not signed in');
     const boardMatch = BOARD_DOC_RE.exec(documentName);
     if (boardMatch) {
-      // Whiteboards are shared with the whole workspace, like files.
-      const board = await one(
-        `select 1 from whiteboards b join workspace_members m on m.workspace_id = b.workspace_id and m.user_id = $2 where b.id = $1`,
+      // Whiteboards are shared with the whole workspace, like files (guests: see guestAccess).
+      const board = await one<{ workspace_id: string; role: string }>(
+        `select b.workspace_id, m.role from whiteboards b join workspace_members m on m.workspace_id = b.workspace_id and m.user_id = $2 where b.id = $1`,
         [boardMatch[1], context.user.id],
       );
       if (!board) throw new Error('Forbidden');
+      if (board.role === 'guest') await guestAccess(context.user.id, board.workspace_id, 'board_refs', 'board_id', boardMatch[1], connectionConfig);
       return;
     }
     const fileMatch = FILE_DOC_RE.exec(documentName);
     if (fileMatch) {
       // Anyone in the workspace can open (and write on) its files, the same as downloading them.
-      const file = await one(
-        `select 1 from files f join workspace_members m on m.workspace_id = f.workspace_id and m.user_id = $2 where f.id = $1`,
+      const file = await one<{ workspace_id: string; role: string }>(
+        `select f.workspace_id, m.role from files f join workspace_members m on m.workspace_id = f.workspace_id and m.user_id = $2 where f.id = $1`,
         [fileMatch[1], context.user.id],
       );
       if (!file) throw new Error('Forbidden');
+      if (file.role === 'guest') await guestAccess(context.user.id, file.workspace_id, 'file_refs', 'file_id', fileMatch[1], connectionConfig);
       return;
     }
     const parsed = parseName(documentName);
@@ -508,9 +522,10 @@ export function attachCollab(server: HttpServer) {
       socket.destroy();
       return;
     }
-    // The web app signs in with its cookie; the desktop and phone apps pass their session token instead.
-    const token = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE] ?? url.searchParams.get('token') ?? undefined;
-    const user = await userFromToken(token).catch(() => null);
+    // The web app signs in with its cookie; the desktop and phone apps pass a live-editing ticket instead.
+    const cookie = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE];
+    const ticket = url.searchParams.get('ticket') ?? undefined;
+    const user = await (cookie ? userFromToken(cookie) : userFromToken(ticket, 'live')).catch(() => null);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();

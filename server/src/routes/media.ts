@@ -19,6 +19,8 @@ import { emit } from '../webhooks.js';
 // file, or is saved as a copy next to it in Files.
 
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+/** The containers ffmpeg may read (its demuxer names): MP4/MOV, MKV/WebM, AVI, MPEG, FLV, OGG and common audio. */
+const INPUT_FORMATS = 'mov,mp4,matroska,webm,avi,mpeg,mpegts,flv,ogg,wav,mp3,aac,flac,asf';
 /** At most this many edits run at once; the rest wait their turn. */
 const MAX_RUNNING = 2;
 let running = 0;
@@ -92,7 +94,9 @@ export async function mediaRoutes(app: FastifyInstance) {
     filters.push('scale=trunc(iw/2)*2:trunc(ih/2)*2');
 
     const out = path.join(os.tmpdir(), `atrium-edit-${randomUUID()}.mp4`);
-    const args = ['-i', path.join(config.uploadDir, id)];
+    // Only real video and audio containers, read from the local file: an upload pretending to be a video
+    // (such as a playlist pointing at other files or addresses) is refused instead of followed.
+    const args = ['-protocol_whitelist', 'file', '-format_whitelist', INPUT_FORMATS, '-i', path.join(config.uploadDir, id)];
     // Seeking after the input is exact to the frame (and still quick for short clips).
     if (body.start > 0) args.push('-ss', String(body.start));
     if (body.end !== null) args.push('-to', String(body.end));

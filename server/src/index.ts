@@ -53,6 +53,15 @@ const app = Fastify({
 });
 // Each request runs in its own context, so an API token limited to one workspace holds for all of it.
 app.addHook('onRequest', (_req, _reply, done) => runRequest(done));
+// Headers that make the browser stricter with every reply: no guessing file types, no showing the app
+// inside other sites' frames, links don't leak full addresses, and HTTPS sticks once it's in use.
+app.addHook('onSend', async (_req, reply) => {
+  if (!reply.hasHeader('X-Content-Type-Options')) reply.header('X-Content-Type-Options', 'nosniff');
+  if (!reply.hasHeader('X-Frame-Options')) reply.header('X-Frame-Options', 'SAMEORIGIN');
+  reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  reply.header('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), geolocation=()');
+  if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=15552000');
+});
 
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: config.maxUploadBytes, files: 1 } });

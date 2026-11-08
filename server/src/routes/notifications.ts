@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireUser } from '../auth.js';
 import { one, query, tx } from '../db.js';
+import { mailEnabled } from '../mail.js';
 import { notify } from '../notify.js';
 import { addDays } from '../repeat.js';
 import { HttpError, idParams, parse } from '../util.js';
@@ -212,8 +213,14 @@ export async function notificationRoutes(app: FastifyInstance) {
 
   app.get('/invitations', async (req) => ({ invitations: await invitationsFor(req.user.email) }));
 
-  app.post('/invitations/:id/accept', async (req) => {
+  app.post('/invitations/:id/accept', async (req, reply) => {
     const { id } = parse(idParams, req.params);
+    // Anyone can make an account with any address, so an invitation only goes to someone who has shown
+    // the address is theirs (with an emailed code). Servers without email can't check, and don't ask.
+    if (await mailEnabled()) {
+      const verified = await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]);
+      if (!verified) return reply.code(403).send({ error: 'Confirm your email first: we’ll send you a code.', verify: true, email: req.user.email });
+    }
     const invite = await one<{ workspace_id: string; role: string; invited_by: string | null; name: string; pages: { pageId: string; level: string }[] }>(
       `select i.workspace_id, i.role, i.invited_by, w.name, i.pages from workspace_invites i join workspaces w on w.id = i.workspace_id where i.id = $1 and i.email = $2`,
       [id, req.user.email],

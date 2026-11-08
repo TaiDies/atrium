@@ -4,7 +4,7 @@ import { Bell, BellRing, CalendarClock, Check, CheckCheck, ListTodo, Mail, Menu 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { type Anchor, IconButton, Popover, toast, toastError } from '../components/ui';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { keys, queryClient } from '../lib/queries';
 
 // The bell: invitations to answer, event reminders, the day's tasks and messages (an invitation was
@@ -253,6 +253,8 @@ function NotificationList({ items: all, close }: { items: NotificationItem[]; cl
 function InvitationRow({ item, close }: { item: NotificationItem; close: () => void }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<'accept' | 'decline' | null>(null);
+  // Accepting needs a confirmed email on servers that send email: a code is sent and typed in here.
+  const [confirm, setConfirm] = useState<{ email: string; code: string; sending: boolean } | null>(null);
   const mounted = useRef(true);
   useEffect(() => () => void (mounted.current = false), []);
 
@@ -271,11 +273,41 @@ function InvitationRow({ item, close }: { item: NotificationItem; close: () => v
       }
       await queryClient.invalidateQueries({ queryKey: notificationsKey });
     } catch (err) {
+      if (accept && err instanceof ApiError && err.data?.verify && typeof err.data.email === 'string') {
+        await sendCode(err.data.email);
+        return;
+      }
       toastError(err);
       await queryClient.invalidateQueries({ queryKey: notificationsKey });
     } finally {
       if (mounted.current) setBusy(null);
     }
+  };
+
+  const sendCode = async (address: string) => {
+    setConfirm({ email: address, code: '', sending: true });
+    try {
+      await api('/api/auth/email/start', { method: 'POST', body: { email: address, purpose: 'verify' } });
+      toast(`We sent a code to ${address}`);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      if (mounted.current) setConfirm((c) => (c ? { ...c, sending: false } : c));
+    }
+  };
+
+  const confirmAndAccept = async () => {
+    if (!confirm) return;
+    setBusy('accept');
+    try {
+      await api('/api/auth/email/verify', { method: 'POST', body: { email: confirm.email, code: confirm.code.trim() } });
+      setConfirm(null);
+    } catch (err) {
+      toastError(err);
+      if (mounted.current) setBusy(null);
+      return;
+    }
+    await answer(true);
   };
 
   return (
@@ -284,6 +316,33 @@ function InvitationRow({ item, close }: { item: NotificationItem; close: () => v
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium">{item.title}</div>
         <div className="mt-0.5 text-xs text-muted">{item.body}</div>
+        {confirm && (
+          <div className="mt-2 space-y-1.5">
+            <div className="text-xs text-muted">To join, confirm your email: enter the 6-digit code we sent to {confirm.email}.</div>
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                inputMode="numeric"
+                maxLength={6}
+                value={confirm.code}
+                onChange={(e) => setConfirm({ ...confirm, code: e.target.value.replace(/\D/g, '') })}
+                onKeyDown={(e) => e.key === 'Enter' && confirm.code.length === 6 && void confirmAndAccept()}
+                placeholder="123456"
+                className="h-7 w-24 rounded-md border border-line bg-bg px-2 text-xs tracking-widest outline-none focus:border-accent"
+              />
+              <button
+                disabled={confirm.code.length !== 6 || !!busy}
+                onClick={() => void confirmAndAccept()}
+                className="flex h-7 items-center rounded-md bg-accent px-2.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+              >
+                Confirm & join
+              </button>
+              <button disabled={confirm.sending} onClick={() => void sendCode(confirm.email)} className="h-7 px-1.5 text-xs text-muted hover:text-fg disabled:opacity-60">
+                Send again
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mt-2 flex gap-2">
           <button
             disabled={!!busy}

@@ -188,9 +188,9 @@ async fn handle(app: AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     match (req.method().clone(), path.as_str()) {
         (_, "/__app/info") => {
             let s = state.get();
+            // The session token stays here: the page only gets a live-editing ticket from the server.
             json(serde_json::json!({
                 "server": s.server,
-                "token": s.token,
                 "platform": platform(),
                 "version": app.package_info().version.to_string(),
             }))

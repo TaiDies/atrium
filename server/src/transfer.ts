@@ -331,12 +331,29 @@ function remapDoc(doc: Y.Doc, map: Map<string, string>) {
   });
 }
 
+/** The most an export .zip may unpack to (its files and pages together), and how many entries it may hold. */
+const MAX_UNPACKED = Math.min(2 * config.maxImportBytes, 1024 ** 3);
+const MAX_ENTRIES = 50_000;
+
 /** Reads an export .zip into `workspaceId`, under `parentId` (or at the top). Returns the new top-level pages. */
 export async function importExport(userId: string, workspaceId: string, zipBytes: Uint8Array, parentId: string | null) {
   let entries: Record<string, Uint8Array>;
+  // A small .zip can unpack to something enormous: add up what each entry says it unpacks to (fflate
+  // won't write past that) and refuse before unpacking anything when it's too much.
+  let unpacked = 0;
+  let count = 0;
+  const tooBig = new HttpError(413, 'This .zip unpacks to too much to import here');
   try {
-    entries = unzipSync(zipBytes);
-  } catch {
+    entries = unzipSync(zipBytes, {
+      filter: (f) => {
+        unpacked += f.originalSize;
+        count++;
+        if (unpacked > MAX_UNPACKED || count > MAX_ENTRIES) throw tooBig;
+        return true;
+      },
+    });
+  } catch (err) {
+    if (err === tooBig) throw err;
     throw new HttpError(400, 'That isn’t a valid .zip file');
   }
   const raw = entries[MANIFEST];

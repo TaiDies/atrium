@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { usePositionSaver } from '../../lib/filePosition';
 import clsx from 'clsx';
 import {
@@ -108,6 +109,14 @@ interface Props {
 
 // Copied elements, shared across slides (and presentations open in this tab).
 let clipboard: SlideElement[] = [];
+
+/**
+ * Slide text is HTML that anyone editing the presentation (or a .pptx file) can write, so it is cleaned
+ * before it's shown or saved: formatting stays, scripts, event handlers and other active content go.
+ */
+function safeHtml(html: string): string {
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed'] });
+}
 
 export const SlidesEditor = forwardRef<EditorHandle, Props>(function SlidesEditor({ file, session, user, readOnly }, ref) {
   const slidesArr = useMemo(() => session.doc.getArray<Y.Map<unknown>>('slides'), [session]);
@@ -486,10 +495,10 @@ function ElementBody({ el, theme, editingRef, onInput }: { el: SlideElement; the
         onInput={onInput}
         className="slide-text size-full outline-none"
         style={textStyle(el, theme, title)}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: safeHtml(html) }}
       />
     ) : (
-      <div className="slide-text size-full" style={textStyle(el, theme, title)} dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="slide-text size-full" style={textStyle(el, theme, title)} dangerouslySetInnerHTML={{ __html: safeHtml(html) }} />
     );
   if (el.type === 'image') return el.src ? <img src={el.src} alt="" draggable={false} className="size-full object-fill select-none" /> : null;
   if (el.type === 'line') {
@@ -516,7 +525,7 @@ function ElementBody({ el, theme, editingRef, onInput }: { el: SlideElement; the
                   key={c}
                   className="px-2 py-1 align-top"
                   style={{ border: `1px solid ${el.stroke ?? '#9aa0a6'}`, background: el.headerRow && r === 0 ? theme.accent : undefined, color: el.headerRow && r === 0 ? '#fff' : undefined, fontWeight: el.headerRow && r === 0 ? 600 : undefined }}
-                  dangerouslySetInnerHTML={{ __html: cell }}
+                  dangerouslySetInnerHTML={{ __html: safeHtml(cell) }}
                 />
               ))}
             </tr>
@@ -630,7 +639,7 @@ function Canvas({
   const commitText = useCallback(() => {
     clearTimeout(saveTimer.current);
     if (!editing || !textRef.current) return;
-    const html = textRef.current.innerHTML;
+    const html = safeHtml(textRef.current.innerHTML);
     onChange([editing], { html });
   }, [editing, onChange]);
 

@@ -27,6 +27,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-atrium}:${POSTGRES_PASSWORD:-atrium}@postgres:5432/${POSTGRES_DB:-atrium}
       # Set to "true" when the app is served over HTTPS.
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       MAX_IMPORT_MB: ${MAX_IMPORT_MB:-1024}
       # Time zone for "today" (repeating tasks reset at midnight here), e.g. Europe/London.

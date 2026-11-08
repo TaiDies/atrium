@@ -6,8 +6,11 @@
 export interface NativeInfo {
   /** The chosen server, e.g. "http://192.168.1.20:3000"; null until one is picked. */
   server: string | null;
-  /** The session the app holds for that server (for the live-editing connection). */
-  token: string | null;
+  /**
+   * A ticket that only opens the live-editing connections (fetched from the server; the app keeps the
+   * real session to itself and adds it to requests it passes on).
+   */
+  ticket?: string | null;
   platform: string;
   version: string;
 }
@@ -62,6 +65,14 @@ export async function loadNative(): Promise<NativeInfo | null> {
   } catch {
     info = null;
   }
+  if (info?.server) {
+    try {
+      const t = await fetch('/api/auth/live-ticket', { cache: 'no-store', credentials: 'same-origin' });
+      info.ticket = t.ok ? ((await t.json()) as { ticket: string }).ticket : null;
+    } catch {
+      info.ticket = null;
+    }
+  }
   return info;
 }
 
@@ -69,7 +80,7 @@ export async function loadNative(): Promise<NativeInfo | null> {
 export function collabUrl(path = '/collab'): string {
   if (info?.server) {
     const base = info.server.replace(/^http/, 'ws').replace(/\/$/, '');
-    return `${base}${path}${info.token ? `?token=${encodeURIComponent(info.token)}` : ''}`;
+    return `${base}${path}${info.ticket ? `?ticket=${encodeURIComponent(info.ticket)}` : ''}`;
   }
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
 }

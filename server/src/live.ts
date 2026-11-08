@@ -71,8 +71,9 @@ export function attachLive(server: HttpServer) {
   server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/live') return;
-    const token = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE] ?? url.searchParams.get('token') ?? undefined;
-    const user = await userFromToken(token).catch(() => null);
+    const cookie = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE];
+    const ticket = url.searchParams.get('ticket') ?? undefined;
+    const user = await (cookie ? userFromToken(cookie) : userFromToken(ticket, 'live')).catch(() => null);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();

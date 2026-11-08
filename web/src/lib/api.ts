@@ -103,9 +103,12 @@ export interface SearchResult {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The rest of the server's error reply (e.g. `verify: true` when an email code is needed). */
+  data: Record<string, unknown> | null;
+  constructor(status: number, message: string, data: Record<string, unknown> | null = null) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -119,7 +122,7 @@ export async function api<T = unknown>(path: string, options: { method?: string;
     credentials: 'same-origin',
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data && typeof data === 'object' ? data : null);
   return data as T;
 }
 

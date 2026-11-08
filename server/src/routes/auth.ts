@@ -2,7 +2,8 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { clearSessionCookie, requireUser, setSessionCookie, type SessionUser } from '../auth.js';
+import { clearSessionCookie, endSessions, liveTicket, requireUser, SESSION_COOKIE, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
+import { closeUserSessions } from '../collab.js';
 import { config } from '../config.js';
 import { one, query, type Queryable, tx } from '../db.js';
 import { codeEmail, mailEnabled, sendMail, verificationRequired } from '../mail.js';
@@ -10,6 +11,7 @@ import { getSettings } from '../settings.js';
 import { limitsFor, usageFor } from '../limits.js';
 import { colorFor, email, HttpError, parse } from '../util.js';
 import { permissionsFor } from '../roles.js';
+import { limiter } from '../rateLimit.js';
 
 const password = z.string().min(8, 'Password must be at least 8 characters').max(200);
 const name = z.string().trim().min(1, 'Name is required').max(80);
@@ -74,6 +76,12 @@ async function sendCode(address: string, purpose: 'login' | 'signup' | 'verify',
 
 const mustVerify = verificationRequired;
 
+// Guessing passwords and codes: failed tries per address and per account, and new accounts per address.
+const failedByIp = limiter(30, 15 * 60_000);
+const failedByAccount = limiter(10, 15 * 60_000);
+const signupsByIp = limiter(10, 60 * 60_000);
+const TOO_MANY = 'Too many tries. Wait a few minutes and try again.';
+
 const DISABLED = 'This account has been switched off. Ask the administrator.';
 
 /** When the admin has closed sign-ups, only people with an invitation can make an account. */
@@ -94,6 +102,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/signup', async (req, reply) => {
     const body = parse(z.object({ email, name, password }), req.body);
+    if (!signupsByIp.take(req.ip)) throw new HttpError(429, TOO_MANY);
     const existing = await one('select 1 from users where email = $1', [body.email]);
     if (existing) throw new HttpError(409, 'An account with this email already exists');
     await checkSignupAllowed(body.email);
@@ -105,24 +114,30 @@ export async function authRoutes(app: FastifyInstance) {
       await sendCode(body.email, 'verify', req.ip);
       return reply.code(202).send({ verify: true, email: body.email });
     }
-    setSessionCookie(reply, user.id);
+    await setSessionCookie(reply, user.id);
     return reply.code(201).send({ user });
   });
 
   app.post('/auth/login', async (req, reply) => {
     const body = parse(z.object({ email, password: z.string().min(1, 'Password is required') }), req.body);
+    if (failedByIp.blocked(req.ip) || failedByAccount.blocked(body.email)) throw new HttpError(429, TOO_MANY);
     const row = await one<SessionUser & { password_hash: string | null; email_verified_at: Date | null; disabled_at: Date | null }>(
       'select id, email, name, color, password_hash, email_verified_at, disabled_at from users where email = $1',
       [body.email],
     );
     const ok = row?.password_hash ? await bcrypt.compare(body.password, row.password_hash) : false;
+    if (!row || !ok) {
+      failedByIp.hit(req.ip);
+      failedByAccount.hit(body.email);
+    }
     if (!row || !ok) throw new HttpError(401, row && !row.password_hash ? 'This account signs in with an email code' : 'Incorrect email or password');
     if (row.disabled_at) throw new HttpError(403, DISABLED);
     if ((await mustVerify()) && !row.email_verified_at) {
       await sendCode(body.email, 'verify', req.ip);
       return reply.code(403).send({ error: 'Confirm your email to continue — we’ve sent you a code', verify: true, email: body.email });
     }
-    setSessionCookie(reply, row.id);
+    failedByAccount.clear(body.email);
+    await setSessionCookie(reply, row.id);
     const { password_hash: _, email_verified_at: __, disabled_at: ___, ...user } = row;
     return { user };
   });
@@ -145,6 +160,7 @@ export async function authRoutes(app: FastifyInstance) {
   // Finishes it: a correct code signs in (confirming the email) or creates the account.
   app.post('/auth/email/verify', async (req, reply) => {
     const body = parse(z.object({ email, code }), req.body);
+    if (failedByIp.blocked(req.ip)) throw new HttpError(429, TOO_MANY);
     const row = await one<{ id: string; code_hash: string; purpose: string; name: string | null; attempts: number }>(
       `select id, code_hash, purpose, name, attempts from email_codes
         where email = $1 and used_at is null and expires_at > now() order by created_at desc limit 1`,
@@ -156,6 +172,7 @@ export async function authRoutes(app: FastifyInstance) {
     const given = Buffer.from(hashCode(body.email, body.code), 'hex');
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
       await query('update email_codes set attempts = attempts + 1 where id = $1', [row.id]);
+      failedByIp.hit(req.ip);
       throw new HttpError(400, 'That code isn’t right');
     }
     await query('update email_codes set used_at = now() where id = $1', [row.id]);
@@ -164,22 +181,46 @@ export async function authRoutes(app: FastifyInstance) {
     if (disabled) throw new HttpError(403, DISABLED);
     let user = await one<SessionUser>('select id, email, name, color from users where email = $1', [body.email]);
     let created = false;
-    if (user) await query('update users set email_verified_at = coalesce(email_verified_at, now()) where id = $1', [user.id]);
-    else {
+    if (user) {
+      const before = await one<{ email_verified_at: Date | null; password_hash: string | null }>('select email_verified_at, password_hash from users where id = $1', [user.id]);
+      const signedInHere = (await userFromToken(req.cookies[SESSION_COOKIE]))?.id === user.id;
+      if (!before?.email_verified_at && before?.password_hash && !signedInHere) {
+        // The first proof that this person owns the address, on an account made with a password: the
+        // password may have been set by someone else who signed up with this email first. Drop it and
+        // end their sessions; the owner can set a new password in their settings. (Someone already
+        // signed in with that password who now proves the address too is the owner: nothing changes.)
+        await query('update users set password_hash = null where id = $1', [user.id]);
+        await endSessions(user.id);
+        closeUserSessions(user.id);
+      }
+      await query('update users set email_verified_at = coalesce(email_verified_at, now()) where id = $1', [user.id]);
+    } else {
       if (row.purpose !== 'signup' || !row.name) throw new HttpError(400, 'Ask for a new code to create your account');
       user = await tx((c) => createAccount(c, body.email, row.name!, null, true));
       created = true;
     }
-    setSessionCookie(reply, user.id);
+    await setSessionCookie(reply, user.id);
     return reply.code(created ? 201 : 200).send({ user });
   });
 
-  app.post('/auth/logout', async (_req, reply) => {
+  app.post('/auth/logout', async (req, reply) => {
+    // "Sign out everywhere" ends this person's sessions on all devices.
+    const { everywhere } = parse(z.object({ everywhere: z.boolean().optional() }), req.body ?? {});
+    if (everywhere) {
+      const user = await userFromToken(req.cookies[SESSION_COOKIE]);
+      if (user) {
+        await endSessions(user.id);
+        closeUserSessions(user.id);
+      }
+    }
     clearSessionCookie(reply);
     return { ok: true };
   });
 
   app.get('/auth/me', { preHandler: requireUser }, async (req) => ({ user: req.user }));
+
+  // For the desktop and phone apps: a ticket that only opens the live-editing connections.
+  app.get('/auth/live-ticket', { preHandler: requireUser }, async (req) => ({ ticket: await liveTicket(req.user.id) }));
 
   // What this person may do (from their roles), so the app can hide what isn't allowed.
   app.get('/auth/me/permissions', { preHandler: requireUser }, async (req) => ({ permissions: [...(await permissionsFor(req.user.id))] }));
@@ -221,7 +262,7 @@ export async function authRoutes(app: FastifyInstance) {
     return { user };
   });
 
-  app.post('/auth/password', { preHandler: requireUser }, async (req) => {
+  app.post('/auth/password', { preHandler: requireUser }, async (req, reply) => {
     const body = parse(z.object({ currentPassword: z.string().optional(), newPassword: password }), req.body);
     const row = (await one<{ password_hash: string | null }>('select password_hash from users where id = $1', [req.user.id]))!;
     // Accounts made with an email code can set a first password without a current one.
@@ -229,6 +270,10 @@ export async function authRoutes(app: FastifyInstance) {
       throw new HttpError(400, 'Current password is incorrect');
     }
     await query('update users set password_hash = $2 where id = $1', [req.user.id, await bcrypt.hash(body.newPassword, 10)]);
+    // A new password signs out every other device; this one gets a fresh session.
+    await endSessions(req.user.id);
+    closeUserSessions(req.user.id);
+    await setSessionCookie(reply, req.user.id);
     return { ok: true };
   });
 }
