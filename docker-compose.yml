@@ -53,6 +53,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_PANEL: ${ADMIN_PANEL:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      HISTORY_DAYS: ${HISTORY_DAYS:-90}
       # Where new versions are looked for (GitHub owner/repo); the admin panel shows and can install them.
       UPDATE_REPO: ${UPDATE_REPO:-TaiDies/atrium}
     ports:

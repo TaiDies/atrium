@@ -392,11 +392,35 @@ async function indexPeople(
   }
 }
 
-/** Fills every index from the stored documents (run at start-up; cheap to repeat). */
+/**
+ * Bump when what the index records changes, so the next start-up rebuilds all of it. Saving a document
+ * always updates its index, so otherwise start-up only needs the documents changed since the last run
+ * (by an import, a restore, a script): usually none.
+ */
+const INDEX_VERSION = 1;
+
+/** Brings the indexes up to date at start-up: everything after an upgrade, otherwise only what changed. */
 export async function backfillDocIndex() {
-  const pages = await query<{ page_id: string; state: Buffer }>('select page_id, state from page_content');
-  const rows = await query<{ page_id: string; row_id: string; state: Buffer }>('select page_id, row_id, state from row_documents');
-  for (const r of [...pages.map((p) => ({ ...p, row_id: null as string | null })), ...rows]) {
+  const started = (await one<{ now: string }>('select now()::text as now'))!.now;
+  const last = await one<{ value: { version?: number; at?: string } }>(`select value from settings where key = 'doc_index'`);
+  const since = last?.value?.version === INDEX_VERSION && last.value.at ? last.value.at : null;
+  const count = await rebuildDocIndex(since);
+  await query(
+    `insert into settings (key, value) values ('doc_index', $1::jsonb)
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+    [JSON.stringify({ version: INDEX_VERSION, at: started })],
+  );
+  return count;
+}
+
+/** Indexes every document changed after `since` (all of them when null); returns how many. */
+async function rebuildDocIndex(since: string | null) {
+  const after = since ? 'where updated_at > $1' : '';
+  const args = since ? [since] : [];
+  const pages = await query<{ page_id: string; state: Buffer }>(`select page_id, state from page_content ${after}`, args);
+  const rows = await query<{ page_id: string; row_id: string; state: Buffer }>(`select page_id, row_id, state from row_documents ${after}`, args);
+  const all = [...pages.map((p) => ({ ...p, row_id: null as string | null })), ...rows];
+  for (const r of all) {
     try {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, new Uint8Array(r.state));
@@ -406,4 +430,5 @@ export async function backfillDocIndex() {
       // A corrupt or foreign document; skip it.
     }
   }
+  return all.length;
 }
