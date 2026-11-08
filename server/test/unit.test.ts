@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runFormula } from '../../web/src/database/formula.ts';
 import { groupTogether } from '../../web/src/lib/groupTogether.ts';
+import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { JSDOM } from 'jsdom';
+import { safeHtml } from '../../web/src/office/slides/safeHtml.ts';
+import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs';
+import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
 import { fetch as undiciFetch } from 'undici';
 import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -161,6 +166,40 @@ describe('outbound connections', () => {
       assert.equal(await allowed.text(), 'ok');
     } finally {
       server.close();
+    }
+  });
+});
+
+describe('slide text cleaning', () => {
+  const purifier = createDOMPurify(new JSDOM('').window as never);
+  const clean = (html: string) => safeHtml(html, purifier as never);
+  it('keeps formatting', () => {
+    assert.equal(clean('<b>Bold</b> <i>and</i> <span style="color: red">red</span>'), '<b>Bold</b> <i>and</i> <span style="color: red">red</span>');
+  });
+  it('removes scripts, event handlers and active content', () => {
+    const out = clean('<img src=x onerror="alert(1)"><script>alert(2)</script><a href="javascript:alert(3)">x</a><iframe src="https://evil.example"></iframe><form><input></form><style>*{}</style>');
+    assert.doesNotMatch(out, /onerror|<script|javascript:|<iframe|<form|<input|<style/i);
+  });
+});
+
+describe('ffmpeg input', () => {
+  it('reads only local files in real video and audio containers', () => {
+    const args = ffmpegInput('/data/upload');
+    assert.deepEqual(args.slice(0, 4), ['-protocol_whitelist', 'file', '-format_whitelist', INPUT_FORMATS]);
+    assert.equal(args.at(-1), '/data/upload');
+    for (const risky of ['hls', 'concat', 'image2', 'lavfi', 'tee', 'data']) assert.ok(!INPUT_FORMATS.split(',').includes(risky), risky);
+  });
+  it('refuses a playlist pretending to be a video (when ffmpeg is installed)', (t) => {
+    const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
+    if (spawnSync(ffmpeg, ['-version']).error) return t.skip('ffmpeg is not installed');
+    const dir = mkdtempSync(join(tmpdir(), 'ffmpeg-test-'));
+    try {
+      const fake = join(dir, 'video.mp4');
+      writeFileSync(fake, ['#EXTM3U', '#EXT-X-TARGETDURATION:1', '#EXTINF:1,', 'http://127.0.0.1:9/segment.ts', '#EXT-X-ENDLIST', ''].join('\n'));
+      const run = spawnSync(ffmpeg, ['-hide_banner', ...ffmpegInput(fake), '-f', 'null', '-'], { encoding: 'utf8', timeout: 20_000 });
+      assert.notEqual(run.status, 0, 'ffmpeg should refuse it');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

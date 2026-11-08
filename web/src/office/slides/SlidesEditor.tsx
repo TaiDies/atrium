@@ -1,4 +1,4 @@
-import DOMPurify from 'dompurify';
+import { safeHtml } from './safeHtml';
 import { usePositionSaver } from '../../lib/filePosition';
 import clsx from 'clsx';
 import {
@@ -109,14 +109,6 @@ interface Props {
 
 // Copied elements, shared across slides (and presentations open in this tab).
 let clipboard: SlideElement[] = [];
-
-/**
- * Slide text is HTML that anyone editing the presentation (or a .pptx file) can write, so it is cleaned
- * before it's shown or saved: formatting stays, scripts, event handlers and other active content go.
- */
-function safeHtml(html: string): string {
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed'] });
-}
 
 export const SlidesEditor = forwardRef<EditorHandle, Props>(function SlidesEditor({ file, session, user, readOnly }, ref) {
   const slidesArr = useMemo(() => session.doc.getArray<Y.Map<unknown>>('slides'), [session]);
