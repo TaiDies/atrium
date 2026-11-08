@@ -5,7 +5,8 @@ import path from 'node:path';
 import { Unzip, UnzipInflate } from 'fflate';
 import { HttpError } from './util.js';
 
-const SLICE = 16 * 1024;
+/** At most about 4 MB unpacks from one slice (deflate expands at most ~1000×) before the disk catches up. */
+const SLICE = 4 * 1024;
 
 export interface UnzippedEntry {
   /** Where the entry was written (named by number, so names inside the .zip can't point outside `dir`). */
@@ -87,17 +88,20 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
 
   for await (const chunk of createReadStream(zipPath, { highWaterMark: 1 << 20 })) {
     if (failure) break;
-    try {
-      // Small slices: fflate handles every entry that starts in a slice in one go (recursively), so a slice
-      // packed with thousands of tiny entries would run out of stack.
-      const bytes = chunk as Uint8Array;
-      for (let at = 0; at < bytes.length && !failure; at += SLICE) unzip.push(bytes.subarray(at, at + SLICE));
-    } catch {
-      failure ??= invalid;
-      break;
+    // Small slices: fflate handles every entry that starts in a slice in one go (recursively), so a slice
+    // packed with thousands of tiny entries would run out of stack. And after each slice the disk is
+    // allowed to catch up: one slice of a crafted .zip can unpack to about 1000 times its size, so
+    // waiting only between larger chunks would let that pile up in memory.
+    const bytes = chunk as Uint8Array;
+    for (let at = 0; at < bytes.length && !failure; at += SLICE) {
+      try {
+        unzip.push(bytes.subarray(at, at + SLICE));
+      } catch {
+        failure ??= invalid;
+        break;
+      }
+      for (const ws of open) if (ws.writableNeedDrain) await once(ws, 'drain').catch(() => {});
     }
-    // Let the disk catch up before reading more, so unpacked data never piles up in memory.
-    for (const ws of open) if (ws.writableNeedDrain) await once(ws, 'drain').catch(() => {});
   }
   if (!failure) {
     try {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync, type Zippable } from 'fflate';
@@ -402,6 +402,15 @@ export async function importExport(userId: string, workspaceId: string, zipPath:
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** Removes uploads and unpack folders a crash or restart left in the temp folder (run at start-up). */
+export async function cleanImportLeftovers(): Promise<number> {
+  const dir = os.tmpdir();
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const left = names.filter((n) => /^atrium-(upload-.+\.zip|import-.+|template-.+)$/.test(n));
+  await Promise.all(left.map((n) => rm(path.join(dir, n), { recursive: true, force: true }).catch(() => {})));
+  return left.length;
 }
 
 /** The same, for a .zip already in memory (templates, which are kept in the database). */
