@@ -15,6 +15,7 @@ import { FileActions } from '../editor/FileActions';
 import * as blockNoteLocales from '@blocknote/core/locales';
 import { language } from '../i18n';
 import { PhoneToolbar } from '../editor/PhoneToolbar';
+import { groupTogether } from '../lib/groupTogether';
 import { usePhone } from '../lib/device';
 import { FindBar } from '../editor/FindBar';
 import { mentionItems, schema, slashItems, type AppEditor } from '../editor/schema';
@@ -34,22 +35,6 @@ export type EditorHandle = AppEditor;
 function editorDictionary() {
   const code = language().code;
   return code === 'en' ? null : ((blockNoteLocales as Record<string, unknown>)[code] as typeof blockNoteLocales.en | undefined) ?? null;
-}
-
-/**
- * Keeps each group's items next to each other, groups in the order they first appear. The menu shows
- * a heading whenever the group changes and tracks headings by name, so a group split in two showed
- * its heading twice and left copies behind as the list changed while typing.
- */
-function groupTogether<T extends { group?: string }>(items: T[]): T[] {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    const key = item.group ?? '';
-    const list = groups.get(key);
-    if (list) list.push(item);
-    else groups.set(key, [item]);
-  }
-  return [...groups.values()].flat();
 }
 
 export function DocumentEditor({

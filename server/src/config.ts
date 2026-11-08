@@ -26,6 +26,8 @@ export const config = {
   webDir: path.resolve(process.env.WEB_DIR ?? '../web/dist'),
   secureCookies: process.env.SECURE_COOKIES === 'true',
   /** The address people use to reach the server (e.g. https://atrium.example.com), for links in emails. */
+  /** Whether addresses people type in (webhooks, AI services) may point at the local network. Turn off on hosted servers. */
+  allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS !== 'false',
   publicUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, ''),
   maxUploadBytes: Number(process.env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
   /** Largest export .zip that can be imported. */

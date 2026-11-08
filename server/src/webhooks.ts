@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { query } from './db.js';
+import { checkOutboundUrl } from './netGuard.js';
 
 // Webhooks: when something happens in a workspace, a JSON POST goes to each address set up for it,
 // signed with the webhook's secret (header X-Signature: sha256=<hex HMAC of the body>).
@@ -28,6 +29,7 @@ export async function deliver(hook: { id: string; url: string; secret: string },
   let status: number | null = null;
   let error: string | null = null;
   try {
+    await checkOutboundUrl(hook.url, { private: 'allow', what: 'Webhook' });
     const res = await fetch(hook.url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'user-agent': 'workspace-webhooks/1', 'x-event': event, 'x-signature': signature(hook.secret, body) },

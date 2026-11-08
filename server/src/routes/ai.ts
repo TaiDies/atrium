@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { accessMap, requireMember } from '../access.js';
+import { accessMap, requireMember, visibleFiles } from '../access.js';
 import { aiAccess, type ChatTurn, complete, DEFAULT_MODELS, encryptKey, listModels, PROVIDERS } from '../ai.js';
 import { requireUser } from '../auth.js';
 import { useAi } from '../limits.js';
@@ -122,18 +122,20 @@ async function searchForQuestion(userId: string, workspaceId: string, question: 
   const files = guest
     ? []
     : (
-        await query<{ name: string; text: string | null; score: number }>(
-          `select f.filename as name, f.text_content as text,
+        await query<{ id: string; name: string; text: string | null; score: number }>(
+          `select f.id, f.filename as name, f.text_content as text,
                   (select count(*) from unnest($2::text[]) k where f.filename ilike k) * 3
                 + (select count(*) from unnest($2::text[]) k where f.text_content ilike k) as score
              from files f where f.workspace_id = $1 and f.text_content is not null and f.text_content <> ''
-            order by score desc, f.updated_at desc limit 3`,
+            order by score desc, f.updated_at desc limit 20`,
           [workspaceId, patterns],
         )
       )
-        .filter((f) => f.score > 0)
-        .map((f) => ({ name: f.name, text: (f.text ?? '').slice(0, 30_000) }));
-  return { pageIds, files };
+        .filter((f) => f.score > 0);
+  // Files on pages hidden from this person don't count.
+  const seen = await visibleFiles(userId, workspaceId, files.map((f) => f.id));
+  const shown = files.filter((f) => seen.has(f.id)).slice(0, 3).map((f) => ({ name: f.name, text: (f.text ?? '').slice(0, 30_000) }));
+  return { pageIds, files: shown };
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -551,10 +553,12 @@ ${pageList || '(none yet)'}${listed.length > MAX_LISTED_PAGES ? `\n…and ${list
     if (!a.active) throw new HttpError(400, 'Set up an AI connection first (AI → Settings)');
     await useAi(req.user.id);
 
-    const files = body.fileIds.length
+    // Only files this person may see (not ones on pages hidden from them).
+    const allowed = [...(await visibleFiles(req.user.id, id, body.fileIds))];
+    const files = allowed.length
       ? await query<{ id: string; filename: string; text: string | null }>(
           `select id, filename, text_content as text from files where id = any($1::uuid[]) and workspace_id = $2`,
-          [body.fileIds, id],
+          [allowed, id],
         )
       : [];
     const withTasks = body.events.length > 0;

@@ -7,6 +7,7 @@ import { checkMembers } from '../limits.js';
 import { inviteEmail, mailEnabled, sendMail } from '../mail.js';
 import { notify } from '../notify.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { requirePermission } from '../roles.js';
 
 // People around pages: guests invited to single pages, following pages (their edits show under the
 // bell's Updates), who's online right now, and the daily email summary setting.
@@ -105,6 +106,8 @@ export async function socialRoutes(app: FastifyInstance) {
       await notify(user!.id, { kind: 'page-shared', title: `${req.user.name} shared “${page.title || 'Untitled'}” with you`, body: `You can ${body.level} it.`, link: `/w/${page.workspace_id}/p/${id}` });
       return reply.code(201).send({ status: 'shared' });
     }
+    // Bringing someone new into the workspace (as a guest) is inviting, so it needs that permission.
+    await requirePermission(req.user.id, 'invite_people');
     const pending = await one<{ pages: { pageId: string; level: string }[] }>('select pages from workspace_invites where workspace_id = $1 and email = $2', [page.workspace_id, body.email]);
     if (!pending) await checkMembers(page.workspace_id);
     const pages = [...(pending?.pages ?? []).filter((p) => p.pageId !== id), { pageId: id, level: body.level }];

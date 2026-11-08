@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { hiddenEvents } from '../access.js';
 import { requireUser } from '../auth.js';
 import { one, query, tx } from '../db.js';
 import { mailEnabled } from '../mail.js';
@@ -86,7 +87,9 @@ export async function notificationRoutes(app: FastifyInstance) {
       [userId, addDays(today, -1), addDays(today, 29)],
     );
     const nowMin = minutesOf(now);
-    for (const e of events) {
+    const hiddenIds = new Set<string>();
+    for (const w of workspaces) for (const h of await hiddenEvents(userId, w.id, events.filter((e) => e.workspaceId === w.id).map((e) => e.id))) hiddenIds.add(h);
+    for (const e of events.filter((x) => !hiddenIds.has(x.id))) {
       // All-day events remind relative to 9:00 that morning.
       const startMin = minutesOf(`${e.start}T${e.time ?? '09:00'}`);
       const remindAt = startMin - e.reminder;

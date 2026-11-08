@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as Y from 'yjs';
 import { updateDocIndex } from '../docIndex.js';
 import { notify } from '../notify.js';
-import { type Access, accessMap, requireMember, requirePage } from '../access.js';
+import { type Access, accessMap, requireMember, requirePage, visibleFiles } from '../access.js';
 import { deleteFile, filesOnlyIn } from './notes.js';
 import { requireUser } from '../auth.js';
 import { editDoc } from '../blocks.js';
@@ -577,7 +577,9 @@ export async function pageRoutes(app: FastifyInstance) {
           limit 20`,
         [id, pattern, since, f.mine === '1' ? req.user.id : null],
       ).catch(() => []);
-      for (const file of files) results.push({ id: file.id, title: file.name, icon: '', type: 'file', mimeType: file.mimeType, snippet: snippetOf(file.text) });
+      // Files on pages hidden from this person don't show up (their text would leak through the snippet).
+      const seen = await visibleFiles(req.user.id, id, files.map((f) => f.id));
+      for (const file of files.filter((f) => seen.has(f.id))) results.push({ id: file.id, title: file.name, icon: '', type: 'file', mimeType: file.mimeType, snippet: snippetOf(file.text) });
     }
     return { results };
   });

@@ -5,12 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireMember } from '../access.js';
+import { requireFileEditor, requireMember } from '../access.js';
 import { requireUser } from '../auth.js';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { queueFileText } from '../fileText.js';
-import { checkStorage } from '../limits.js';
+import { checkStorage, uploadLimitBytes } from '../limits.js';
+import { requirePermission } from '../roles.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { emit } from '../webhooks.js';
 
@@ -83,6 +84,9 @@ export async function mediaRoutes(app: FastifyInstance) {
     );
     if (!file) throw new HttpError(404, 'File not found');
     await requireMember(req.user.id, file.workspace_id);
+    // Replacing needs the right to change this file; either way the result is an upload.
+    if (!body.asCopy) await requireFileEditor(req.user.id, id);
+    await requirePermission(req.user.id, 'upload_files');
     if (body.end !== null && body.end <= body.start + 0.1) throw new HttpError(400, 'The end must come after the start');
 
     const filters: string[] = [];
@@ -117,6 +121,8 @@ export async function mediaRoutes(app: FastifyInstance) {
 
     try {
       const size = (await stat(out)).size;
+      const max = await uploadLimitBytes(req.user.id);
+      if (size > max) throw new HttpError(413, `The edited video is larger than ${Math.round(max / 1024 / 1024)} MB, the most you can upload`);
       const base = file.filename.replace(/\.[^.]+$/, '');
       if (body.asCopy) {
         await checkStorage(req.user.id, size);

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { accessMap, atLeast, requireMember, requirePage } from '../access.js';
+import { accessMap, atLeast, hiddenEvents, requireMember, requirePage } from '../access.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, editDoc, readDoc } from '../blocks.js';
 import { query } from '../db.js';
@@ -99,7 +99,10 @@ export async function tasksFor(userId: string, workspaceId: string, day: string)
     if (!rowTitles.has(pageId)) rowTitles.set(pageId, new Map((await readDoc(pageId, null, databaseRows)).map((r) => [r.id, r.title])));
     return rowTitles.get(pageId)!.get(rowId) ?? null;
   };
+  // Events placed only on pages this person can't open aren't theirs to see.
+  const restricted = await hiddenEvents(userId, workspaceId, events.map((e) => e.id), access);
   for (const e of events) {
+    if (restricted.has(e.id)) continue;
     if (hidden.has(e.id) && !e.hasPaths) continue;
     const catchUp = keepsMissedDays(e);
     const ahead = catchUp && e.start > day;

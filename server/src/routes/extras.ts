@@ -1,34 +1,15 @@
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { accessMap, requireMember } from '../access.js';
 import { requireUser } from '../auth.js';
 import { query } from '../db.js';
+import { checkOutboundUrl } from '../netGuard.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // Small helpers for blocks: link previews for bookmarks, and the synced blocks in a workspace.
 
-/** Addresses on this machine or the local network, which a preview must never reach. */
-function isPrivate(ip: string): boolean {
-  if (isIP(ip) === 6) {
-    const v = ip.toLowerCase();
-    if (v === '::1' || v === '::' || v.startsWith('fe80') || v.startsWith('fc') || v.startsWith('fd')) return true;
-    const mapped = /::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v);
-    return mapped ? isPrivate(mapped[1]) : false;
-  }
-  const [a, b] = ip.split('.').map(Number);
-  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-}
-
-async function safeUrl(raw: string): Promise<URL> {
-  const url = new URL(raw);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new HttpError(400, 'Only web links can be previewed');
-  const addresses = isIP(url.hostname) ? [{ address: url.hostname }] : await lookup(url.hostname, { all: true }).catch(() => []);
-  if (!addresses.length) throw new HttpError(400, 'That site could not be found');
-  if (addresses.some((a) => isPrivate(a.address))) throw new HttpError(400, 'Links to the local network can’t be previewed');
-  return url;
-}
+/** Previews never reach the local network, whatever the server allows elsewhere. */
+const safeUrl = (raw: string) => checkOutboundUrl(raw, { private: 'block', what: 'Link preview' });
 
 const decode = (s: string) =>
   s

@@ -1,4 +1,4 @@
-import { accessMap } from './access.js';
+import { accessMap, hiddenEvents } from './access.js';
 import { config } from './config.js';
 import { query } from './db.js';
 import { addDays, isDate, today, validRule } from './repeat.js';
@@ -73,7 +73,8 @@ export async function calendarFeed(userId: string, workspaceId: string, workspac
        from events where workspace_id = $1 and (repeat is not null or coalesce(end_date, start_date) >= $2)`,
     [workspaceId, from],
   );
-  for (const e of events) {
+  const hidden = await hiddenEvents(userId, workspaceId, events.map((e) => e.id));
+  for (const e of events.filter((x) => !hidden.has(x.id))) {
     const title = `${e.status ? (e.status === 'done' ? '✓ ' : '☐ ') : ''}${e.title || 'Untitled'}`;
     const ev = ['BEGIN:VEVENT', `UID:${e.id}@${host}`, `DTSTAMP:${now}`, `LAST-MODIFIED:${e.updatedAt}`, `SUMMARY:${esc(title)}`];
     if (e.startTime) {

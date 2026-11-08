@@ -18,7 +18,9 @@ services:
 
   app:
     build: .
-    image: atrium:latest
+    # Built here by default. To use a ready-made release instead, set ATRIUM_IMAGE (for example
+    # ghcr.io/taidies/atrium:1.8.1) and run: docker compose pull app && docker compose up -d --no-build
+    image: ${ATRIUM_IMAGE:-atrium:latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -28,6 +30,7 @@ services:
       # Set to "true" when the app is served over HTTPS.
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
       PUBLIC_URL: ${PUBLIC_URL:-}
+      ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-true}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       MAX_IMPORT_MB: ${MAX_IMPORT_MB:-1024}
       # Time zone for "today" (repeating tasks reset at midnight here), e.g. Europe/London.
@@ -61,8 +64,12 @@ services:
   # Installs new versions for the admin panel's "Update now" and auto-update: pulls the new version
   # into this folder and rebuilds the app (tools/updater.sh). It needs the Docker socket, so it can
   # control Docker on this machine — remove this service if you'd rather update by hand.
+  # Optional automatic updates. It controls Docker on this machine, so it only runs when you choose it:
+  #   docker compose --profile updater up -d
+  # It installs published releases only (the release's git tag), never unreleased code.
   updater:
     image: docker:27-cli
+    profiles: ["updater"]
     restart: unless-stopped
     working_dir: /project
     entrypoint: ["sh", "/project/tools/updater.sh"]

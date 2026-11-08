@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { accessMap, atLeast, requireMember, requirePage } from '../access.js';
+import { accessMap, atLeast, hiddenEvents, requireMember, requirePage } from '../access.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, editDoc, eventBlock, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -101,12 +101,14 @@ export async function calendarRoutes(app: FastifyInstance) {
     const access = await accessMap(req.user.id, id);
     const visible = (pageId: string) => (access.get(pageId) ?? 'none') !== 'none';
 
-    const events = await query<EventRow>(
+    let events = await query<EventRow>(
       `select ${EVENT_COLUMNS} from events e
         where e.workspace_id = $1 and (e.repeat is not null or (e.start_date <= $3 and coalesce(e.end_date, e.start_date) >= $2))
         order by e.start_date, e.start_time nulls first`,
       [id, from, to],
     );
+    const hidden = await hiddenEvents(req.user.id, id, events.map((e) => e.id), access);
+    events = events.filter((e) => !hidden.has(e.id));
     const eventLocations = await locationsFor('event_refs', 'event_id', events.map((e) => e.id), access);
 
     const cards = (
@@ -214,7 +216,9 @@ export async function calendarRoutes(app: FastifyInstance) {
     const { id } = parse(idParams, req.params);
     const event = await eventOr404(id);
     await requireMember(req.user.id, event.workspaceId);
-    const locations = await locationsFor('event_refs', 'event_id', [id], await accessMap(req.user.id, event.workspaceId));
+    const access = await accessMap(req.user.id, event.workspaceId);
+    if ((await hiddenEvents(req.user.id, event.workspaceId, [id], access)).has(id)) throw new HttpError(404, 'Event not found');
+    const locations = await locationsFor('event_refs', 'event_id', [id], access);
     return { event: { ...event, locations: locations.get(id) ?? [] } };
   });
 

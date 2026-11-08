@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { one } from './db.js';
 import { getSettings } from './settings.js';
 import { HttpError } from './util.js';
+import { checkOutboundUrl } from './netGuard.js';
 
 // The AI assistant's connection to a model. People can bring their own key; the admin can also set one
 // for everybody, and then decides whether people may still use their own. Keys are stored encrypted
@@ -156,7 +157,7 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
 async function postJson(url: string, headers: Record<string, string>, body: unknown) {
   let res: Response;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
   } catch {
     throw new HttpError(502, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
   }
@@ -195,7 +196,13 @@ async function gemini(c: Connection, system: string, turns: ChatTurn[], json: bo
 }
 
 /** Sends a conversation to the model and returns its text answer. */
+/** A custom AI address is checked before anything is sent to it (see netGuard.ts). */
+export async function checkBaseUrl(baseUrl: string | null | undefined) {
+  if (baseUrl) await checkOutboundUrl(baseUrl, { private: 'allow', what: 'AI service address' });
+}
+
 export async function complete(c: Connection, system: string, turns: ChatTurn[], opts: { json?: boolean } = {}): Promise<string> {
+  await checkBaseUrl(c.baseUrl);
   if (!c.key && c.provider !== 'openai') throw new HttpError(400, 'The AI connection has no API key');
   const answer = c.provider === 'anthropic' ? await anthropic(c, system, turns) : c.provider === 'gemini' ? await gemini(c, system, turns, !!opts.json) : await openai(c, system, turns, !!opts.json);
   // The tokens count towards the person's AI limits.
@@ -205,6 +212,7 @@ export async function complete(c: Connection, system: string, turns: ChatTurn[],
 
 /** The models a key can use, for picking one in the settings. */
 export async function listModels(c: Omit<Connection, 'source'>): Promise<string[]> {
+  await checkBaseUrl(c.baseUrl);
   if (c.provider === 'anthropic') {
     const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: 20_000 });
     try {
@@ -224,6 +232,7 @@ export async function listModels(c: Omit<Connection, 'source'>): Promise<string[
     res = await fetch(`${base}/models`, {
       headers: gemini ? (c.key ? { 'x-goog-api-key': c.key } : {}) : c.key ? { Authorization: `Bearer ${c.key}` } : {},
       signal: AbortSignal.timeout(20_000),
+      redirect: 'error',
     });
   } catch {
     throw new HttpError(502, `Couldn't reach ${new URL(base).host}`);

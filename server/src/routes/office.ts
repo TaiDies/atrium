@@ -5,12 +5,13 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { queueFileText } from '../fileText.js';
 import { z } from 'zod';
-import { requireMember } from '../access.js';
+import { requireFileEditor, requireMember } from '../access.js';
 import { requireUser } from '../auth.js';
 import { config } from '../config.js';
 import { canConvertTo, convert, converterAvailable, kindOfName, type OfficeKind } from '../convert.js';
 import { one, query } from '../db.js';
-import { checkStorage } from '../limits.js';
+import { checkStorage, uploadLimitBytes } from '../limits.js';
+import { requirePermission } from '../roles.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // Documents, spreadsheets and presentations: new blank files, conversions between formats, saving
@@ -75,6 +76,8 @@ export async function officeRoutes(app: FastifyInstance) {
   app.post('/workspaces/:id/office', async (req, reply) => {
     const { id } = parse(idParams, req.params);
     await requireMember(req.user.id, id);
+    // A new file is an upload (it gets filled in by saving), so it needs the same permission.
+    await requirePermission(req.user.id, 'upload_files');
     const body = parse(z.object({ kind: KIND, name: z.string().trim().max(200).optional() }), req.body);
     const ext = NEW_EXT[body.kind];
     const fallback = { document: 'Untitled document', spreadsheet: 'Untitled spreadsheet', presentation: 'Untitled presentation' }[body.kind];
@@ -126,7 +129,12 @@ export async function officeRoutes(app: FastifyInstance) {
     const { id } = parse(idParams, req.params);
     const { name } = parse(z.object({ name: z.string().trim().min(1).max(255).optional() }), req.query);
     const file = await fileFor(req.user.id, id);
+    await requireFileEditor(req.user.id, id);
     if (!Buffer.isBuffer(req.body)) throw new HttpError(400, 'Send the file as application/octet-stream');
+    // Saving is uploading: the same permission and size limit apply.
+    await requirePermission(req.user.id, 'upload_files');
+    const max = await uploadLimitBytes(req.user.id);
+    if (req.body.length > max) throw new HttpError(413, `Files must be smaller than ${Math.round(max / 1024 / 1024)} MB`);
     const filename = name ?? file.filename;
     // A bigger file counts against the storage of whoever uploaded it.
     const stored = await one<{ uploaded_by: string | null; size: string }>('select uploaded_by, size from files where id = $1', [id]);

@@ -61,14 +61,29 @@ Open the admin panel → **Updates**. It shows the version you run and the newes
 - **Server notifications receiver email** — an address that's emailed when a new version is out (uses
   the server's email settings, see below).
 
-The installing is done by the small `updater` container in `docker-compose.yml`, which pulls the new
-version into this folder and rebuilds the app. It needs the Docker socket (so it can control Docker on
-this machine) and only works when the folder is a `git clone` of this repository. If you'd rather not run
-it, delete the `updater` service and update by hand:
+The installing is done by the small `updater` container in `docker-compose.yml`. It is **off unless you
+start it**, because it needs the Docker socket (so it can control Docker on this machine):
 
 ```bash
-git pull
+docker compose --profile updater up -d
+```
+
+It only installs **published releases**: it checks out the release's tag (for example `v1.8.1`) in this
+folder and rebuilds the app, never unreleased code from the main branch. It only works when the folder is
+a `git clone` of this repository. Without it, update by hand to a release:
+
+```bash
+git fetch --tags
+git checkout v1.8.1   # the version you want
 docker compose up -d --build
+```
+
+**Ready-made images** — every release is also published as a Docker image, so you can skip building.
+Put `ATRIUM_IMAGE=ghcr.io/taidies/atrium:latest` (or a version, e.g. `:1.8.1`) in `.env`, then:
+
+```bash
+docker compose pull app
+docker compose up -d --no-build
 ```
 
 Database changes are applied automatically when the server starts.

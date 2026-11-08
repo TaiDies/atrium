@@ -116,3 +116,52 @@ export async function requirePage(userId: string, pageId: string, need: Access =
   }
   return { ...page, access };
 }
+
+/**
+ * Which of these files a person may see (and so read the text of): their own uploads, files not used
+ * on any page, and files on at least one page they can open. The same rule as the Files list.
+ */
+export async function visibleFiles(userId: string, workspaceId: string, fileIds: string[]): Promise<Set<string>> {
+  if (!fileIds.length) return new Set();
+  const rows = await query<{ id: string; uploaded_by: string | null; pages: string[] }>(
+    `select f.id, f.uploaded_by, coalesce(array_agg(r.page_id) filter (where r.page_id is not null), '{}') as pages
+       from files f left join file_refs r on r.file_id = f.id
+      where f.workspace_id = $1 and f.id = any($2::uuid[])
+      group by f.id`,
+    [workspaceId, fileIds],
+  );
+  const access = await accessMap(userId, workspaceId);
+  return new Set(rows.filter((f) => f.uploaded_by === userId || !f.pages.length || f.pages.some((p) => (access.get(p) ?? 'none') !== 'none')).map((f) => f.id));
+}
+
+/**
+ * Events placed only on pages a person can't open (and not made by them) stay hidden from them in the
+ * calendar, its feeds, Today and reminders. Events not placed on any page are for the whole workspace.
+ */
+export async function hiddenEvents(userId: string, workspaceId: string, eventIds: string[], access?: Map<string, Access>): Promise<Set<string>> {
+  if (!eventIds.length) return new Set();
+  const rows = await query<{ id: string; created_by: string | null; pages: string[] }>(
+    `select e.id, e.created_by, array_agg(r.page_id) as pages
+       from events e join event_refs r on r.event_id = e.id
+      where e.workspace_id = $1 and e.id = any($2::uuid[])
+      group by e.id`,
+    [workspaceId, eventIds],
+  );
+  const map = access ?? (await accessMap(userId, workspaceId));
+  return new Set(rows.filter((e) => e.created_by !== userId && !e.pages.some((p) => (map.get(p) ?? 'none') !== 'none')).map((e) => e.id));
+}
+
+/**
+ * Whether a person may replace a file's contents: the person who uploaded it, a workspace owner, or
+ * someone who can edit a page it's on (a file on no page is open to every member, like the Files list).
+ */
+export async function requireFileEditor(userId: string, fileId: string): Promise<void> {
+  const file = await one<{ workspace_id: string; uploaded_by: string | null }>('select workspace_id, uploaded_by from files where id = $1', [fileId]);
+  if (!file) throw new HttpError(404, 'File not found');
+  const role = await requireMember(userId, file.workspace_id);
+  if (role === 'owner' || file.uploaded_by === userId) return;
+  const refs = await query<{ page_id: string }>('select page_id from file_refs where file_id = $1', [fileId]);
+  if (!refs.length) return;
+  const access = await accessMap(userId, file.workspace_id);
+  if (!refs.some((r) => atLeast(access.get(r.page_id) ?? 'none', 'edit'))) throw new HttpError(403, "You can't change this file: it's on pages you can only view");
+}

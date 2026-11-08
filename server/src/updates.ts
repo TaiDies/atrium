@@ -14,7 +14,7 @@ import { getSettings, setSetting, type UpdateSettings } from './settings.js';
 // leaves it a request in the shared data folder; the updater pulls the new version, rebuilds the app
 // and writes back how it went.
 
-export const SERVER_VERSION = '1.8.0';
+export const SERVER_VERSION = '1.8.1';
 export const UPDATE_REPO = process.env.UPDATE_REPO || 'TaiDies/atrium';
 
 const dir = () => path.join(config.dataDir, 'update');
@@ -65,7 +65,7 @@ async function updaterState() {
     running: alive,
     canUpdate: alive && !!beat?.canUpdate,
     reason: !alive
-      ? 'The updater container isn’t running (it comes with docker-compose.yml — run docker compose up -d).'
+      ? 'Automatic updates are off. To turn them on, start the updater: docker compose --profile updater up -d'
       : beat?.canUpdate
         ? null
         : `This server's folder isn't a git clone of github.com/${UPDATE_REPO}, so it can't pull updates. Update it by hand.`,

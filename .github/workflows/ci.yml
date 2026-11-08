@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atrium
+          POSTGRES_PASSWORD: atrium
+          POSTGRES_DB: atrium
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U atrium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://atrium:atrium@localhost:5432/atrium
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Install
+        run: |
+          npm ci --prefix server
+          npm ci --prefix web
+
+      - name: Typecheck the server
+        run: npm run typecheck --prefix server
+
+      - name: Typecheck and build the web app
+        run: npm run build --prefix web
+
+      - name: Unit tests
+        run: npm test --prefix server
+
+      # Starting the server runs every migration on an empty database, so this also checks they apply.
+      - name: Start the server
+        working-directory: server
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          MAIL_TRANSPORT=log PORT=3100 ADMIN_PORT=3101 WEB_DIR=../web/dist DATA_DIR="$RUNNER_TEMP/data" \
+            nohup npx tsx src/index.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3100/api/health && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+
+      - name: Security integration tests
+        working-directory: server
+        run: BASE_URL=http://localhost:3100 SERVER_LOG="$RUNNER_TEMP/server.log" npm run test:integration
+
+      - name: Server log (on failure)
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/server.log" || true

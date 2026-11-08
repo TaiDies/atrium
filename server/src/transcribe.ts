@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Connection } from './ai.js';
+import { checkBaseUrl, type Connection } from './ai.js';
 import { config } from './config.js';
 import { HttpError } from './util.js';
 
@@ -21,6 +21,7 @@ function speechModel(baseUrl: string) {
 }
 
 export async function transcribeFile(c: Connection, file: { id: string; filename: string; mime_type: string; size: string }): Promise<string> {
+  await checkBaseUrl(c.baseUrl);
   if (c.provider === 'anthropic') {
     throw new HttpError(400, 'Claude can’t listen to audio. To transcribe, connect OpenAI, Groq (OpenAI-compatible) or Google Gemini in AI → Settings.');
   }
@@ -46,6 +47,7 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
         ],
       }),
       signal: AbortSignal.timeout(10 * 60_000),
+      redirect: 'error',
     });
     const json = (await res.json().catch(() => null)) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } } | null;
     if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : 502, `Google couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
@@ -64,6 +66,7 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
     headers: c.key ? { Authorization: `Bearer ${c.key}` } : {},
     body: form,
     signal: AbortSignal.timeout(10 * 60_000),
+    redirect: 'error',
   });
   const json = (await res.json().catch(() => null)) as { text?: string; error?: { message?: string } } | null;
   if (res.status === 404) throw new HttpError(400, 'This AI service has no speech-to-text. Use OpenAI, Groq or Gemini to transcribe.');

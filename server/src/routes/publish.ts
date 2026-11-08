@@ -24,7 +24,7 @@ interface PublishedPage {
   cover: string | null;
 }
 
-/** The pages a link shows (the page, plus everything under it when sub-pages are included). */
+/** The pages a link shows (the page, plus everything under it that isn't restricted, when sub-pages are included). */
 async function publishedTree(token: string) {
   const root = await one<{ id: string; publish_subpages: boolean; publish_index: boolean }>(
     'select id, publish_subpages, publish_index from pages where publish_token = $1 and deleted_at is null',
@@ -36,7 +36,10 @@ async function publishedTree(token: string) {
       ? `with recursive tree as (
            select id from pages where id = $1
            union all
-           select p.id from pages p join tree t on p.parent_id = t.id where p.deleted_at is null
+           -- A restricted sub-page (and everything inside it) stays private: only pages open to the
+           -- whole workspace are published along with the page.
+           select p.id from pages p join tree t on p.parent_id = t.id
+            where p.deleted_at is null and p.default_access is distinct from 'none'
          )
          select p.id, p.parent_id as "parentId", p.type, p.title, p.icon, p.cover from pages p join tree using (id)`
       : `select id, parent_id as "parentId", type, title, icon, cover from pages where id = $1`,
