@@ -58,7 +58,7 @@ code, pre { font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consol
 .brand:hover { text-decoration: none; }
 .logo {
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--accent), #ff7ac3); color: #fff;
+  background: linear-gradient(135deg, #8B5CF6, #5B21B6); color: #fff;
   box-shadow: 0 6px 16px -6px var(--accent);
 }
 .nav { display: flex; gap: 22px; margin-inline-start: auto; align-items: center; font-size: 15px; }

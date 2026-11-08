@@ -37,7 +37,7 @@ export function ServerPicker() {
     <div className="flex min-h-full items-center justify-center bg-sidebar px-4 py-12">
       <div className="w-full max-w-[420px]">
         <div className="mb-8 flex flex-col items-center text-center">
-          <img src="/favicon.svg" alt="" className="mb-4 size-12" />
+          <img src="/logo.svg" alt="" className="mb-4 size-12" />
           <h1 className="text-2xl font-semibold tracking-tight">Welcome to {APP_NAME}</h1>
           <p className="mt-1.5 text-sm text-muted">Choose where your workspace lives.</p>
         </div>

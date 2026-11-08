@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="web/public/logo.svg" alt="Atrium logo" width="96" />
+
 # Atrium
 
 **Your team's open hall — on your own server.**

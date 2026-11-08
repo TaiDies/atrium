@@ -114,7 +114,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     <div className="flex min-h-full items-center justify-center bg-sidebar px-4 py-12">
       <div className="w-full max-w-[380px]">
         <div className="mb-8 flex flex-col items-center text-center">
-          <img src="/favicon.svg" alt="" className="mb-4 size-12" />
+          <img src="/logo.svg" alt="" className="mb-4 size-12" />
           <h1 className="text-2xl font-semibold tracking-tight">
             {step.kind === 'code' ? 'Check your email' : signup ? `Create your ${appName} account` : `Welcome back`}
           </h1>
