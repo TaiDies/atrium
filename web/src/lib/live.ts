@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { collabUrl } from './native';
+import { collabUrl, renewTicket } from './native';
 import { queryClient } from './queries';
 
 // The live channel (/live): one connection for the whole app. New chat messages and changes arrive as
@@ -15,9 +15,13 @@ const listeners = new Set<Listener>();
 const queue: string[] = [];
 const openWaiters = new Set<() => void>();
 
+let opened = false;
+
 function connect() {
   socket = new WebSocket(collabUrl('/live'));
+  opened = false;
   socket.onopen = () => {
+    opened = true;
     retry = 0;
     for (const m of queue.splice(0)) socket!.send(m);
     for (const w of openWaiters) w();
@@ -34,8 +38,12 @@ function connect() {
   };
   socket.onclose = () => {
     socket = null;
-    // Back again soon (slower each time, up to 15 s).
-    setTimeout(connect, Math.min(15_000, 500 * 2 ** retry++));
+    // Back again soon (slower each time, up to 15 s). Closed before it ever opened: in the apps that's
+    // usually an expired ticket, so a fresh one is fetched first and the next try uses it.
+    const delay = Math.min(15_000, 500 * 2 ** retry++);
+    const again = () => setTimeout(connect, delay);
+    if (opened) again();
+    else void renewTicket('refused').finally(again);
   };
 }
 

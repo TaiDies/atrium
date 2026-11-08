@@ -124,17 +124,17 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/auth/login', async (req, reply) => {
     const body = parse(z.object({ email, password: z.string().min(1, 'Password is required') }), req.body);
     if (failedByIp.blocked(req.ip)) throw new HttpError(429, TOO_MANY);
-    const wait = loginDelayMs(failedByAccount.count(body.email));
+    // Every attempt is counted as it starts (and the count cleared when one succeeds), so guesses sent all
+    // at once are slowed down as a group: each waits a little longer than the one before.
+    const wait = loginDelayMs(failedByAccount.count(body.email) + 1);
+    failedByAccount.hit(body.email);
     if (wait) await new Promise((r) => setTimeout(r, wait));
     const row = await one<SessionUser & { password_hash: string | null; email_verified_at: Date | null; disabled_at: Date | null }>(
       'select id, email, name, color, password_hash, email_verified_at, disabled_at from users where email = $1',
       [body.email],
     );
     const ok = row?.password_hash ? await bcrypt.compare(body.password, row.password_hash) : false;
-    if (!row || !ok) {
-      failedByIp.hit(req.ip);
-      failedByAccount.hit(body.email);
-    }
+    if (!row || !ok) failedByIp.hit(req.ip);
     if (!row || !ok) throw new HttpError(401, row && !row.password_hash ? 'This account signs in with an email code' : 'Incorrect email or password');
     if (row.disabled_at) throw new HttpError(403, DISABLED);
     if ((await mustVerify()) && !row.email_verified_at) {

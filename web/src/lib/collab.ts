@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
 import type { User } from './api';
-import { collabUrl, onTicketRenewed } from './native';
+import { collabUrl, onTicketRenewed, renewTicket } from './native';
 import { checkConnection, isOnline, onConnectionChange, scope } from './offline';
 
 export interface Peer {
@@ -54,11 +54,21 @@ export function useCollab(pageId: string, user: User, onPageUpdated: () => void)
       if (!isOnline()) markReady();
       else if (hasLocal) fallback = setTimeout(markReady, LOCAL_FALLBACK_MS);
     });
+    // A connection closed before it opened is, in the apps, usually an expired ticket: get a fresh one
+    // (reconnections then use it, see below).
+    let opened = false;
     const provider = new HocuspocusProvider({
       url: collabUrl(),
       name: pageId,
       document: doc,
       token: 'session-cookie',
+      onOpen: () => {
+        opened = true;
+      },
+      onClose: () => {
+        if (!opened) void renewTicket('refused');
+        opened = false;
+      },
       onSynced: markReady,
       onStatus: ({ status }) => {
         setStatus(status as Status);

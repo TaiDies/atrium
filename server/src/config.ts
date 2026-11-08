@@ -39,6 +39,8 @@ export const config = {
   maxUploadBytes: Number(process.env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
   /** Largest export .zip that can be imported. */
   maxImportBytes: Number(process.env.MAX_IMPORT_MB ?? 1024) * 1024 * 1024,
+  /** How many imports may run at once on the whole server (each person can run one at a time). */
+  importParallel: Math.max(1, Number(process.env.IMPORT_PARALLEL ?? 2) || 2),
   /**
    * Email (optional). With SMTP_HOST set, people can sign in and sign up with a code sent by email.
    * MAIL_TRANSPORT=log prints the emails to the server log instead (for trying it out).

@@ -5,6 +5,7 @@ import { accessMap, requirePage } from '../access.js';
 import { requireUser } from '../auth.js';
 import { editDoc } from '../blocks.js';
 import { one, query } from '../db.js';
+import { historyNotice } from '../historyNotice.js';
 import { HttpError, parse } from '../util.js';
 
 // Page history (snapshots taken while editing, to look at and restore) and backlinks.
@@ -41,10 +42,17 @@ export async function pruneHistory(): Promise<number> {
   return res.length;
 }
 
-/** Prunes now and then once a day. */
-export function startHistoryPruning(log: (msg: string) => void) {
-  const run = () => pruneHistory().then((n) => n && log(`Removed ${n} old page history snapshots`)).catch(() => {});
-  setTimeout(run, 60_000).unref();
+/** Prunes now and then once a day. The first time it removes anything, it says so plainly (once). */
+export function startHistoryPruning(log: (msg: string) => void, warn: (msg: string) => void = log) {
+  const run = async () => {
+    const n = await pruneHistory().catch(() => 0);
+    if (!n) return;
+    const told = await one(`select 1 from settings where key = 'history_prune_notice'`).catch(() => null);
+    if (told) return log(`Removed ${n} old page history snapshots`);
+    warn(historyNotice(n, HISTORY_DAYS, ALWAYS_KEEP));
+    await query(`insert into settings (key, value) values ('history_prune_notice', 'true'::jsonb) on conflict (key) do nothing`).catch(() => {});
+  };
+  setTimeout(run, 15_000).unref();
   setInterval(run, 24 * 3600_000).unref();
 }
 

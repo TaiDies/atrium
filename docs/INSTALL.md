@@ -93,6 +93,11 @@ docker compose up -d --no-build
 
 Database changes are applied automatically when the server starts.
 
+**Page history after upgrading to 1.11:** page history is now thinned out daily. Snapshots older than
+90 days are removed, and the newest 10 of every page and card are always kept. The first time this
+removes anything, the server log says how many. To keep history longer, set `HISTORY_DAYS` in `.env`
+(for example `HISTORY_DAYS=365`).
+
 **Backups** — everything lives in two Docker volumes: `db` (the database) and `data` (uploaded files,
 the admin password file). For example:
 
@@ -120,6 +125,12 @@ up on it (a public or hosted server), change these in `.env`:
 - **`TRUST_PROXY`** — if your reverse proxy isn't on the same machine or a private network, list its
   address, so rate limits see visitors' real addresses (and nobody else can fake them).
 - **`SECURE_COOKIES=true`** behind HTTPS.
+
+**Docker Desktop without a reverse proxy:** when the app's port is published straight from Docker Desktop
+(Windows or Mac), Docker passes every visitor on from one private address. The server then sees everyone
+as that one address, so per-address limits (sign-in attempts, sign-ups, public forms) are shared by all
+visitors. Put a reverse proxy in front (see *Put it on the internet* below), or set `TRUST_PROXY=false` so
+nothing claiming to be a proxy is believed. The limits are still shared, but they can't be faked.
 
 ## 2. Put it on the internet (HTTPS) — optional but recommended
 
@@ -246,6 +257,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
 | `MAX_UPLOAD_MB` | `25` | Largest upload |
 | `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |
+| `IMPORT_PARALLEL` | `2` | Imports that may run at once on the whole server (each person can run one at a time) |
 | `TZ` | `UTC` | Time zone for "today" (repeating tasks reset at midnight here) |
 | `CONVERT_PARALLEL` | `2` | Document conversions (Office/PDF) at once |
 | `ADMIN_PORT` | `3001` | Admin panel port (only on the server itself) |

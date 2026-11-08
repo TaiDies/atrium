@@ -35,3 +35,12 @@ is published (Admin panel → Updates shows when one is out).
 - **The optional updater** controls Docker on the machine. Only start it (`--profile updater`) if you
   want automatic updates; it installs tagged releases only.
 - **Back up** the `db` and `data` volumes regularly, and test restoring them.
+
+## Known limits
+
+- **Android keeps the sign-in token in the app's private settings file.** Only the app can read it, but
+  it isn't in a hardware-backed keystore yet. (On Windows and macOS it's in the OS keychain.)
+- **No independent security audit has been done.** The checks so far are our own reviews and an outside
+  code review; treat Atrium accordingly for very sensitive data.
+- **Meetings connect people directly to each other** (each person to every other), so they suit small
+  groups. Large calls need a media server, which Atrium doesn't include.

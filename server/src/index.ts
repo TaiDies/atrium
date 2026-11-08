@@ -28,6 +28,7 @@ import { statsRoutes } from './routes/stats.js';
 import { startScheduler } from './scheduler.js';
 import { backfillDocIndex } from './docIndex.js';
 import { startHistoryPruning } from './routes/history.js';
+import { cleanImportLeftovers } from './transfer.js';
 import { pageRoutes } from './routes/pages.js';
 import { publicRoutes } from './routes/public.js';
 import { workspaceRoutes } from './routes/workspaces.js';
@@ -139,8 +140,10 @@ await migrate();
 // Record which pages use which files, events and whiteboards, and every dated card and block; runs in the background.
 backfillDocIndex().catch((err) => app.log.error(err, 'Could not index documents'));
 backfillFileText().catch((err) => app.log.error(err, 'Could not read file text'));
+// Imports interrupted by a restart leave temporary files behind.
+cleanImportLeftovers().catch(() => {});
 // Old page history is thinned out once a day.
-startHistoryPruning((msg) => app.log.info(msg));
+startHistoryPruning((msg) => app.log.info(msg), (msg) => app.log.warn(msg));
 // Move repeating cards and events to their next date (checked every minute).
 startScheduler();
 startUpdateChecks();

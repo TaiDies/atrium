@@ -54,8 +54,10 @@ export async function transferRoutes(app: FastifyInstance) {
       const parent = await requirePage(req.user.id, parentId, 'edit');
       if (parent.workspace_id !== id) throw new HttpError(400, 'That page is in another workspace');
     }
-    // One import at a time per person: each one unpacks to disk and adds a lot at once.
+    // One import at a time per person, and only a few on the whole server: each one unpacks to disk and
+    // adds a lot at once.
     if (importing.has(req.user.id)) throw new HttpError(429, 'An import is already running — try again when it has finished');
+    if (importing.size >= config.importParallel) throw new HttpError(429, 'The server is busy with other imports — try again in a few minutes');
     importing.add(req.user.id);
     const upload = path.join(os.tmpdir(), `atrium-upload-${randomUUID()}.zip`);
     let result;
