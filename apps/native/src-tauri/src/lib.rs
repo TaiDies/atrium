@@ -69,6 +69,8 @@ struct AppState {
     settings: Mutex<Settings>,
     file: PathBuf,
     client: reqwest::Client,
+    /// Whether the keychain holds the session; when writing it there failed, it stays in the file.
+    in_keychain: Mutex<bool>,
 }
 
 impl AppState {
@@ -80,21 +82,41 @@ impl AppState {
         let mut s = self.settings.lock().unwrap();
         let before = s.token.clone();
         change(&mut s);
+        let mut in_keychain = self.in_keychain.lock().unwrap();
         if s.token != before {
-            secret::save(s.token.as_deref());
+            *in_keychain = secret::save(s.token.as_deref());
         }
-        save_settings(&self.file, &s);
+        save_settings(&self.file, &s, *in_keychain);
+    }
+}
+
+/// What the settings file keeps of the session: nothing when the keychain holds it, the token otherwise.
+fn token_on_disk(token: Option<String>, in_keychain: bool) -> Option<String> {
+    if in_keychain {
+        None
+    } else {
+        token
     }
 }
 
 /// Writes the settings file, leaving the session out when the OS keychain holds it.
-fn save_settings(file: &PathBuf, s: &Settings) {
+fn save_settings(file: &PathBuf, s: &Settings, in_keychain: bool) {
     let mut on_disk = s.clone();
-    if secret::AVAILABLE {
-        on_disk.token = None;
-    }
+    on_disk.token = token_on_disk(on_disk.token, in_keychain);
     if let Ok(json) = serde_json::to_vec_pretty(&on_disk) {
         let _ = fs::write(file, json);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::token_on_disk;
+
+    #[test]
+    fn keeps_the_token_in_the_file_when_the_keychain_failed() {
+        assert_eq!(token_on_disk(Some("t".into()), false), Some("t".into()));
+        assert_eq!(token_on_disk(Some("t".into()), true), None);
+        assert_eq!(token_on_disk(None, false), None);
     }
 }
 
@@ -109,12 +131,13 @@ mod secret {
     pub fn load() -> Option<String> {
         entry()?.get_password().ok().filter(|t| !t.is_empty())
     }
-    pub fn save(token: Option<&str>) {
-        let Some(e) = entry() else { return };
-        let _ = match token {
-            Some(t) if !t.is_empty() => e.set_password(t),
-            _ => e.delete_credential(),
-        };
+    /// Stores (or, with None, removes) the session; false when the keychain couldn't be written.
+    pub fn save(token: Option<&str>) -> bool {
+        let Some(e) = entry() else { return false };
+        match token {
+            Some(t) if !t.is_empty() => e.set_password(t).is_ok(),
+            _ => !matches!(e.delete_credential(), Err(err) if !matches!(err, keyring::Error::NoEntry)),
+        }
     }
 }
 
@@ -124,7 +147,9 @@ mod secret {
     pub fn load() -> Option<String> {
         None
     }
-    pub fn save(_token: Option<&str>) {}
+    pub fn save(_token: Option<&str>) -> bool {
+        false
+    }
 }
 
 fn respond(status: StatusCode, content_type: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -408,17 +433,22 @@ pub fn run() {
             fs::create_dir_all(&dir)?;
             let file = dir.join("settings.json");
             let mut settings: Settings = fs::read(&file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            // Older versions kept the session in the settings file: move it into the keychain. If that
+            // fails it stays in the file, and moving it is tried again next launch.
+            let mut in_keychain = false;
             if secret::AVAILABLE {
-                // Older versions kept the session in the settings file: move it into the keychain.
                 if let Some(token) = settings.token.clone().filter(|t| !t.is_empty()) {
-                    secret::save(Some(&token));
-                    save_settings(&file, &settings);
+                    in_keychain = secret::save(Some(&token));
+                    if in_keychain {
+                        save_settings(&file, &settings, true);
+                    }
                 } else {
                     settings.token = secret::load();
+                    in_keychain = true;
                 }
             }
             let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(6)).build()?;
-            app.manage(AppState { settings: Mutex::new(settings), file, client });
+            app.manage(AppState { settings: Mutex::new(settings), file, client, in_keychain: Mutex::new(in_keychain) });
 
             let url = WebviewUrl::CustomProtocol(Url::parse("app://localhost/").unwrap());
             let builder = WebviewWindowBuilder::new(app, "main", url);
