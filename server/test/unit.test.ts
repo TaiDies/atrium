@@ -9,12 +9,14 @@ import { JSDOM } from 'jsdom';
 import { safeHtml } from '../../web/src/office/slides/safeHtml.ts';
 import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs';
 import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
+import { historyNotice } from '../src/historyNotice.ts';
 import { fetch as undiciFetch } from 'undici';
 import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { zipSync } from 'fflate';
+import { createWriteStream } from 'node:fs';
+import { Zip, ZipDeflate, zipSync } from 'fflate';
 import { limiter, loginDelayMs } from '../src/rateLimit.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
 
@@ -130,6 +132,33 @@ describe('zip import unpacking', () => {
       assert.equal(out.size, 5000);
     });
   });
+  it('unpacks a zip bomb without memory growing much (the disk keeps up)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzip-bomb-'));
+    try {
+      // About 300 MB of zeros, which compresses to well under 1 MB, written as it's made.
+      const zip = join(dir, 'bomb.zip');
+      const out = createWriteStream(zip);
+      const zipper = new Zip((err, data, final) => {
+        if (!err) out.write(data);
+        if (final) out.end();
+      });
+      const entry = new ZipDeflate('zeros.bin', { level: 9 });
+      zipper.add(entry);
+      const block = new Uint8Array(1 << 20);
+      for (let i = 0; i < 300; i++) entry.push(block, i === 299);
+      zipper.end();
+      await new Promise((r) => out.once('close', r));
+      const base = process.memoryUsage().rss;
+      let peak = base;
+      const timer = setInterval(() => (peak = Math.max(peak, process.memoryUsage().rss)), 5);
+      const result = await unzipToDisk(zip, dir, { maxBytes: 1024 ** 3, maxEntries: 10 });
+      clearInterval(timer);
+      assert.equal(result.get('zeros.bin')!.size, 300 * (1 << 20));
+      assert.ok(peak - base < 150 * 1024 * 1024, `memory grew by ${Math.round((peak - base) / 1024 / 1024)} MB`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('refuses more entries than allowed', () =>
     withZip({ a: new Uint8Array(1), b: new Uint8Array(1), c: new Uint8Array(1) }, async (zip, dir) => {
       await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 2 }), (e: { status?: number }) => e.status === 413);
@@ -201,5 +230,15 @@ describe('ffmpeg input', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('page history notice', () => {
+  it('says how much was removed and how to keep more', () => {
+    const line = historyNotice(1234, 90, 10);
+    assert.match(line, /removed 1234 snapshots older than 90 days/);
+    assert.match(line, /newest 10/);
+    assert.match(line, /HISTORY_DAYS/);
+    assert.match(historyNotice(1, 30, 10), /1 snapshot older/);
   });
 });

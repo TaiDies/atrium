@@ -119,6 +119,20 @@ await verify(owner);
 }
 const ws = (await req('/api/workspaces', { cookie: owner.cookie })).data.workspaces[0].id;
 
+// --- guesses sent all at once are slowed down as a group
+{
+  const target = await signup('burst');
+  const timed = async () => {
+    const t = Date.now();
+    await req('/api/auth/login', { method: 'POST', body: { email: target.email, password: 'wrong-pass' } });
+    return Date.now() - t;
+  };
+  const times = (await Promise.all(Array.from({ length: 20 }, timed))).sort((x, y) => x - y);
+  check('20 parallel wrong guesses are slowed down as a group', times[0] < 1500 && times[19] >= 4000, `${times[0]}…${times[19]} ms`);
+  const real = await req('/api/auth/login', { method: 'POST', body: { email: target.email, password: target.password } });
+  check('…and the owner can still sign in afterwards', real.status === 200, `got ${real.status}`);
+}
+
 // --- sessions
 {
   const second = await req('/api/auth/login', { method: 'POST', body: { email: owner.email, password: owner.password } });
@@ -238,6 +252,44 @@ let member;
   for (let i = 0; i <= 50_000; i++) lots[`f${i}`] = new Uint8Array(0);
   const many = await upload(zipSync(lots));
   check('a .zip with too many entries is refused', many === 413, `got ${many}`);
+}
+
+// --- imports: one per person and a few on the whole server
+{
+  // An upload that trickles in, so its import holds a place for a while.
+  const slowImport = (user, workspace, ms) => {
+    const boundary = `----atrium${Math.random().toString(16).slice(2)}`;
+    const CRLF = '\r\n';
+    const head = [`--${boundary}`, 'Content-Disposition: form-data; name="file"; filename="slow.zip"', 'Content-Type: application/zip', '', ''].join(CRLF);
+    const tail = `${CRLF}--${boundary}--${CRLF}`;
+    const body = new ReadableStream({
+      async start(c) {
+        c.enqueue(new TextEncoder().encode(head));
+        await sleep(ms);
+        c.enqueue(zipSync({ 'hello.txt': strToU8('hi') }));
+        c.enqueue(new TextEncoder().encode(tail));
+        c.close();
+      },
+    });
+    return fetch(`${B}/api/workspaces/${workspace}/import-export`, {
+      method: 'POST',
+      duplex: 'half',
+      headers: { cookie: user.cookie, 'content-type': `multipart/form-data; boundary=${boundary}`, 'x-forwarded-for': freshIp() },
+      body,
+    }).then((r) => r.status);
+  };
+  const wsOf = async (u) => (await req('/api/workspaces', { cookie: u.cookie })).data.workspaces.find((w) => w.role === 'owner').id;
+  const second = await signup('importer2');
+  const third = await signup('importer3');
+  const a = slowImport(owner, ws, 2500);
+  const b = slowImport(second, await wsOf(second), 2500);
+  await sleep(600);
+  const sameAgain = await slowImport(owner, ws, 0);
+  const busy = await slowImport(third, await wsOf(third), 0);
+  check('a second import by the same person is refused while the first runs', sameAgain === 429, `got ${sameAgain}`);
+  check('an import beyond the server-wide limit is refused', busy === 429, `got ${busy}`);
+  const done = await Promise.all([a, b]);
+  check('…and the running imports finish normally', done.every((s) => s === 400), done.join(','));
 }
 
 // --- public form flooding
