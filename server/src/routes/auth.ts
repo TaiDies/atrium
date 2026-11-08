@@ -11,7 +11,7 @@ import { getSettings } from '../settings.js';
 import { limitsFor, usageFor } from '../limits.js';
 import { colorFor, email, HttpError, parse } from '../util.js';
 import { permissionsFor } from '../roles.js';
-import { limiter } from '../rateLimit.js';
+import { limiter, loginDelayMs } from '../rateLimit.js';
 
 const password = z.string().min(8, 'Password must be at least 8 characters').max(200);
 const name = z.string().trim().min(1, 'Name is required').max(80);
@@ -78,7 +78,10 @@ const mustVerify = verificationRequired;
 
 // Guessing passwords and codes: failed tries per address and per account, and new accounts per address.
 const failedByIp = limiter(30, 15 * 60_000);
-const failedByAccount = limiter(10, 15 * 60_000);
+// Wrong passwords for one account slow its sign-ins down instead of refusing them, so nobody can lock the
+// owner out by guessing from elsewhere (the per-address limit above still stops one place guessing).
+const failedByAccount = limiter(1000, 15 * 60_000);
+
 const signupsByIp = limiter(10, 60 * 60_000);
 const TOO_MANY = 'Too many tries. Wait a few minutes and try again.';
 
@@ -120,7 +123,9 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/login', async (req, reply) => {
     const body = parse(z.object({ email, password: z.string().min(1, 'Password is required') }), req.body);
-    if (failedByIp.blocked(req.ip) || failedByAccount.blocked(body.email)) throw new HttpError(429, TOO_MANY);
+    if (failedByIp.blocked(req.ip)) throw new HttpError(429, TOO_MANY);
+    const wait = loginDelayMs(failedByAccount.count(body.email));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
     const row = await one<SessionUser & { password_hash: string | null; email_verified_at: Date | null; disabled_at: Date | null }>(
       'select id, email, name, color, password_hash, email_verified_at, disabled_at from users where email = $1',
       [body.email],

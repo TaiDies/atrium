@@ -131,7 +131,7 @@ const mailBody = z.object({
 });
 
 export async function startAdminServer() {
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 1024 * 1024, trustProxy: true });
+  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 1024 * 1024, trustProxy: config.trustProxy });
   await app.register(cookie);
   app.setErrorHandler(handleError);
   await ensurePassword((msg) => app.log.warn(msg));

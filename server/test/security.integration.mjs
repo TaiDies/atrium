@@ -61,15 +61,25 @@ const opens = (url) =>
   check('security headers', r.headers.get('x-frame-options') === 'SAMEORIGIN' && r.headers.get('x-content-type-options') === 'nosniff');
 }
 
-// --- password guessing (per account, from many addresses)
+// --- password guessing from one address
 {
   let last;
-  for (let i = 0; i < 11; i++) last = await req('/api/auth/login', { method: 'POST', body: { email: `nobody-${stamp}@example.test`, password: 'wrong-pass' } });
-  check('11th wrong password for one account is refused', last.status === 429, `got ${last.status}`);
+  const ip = freshIp();
+  for (let i = 0; i < 31; i++) last = await req('/api/auth/login', { method: 'POST', body: { email: `nobody-${stamp}@example.test`, password: 'wrong-pass' }, ip });
+  check('31st wrong password from one address is refused', last.status === 429, `got ${last.status}`);
 }
 
 const owner = await signup('owner');
 await verify(owner);
+
+// --- someone guessing an account's password can't lock its owner out
+{
+  const attacker = freshIp();
+  for (let i = 0; i < 10; i++) await req('/api/auth/login', { method: 'POST', body: { email: owner.email, password: 'wrong-pass' }, ip: attacker });
+  const real = await req('/api/auth/login', { method: 'POST', body: { email: owner.email, password: owner.password } });
+  check('10 bad guesses from one address do not block the owner elsewhere', real.status === 200, `got ${real.status}`);
+  if (real.cookie) owner.cookie = real.cookie;
+}
 const ws = (await req('/api/workspaces', { cookie: owner.cookie })).data.workspaces[0].id;
 
 // --- sessions

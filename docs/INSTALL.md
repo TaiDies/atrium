@@ -222,6 +222,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `APP_PORT` | `3000` | Port the app is published on |
 | `POSTGRES_PASSWORD` | — | Database password (set before the first start) |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
+| `TRUST_PROXY` | local proxies | Which proxies may pass on the visitor's real address (for rate limits). Empty trusts only proxies on the same machine or a private network (your reverse proxy, the Docker network); `false` trusts none; a list like `203.0.113.7,10.0.0.0/8` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
 | `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
 | `MAX_UPLOAD_MB` | `25` | Largest upload |
 | `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |

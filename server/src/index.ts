@@ -49,7 +49,7 @@ import { SERVER_VERSION, startUpdateChecks } from './updates.js';
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
   bodyLimit: 2 * 1024 * 1024,
-  trustProxy: true,
+  trustProxy: config.trustProxy,
 });
 // Each request runs in its own context, so an API token limited to one workspace holds for all of it.
 app.addHook('onRequest', (_req, _reply, done) => runRequest(done));

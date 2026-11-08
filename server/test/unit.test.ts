@@ -4,9 +4,14 @@ import { describe, it } from 'node:test';
 import { runFormula } from '../../web/src/database/formula.ts';
 import { groupTogether } from '../../web/src/lib/groupTogether.ts';
 import { checkOutboundUrl, isPrivate } from '../src/netGuard.ts';
-import { limiter } from '../src/rateLimit.ts';
+import { limiter, loginDelayMs } from '../src/rateLimit.ts';
 
 describe('rate limits', () => {
+  it('slows sign-ins for a guessed account instead of refusing them', () => {
+    assert.equal(loginDelayMs(5), 0);
+    assert.equal(loginDelayMs(6), 500);
+    assert.equal(loginDelayMs(500), 5000, 'never more than 5 s');
+  });
   it('allows up to the limit, then blocks, per key', () => {
     const l = limiter(3, 60_000);
     assert.equal(l.take('a'), true);
