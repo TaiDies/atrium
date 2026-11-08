@@ -54,11 +54,12 @@ export async function endSessions(userId: string) {
 
 /**
  * A ticket for the live-editing connections only (the desktop and phone apps put it in the websocket
- * address, which can't carry the cookie). It can't be used for anything else, unlike the session.
+ * address, which can't carry the cookie). It can't be used for anything else, unlike the session, and
+ * lasts a few hours (the apps get a fresh one every hour).
  */
 export async function liveTicket(userId: string): Promise<string> {
   const row = await one<{ session_version: number }>('select session_version from users where id = $1', [userId]);
-  return jwt.sign({ sub: userId, v: row?.session_version ?? 0, use: 'live' }, config.sessionSecret, { expiresIn: '7d' });
+  return jwt.sign({ sub: userId, v: row?.session_version ?? 0, use: 'live' }, config.sessionSecret, { expiresIn: '4h' });
 }
 
 /** The person a session cookie (or, with kind "live", a live-editing ticket) belongs to. */
@@ -144,4 +145,33 @@ export function parseCookieHeader(header: string | undefined): Record<string, st
     }
   }
   return out;
+}
+
+/** Hosts the desktop and phone apps load their pages from (Tauri's custom protocol). */
+const APP_HOSTS = new Set(['app.localhost', 'tauri.localhost']);
+const APP_PROTOCOLS = new Set(['app:', 'tauri:']);
+
+/**
+ * Whether a websocket may connect from where it says it comes from. A browser always sends Origin, so a
+ * cookie connection must come from this server's own address (PUBLIC_URL or the Host it was reached at):
+ * another site can't use a visitor's cookie for live editing. A ticket connection (the apps) may also
+ * come from the apps' own origins. No Origin at all is a client outside a browser, which has no cookie
+ * to borrow.
+ */
+export function websocketOriginOk(headers: { origin?: string; host?: string }, viaTicket: boolean): boolean {
+  const origin = headers.origin;
+  if (!origin) return true;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  const own = new Set([headers.host?.toLowerCase()]);
+  if (config.publicUrl) own.add(new URL(config.publicUrl).host.toLowerCase());
+  if (own.has(url.host.toLowerCase())) return true;
+  // Development: the web app on another local port (Vite) talking to a server on this machine.
+  const local = (h?: string) => !!h && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(h);
+  if (local(url.host) && local(headers.host)) return true;
+  return viaTicket && (APP_HOSTS.has(url.hostname.toLowerCase()) || APP_PROTOCOLS.has(url.protocol));
 }

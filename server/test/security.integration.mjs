@@ -44,9 +44,9 @@ const verify = async (u) => {
   if (v.cookie) u.cookie = v.cookie;
   return v.status;
 };
-const opens = (url) =>
+const opens = (url, headers) =>
   new Promise((resolve) => {
-    const ws = new WebSocket(url);
+    const ws = headers ? new WebSocket(url, { headers }) : new WebSocket(url);
     ws.onopen = () => {
       ws.close();
       resolve(true);
@@ -99,6 +99,14 @@ const ws = (await req('/api/workspaces', { cookie: owner.cookie })).data.workspa
   check('a live ticket is not a session', !!ticket && asSession.status === 401);
   check('live socket opens with a ticket', await opens(`${WS_BASE}/live?ticket=${encodeURIComponent(ticket)}`));
   check('live socket refuses a session token in the address', !(await opens(`${WS_BASE}/live?ticket=${encodeURIComponent(session)}`)));
+  const own = new URL(B).origin;
+  check('a cookie websocket from this server opens', await opens(`${WS_BASE}/live`, { cookie: owner.cookie, origin: own }));
+  check('a cookie websocket from another site is refused', !(await opens(`${WS_BASE}/live`, { cookie: owner.cookie, origin: 'https://evil.example' })));
+  check('…on /collab too', !(await opens(`${WS_BASE}/collab`, { cookie: owner.cookie, origin: 'https://evil.example' })));
+  check('a ticket websocket from the app opens', await opens(`${WS_BASE}/live?ticket=${encodeURIComponent(ticket)}`, { origin: 'http://app.localhost' }));
+  check('a ticket websocket from another site is refused', !(await opens(`${WS_BASE}/live?ticket=${encodeURIComponent(ticket)}`, { origin: 'https://evil.example' })));
+  const exp = JSON.parse(Buffer.from(ticket.split('.')[1], 'base64url').toString()).exp;
+  check('live tickets last a few hours', exp - Date.now() / 1000 <= 4 * 3600 + 60, `${Math.round((exp - Date.now() / 1000) / 3600)} h`);
 }
 
 // --- invitations and accounts made early by someone else

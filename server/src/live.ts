@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { parseCookieHeader, sessionToken, userFromToken } from './auth.js';
+import { parseCookieHeader, sessionToken, userFromToken, websocketOriginOk } from './auth.js';
 import { meetingAccess, type MeetingPerms } from './meetingAccess.js';
 
 // The live channel (WebSocket /live): new chat messages and changes reach people as they happen, and
@@ -73,6 +73,11 @@ export function attachLive(server: HttpServer) {
     if (url.pathname !== '/live') return;
     const cookie = sessionToken(parseCookieHeader(req.headers.cookie));
     const ticket = url.searchParams.get('ticket') ?? undefined;
+    if (!websocketOriginOk(req.headers, !cookie)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const user = await (cookie ? userFromToken(cookie) : userFromToken(ticket, 'live')).catch(() => null);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
