@@ -3,6 +3,8 @@
 // works exactly as on the web. Only the live-editing connection goes to the server directly, and the
 // app tells us where that is and which session to use.
 
+import { type RenewReason, shouldRenewTicket } from './ticketRenewal';
+
 export interface NativeInfo {
   /** The chosen server, e.g. "http://192.168.1.20:3000"; null until one is picked. */
   server: string | null;
@@ -81,19 +83,34 @@ async function fetchTicket(): Promise<string | null> {
   }
 }
 
-// Live tickets last a few hours, so the app quietly gets a fresh one every hour; connections pick it up
-// the next time they connect (see onTicketRenewed).
+// Live tickets last a few hours, so the app quietly gets a fresh one every hour, when the window comes
+// back into focus or the network comes back (after the computer slept, say), and straight away when a
+// live connection is refused. Connections pick it up the next time they connect (see onTicketRenewed).
 const renewed = new Set<() => void>();
 let renewal: ReturnType<typeof setInterval> | undefined;
+let lastRenewed = Date.now();
+let renewing: Promise<void> | null = null;
+
+/** Gets a fresh live ticket if `reason` calls for one now (see shouldRenewTicket). */
+export function renewTicket(reason: RenewReason): Promise<void> {
+  if (!info?.server || !shouldRenewTicket(reason, lastRenewed, Date.now())) return Promise.resolve();
+  renewing ??= (async () => {
+    const ticket = await fetchTicket();
+    if (ticket && info) {
+      info.ticket = ticket;
+      lastRenewed = Date.now();
+      renewed.forEach((cb) => cb());
+    }
+  })().finally(() => (renewing = null));
+  return renewing;
+}
+
 function startTicketRenewal() {
   if (renewal) return;
-  renewal = setInterval(async () => {
-    if (!info?.server) return;
-    const ticket = await fetchTicket();
-    if (!ticket) return;
-    info.ticket = ticket;
-    renewed.forEach((cb) => cb());
-  }, 60 * 60_000);
+  lastRenewed = Date.now();
+  renewal = setInterval(() => void renewTicket('timer'), 60 * 60_000);
+  window.addEventListener('focus', () => void renewTicket('focus'));
+  window.addEventListener('online', () => void renewTicket('online'));
 }
 
 /** Calls `cb` whenever the app gets a fresh live ticket; returns the way to stop. */

@@ -10,6 +10,7 @@ import { safeHtml } from '../../web/src/office/slides/safeHtml.ts';
 import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs';
 import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
 import { historyNotice } from '../src/historyNotice.ts';
+import { shouldRenewTicket } from '../../web/src/lib/ticketRenewal.ts';
 import { fetch as undiciFetch } from 'undici';
 import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -240,5 +241,22 @@ describe('page history notice', () => {
     assert.match(line, /newest 10/);
     assert.match(line, /HISTORY_DAYS/);
     assert.match(historyNotice(1, 30, 10), /1 snapshot older/);
+  });
+});
+
+describe('live ticket renewal', () => {
+  const min = 60_000;
+  it('renews on the hourly timer every time', () => assert.equal(shouldRenewTicket('timer', 0, 1), true));
+  it('renews on focus once the ticket is half an hour old (a computer waking from sleep)', () => {
+    assert.equal(shouldRenewTicket('focus', 0, 10 * min), false);
+    assert.equal(shouldRenewTicket('focus', 0, 5 * 60 * min), true);
+  });
+  it('renews when back online after a minute', () => {
+    assert.equal(shouldRenewTicket('online', 0, 30_000), false);
+    assert.equal(shouldRenewTicket('online', 0, 2 * min), true);
+  });
+  it('renews straight away when a connection is refused, but not in a loop', () => {
+    assert.equal(shouldRenewTicket('refused', 0, 20_000), true);
+    assert.equal(shouldRenewTicket('refused', 0, 5_000), false);
   });
 });
