@@ -25,6 +25,29 @@ export async function recordVersion(pageId: string, rowId: string | null, state:
   );
 }
 
+/** How long older snapshots are kept (the newest few of each page are always kept). */
+const HISTORY_DAYS = Math.max(1, Number(process.env.HISTORY_DAYS ?? 90) || 90);
+const ALWAYS_KEEP = 10;
+
+/** Removes snapshots older than HISTORY_DAYS, beyond the newest few of each page and card. */
+export async function pruneHistory(): Promise<number> {
+  const res = await query<{ id: string }>(
+    `delete from page_versions where id in (
+       select id from (
+         select id, created_at, row_number() over (partition by page_id, row_id order by created_at desc) as n from page_versions
+       ) v where v.n > ${ALWAYS_KEEP} and v.created_at < now() - make_interval(days => ${HISTORY_DAYS})
+     ) returning id`,
+  );
+  return res.length;
+}
+
+/** Prunes now and then once a day. */
+export function startHistoryPruning(log: (msg: string) => void) {
+  const run = () => pruneHistory().then((n) => n && log(`Removed ${n} old page history snapshots`)).catch(() => {});
+  setTimeout(run, 60_000).unref();
+  setInterval(run, 24 * 3600_000).unref();
+}
+
 const params = z.object({ id: z.uuid() });
 const rowQuery = z.object({ row: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() });
 

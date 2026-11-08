@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { type Access, accessMap, atLeast, requireMember, requirePage } from '../access.js';
+import { type Access, accessMap, atLeast, requireFileEditor, requireMember, requirePage } from '../access.js';
 import { requireUser } from '../auth.js';
 import {
   blankPdf,
@@ -174,7 +174,8 @@ export async function noteRoutes(app: FastifyInstance) {
   app.patch('/files/:id', async (req) => {
     const { id } = parse(idParams, req.params);
     const file = await fileOr404(id);
-    await requireMember(req.user.id, file.workspace_id);
+    // Renaming needs the uploader, a workspace owner, or edit access to a page the file is on.
+    await requireFileEditor(req.user.id, id);
     const body = parse(z.object({ name: z.string().trim().min(1).max(255) }), req.body);
     await query('update files set filename = $2, updated_at = now() where id = $1', [id, body.name]);
     // Keep the name shown on attachment blocks in step.

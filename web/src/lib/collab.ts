@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
 import type { User } from './api';
-import { collabUrl } from './native';
+import { collabUrl, onTicketRenewed } from './native';
 import { checkConnection, isOnline, onConnectionChange, scope } from './offline';
 
 export interface Peer {
@@ -84,9 +84,15 @@ export function useCollab(pageId: string, user: User, onPageUpdated: () => void)
     setDenied(false);
     setStatus('connecting');
     setSession({ doc, provider });
+    // In the apps, reconnections use the latest live ticket.
+    const stopRenewal = onTicketRenewed(() => {
+      const socket = provider.configuration.websocketProvider as unknown as { configuration: { url: string } };
+      socket.configuration.url = collabUrl();
+    });
     return () => {
       clearTimeout(fallback);
       stopWatching();
+      stopRenewal();
       provider.destroy();
       void local.destroy();
       doc.destroy();

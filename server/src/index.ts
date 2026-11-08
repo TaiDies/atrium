@@ -27,6 +27,7 @@ import { mediaRoutes } from './routes/media.js';
 import { statsRoutes } from './routes/stats.js';
 import { startScheduler } from './scheduler.js';
 import { backfillDocIndex } from './docIndex.js';
+import { startHistoryPruning } from './routes/history.js';
 import { pageRoutes } from './routes/pages.js';
 import { publicRoutes } from './routes/public.js';
 import { workspaceRoutes } from './routes/workspaces.js';
@@ -49,7 +50,7 @@ import { SERVER_VERSION, startUpdateChecks } from './updates.js';
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
   bodyLimit: 2 * 1024 * 1024,
-  trustProxy: true,
+  trustProxy: config.trustProxy,
 });
 // Each request runs in its own context, so an API token limited to one workspace holds for all of it.
 app.addHook('onRequest', (_req, _reply, done) => runRequest(done));
@@ -138,6 +139,8 @@ await migrate();
 // Record which pages use which files, events and whiteboards, and every dated card and block; runs in the background.
 backfillDocIndex().catch((err) => app.log.error(err, 'Could not index documents'));
 backfillFileText().catch((err) => app.log.error(err, 'Could not read file text'));
+// Old page history is thinned out once a day.
+startHistoryPruning((msg) => app.log.info(msg));
 // Move repeating cards and events to their next date (checked every minute).
 startScheduler();
 startUpdateChecks();

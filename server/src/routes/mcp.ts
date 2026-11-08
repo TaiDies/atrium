@@ -63,12 +63,20 @@ async function visiblePages(ctx: Ctx) {
   return rows.filter((p) => (access.get(p.id) ?? 'none') !== 'none').map((p) => ({ ...p, title: p.title || 'Untitled', canEdit: access.get(p.id) !== 'view' }));
 }
 
-/** A note by its id, or by its title (exact first, then a close match). */
-async function findNote(ctx: Ctx, args: Record<string, unknown>) {
+/**
+ * A note by its id, or by its title (exact first, then a close match). With `exact` (deleting, replacing
+ * all of a note), only the exact id or one note with exactly that title will do, never a close match.
+ */
+async function findNote(ctx: Ctx, args: Record<string, unknown>, { exact = false } = {}) {
   const pages = await visiblePages(ctx);
   const id = str(args.id).trim();
   const title = str(args.title).trim().toLowerCase();
-  const found = (id && UUID.test(id) && pages.find((p) => p.id === id)) || (title && (pages.find((p) => p.title.toLowerCase() === title) ?? pages.find((p) => p.title.toLowerCase().includes(title))));
+  if (exact && !id && title) {
+    const same = pages.filter((p) => p.title.toLowerCase() === title);
+    if (same.length > 1) throw new Error(`${same.length} notes are called "${str(args.title)}". Pass the id of the one you mean (search_notes or list_notes show ids).`);
+  }
+  const close = exact ? undefined : pages.find((p) => p.title.toLowerCase().includes(title));
+  const found = (id && UUID.test(id) && pages.find((p) => p.id === id)) || (title && (pages.find((p) => p.title.toLowerCase() === title) ?? close));
   if (!found) throw new Error(`No note found for ${id ? `id ${id}` : `"${str(args.title)}"`}. Use search_notes or list_notes to find it.`);
   return { note: found, pages };
 }
@@ -255,7 +263,7 @@ const TOOLS: Tool[] = [
       },
     },
     async run(ctx, args) {
-      const { note, pages } = await findNote(ctx, args);
+      const { note, pages } = await findNote(ctx, args, { exact: args.mode === 'replace' });
       if (!note.canEdit) throw new Error(`[[${note.title}]] is read-only for you.`);
       if (note.type !== 'document') throw new Error(`[[${note.title}]] is a database, not a document — it can be read but not written as Markdown.`);
       const parts: string[] = [];
@@ -304,7 +312,7 @@ const TOOLS: Tool[] = [
     description: 'Move a note (and the notes inside it) to the trash. It can be restored from the trash in the app.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } },
     async run(ctx, args) {
-      const { note } = await findNote(ctx, args);
+      const { note } = await findNote(ctx, args, { exact: true });
       const res = await ctx.inject({ method: 'POST', url: `/api/pages/${note.id}/trash`, headers: { authorization: ctx.auth, 'content-type': 'application/json' }, payload: '{}' });
       if (res.statusCode >= 300) throw new Error((res.json() as { error?: string }).error ?? 'Could not delete it');
       return `Moved [[${note.title}]] to the trash.`;

@@ -29,6 +29,13 @@ export const config = {
   /** Whether addresses people type in (webhooks, AI services) may point at the local network. Turn off on hosted servers. */
   allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS !== 'false',
   publicUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, ''),
+  /**
+   * Which proxies may tell the server the visitor's real address (X-Forwarded-For). By default only ones on
+   * this machine or a private network (a reverse proxy or the Docker network), so nobody reaching the
+   * server directly can fake their address. TRUST_PROXY=false trusts none; a list of addresses/ranges
+   * (e.g. "203.0.113.7,10.0.0.0/8") trusts those; TRUST_PROXY=true trusts any (only behind a proxy you run).
+   */
+  trustProxy: trustProxySetting(process.env.TRUST_PROXY),
   maxUploadBytes: Number(process.env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
   /** Largest export .zip that can be imported. */
   maxImportBytes: Number(process.env.MAX_IMPORT_MB ?? 1024) * 1024 * 1024,
@@ -60,3 +67,11 @@ export const config = {
     enabled: process.env.ADMIN_PANEL !== 'false',
   },
 };
+
+function trustProxySetting(value: string | undefined): boolean | string {
+  const v = value?.trim();
+  if (!v) return 'loopback,linklocal,uniquelocal';
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return v;
+}

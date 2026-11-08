@@ -8,9 +8,14 @@ export interface Limiter {
   hit(key: string): void;
   /** Counts one try and says whether it was still allowed. */
   take(key: string): boolean;
+  /** How many tries the key made in the window. */
+  count(key: string): number;
   /** Forgets the key (e.g. after a successful sign-in). */
   clear(key: string): void;
 }
+
+/** How long to hold a sign-in for an account with this many recent wrong passwords: nothing for the first 5, then up to 5 s. */
+export const loginDelayMs = (failures: number) => (failures <= 5 ? 0 : Math.min(5000, (failures - 5) * 500));
 
 const all: { hits: Map<string, number[]>; windowMs: number }[] = [];
 
@@ -26,6 +31,7 @@ export function limiter(max: number, windowMs: number): Limiter {
   };
   return {
     blocked: (key) => recent(key).length >= max,
+    count: (key) => recent(key).length,
     hit: (key) => {
       const list = recent(key);
       list.push(Date.now());

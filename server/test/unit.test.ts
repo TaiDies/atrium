@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runFormula } from '../../web/src/database/formula.ts';
 import { groupTogether } from '../../web/src/lib/groupTogether.ts';
-import { checkOutboundUrl, isPrivate } from '../src/netGuard.ts';
-import { limiter } from '../src/rateLimit.ts';
+import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { JSDOM } from 'jsdom';
+import { safeHtml } from '../../web/src/office/slides/safeHtml.ts';
+import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs';
+import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
+import { fetch as undiciFetch } from 'undici';
+import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { zipSync } from 'fflate';
+import { limiter, loginDelayMs } from '../src/rateLimit.ts';
+import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
+  it('slows sign-ins for a guessed account instead of refusing them', () => {
+    assert.equal(loginDelayMs(5), 0);
+    assert.equal(loginDelayMs(6), 500);
+    assert.equal(loginDelayMs(500), 5000, 'never more than 5 s');
+  });
   it('allows up to the limit, then blocks, per key', () => {
     const l = limiter(3, 60_000);
     assert.equal(l.take('a'), true);
@@ -85,5 +102,104 @@ describe('slash menu grouping', () => {
     const out = groupTogether([{ group: 'A' }, { group: 'B' }, { group: 'A' }, { group: 'B' }]);
     const runs = out.map((i) => i.group).filter((g, i, a) => i === 0 || a[i - 1] !== g);
     assert.equal(new Set(runs).size, runs.length);
+  });
+});
+
+describe('zip import unpacking', () => {
+  const withZip = async (files: Record<string, Uint8Array>, run: (zip: string, dir: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzip-test-'));
+    try {
+      const zip = join(dir, 'in.zip');
+      writeFileSync(zip, zipSync(files));
+      await run(zip, dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  it('unpacks each entry to its own file on disk', () =>
+    withZip({ 'a.txt': new TextEncoder().encode('hello'), 'sub/b.bin': new Uint8Array(70_000).fill(7) }, async (zip, dir) => {
+      const out = await unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 10 });
+      assert.equal(readFileSync(out.get('a.txt')!.file, 'utf8'), 'hello');
+      assert.equal(out.get('sub/b.bin')!.size, 70_000);
+    }));
+  it('copes with thousands of tiny entries', () => {
+    const lots: Record<string, Uint8Array> = {};
+    for (let i = 0; i < 5000; i++) lots[`f${i}`] = new Uint8Array(i % 2);
+    return withZip(lots, async (zip, dir) => {
+      const out = await unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 10_000 });
+      assert.equal(out.size, 5000);
+    });
+  });
+  it('refuses more entries than allowed', () =>
+    withZip({ a: new Uint8Array(1), b: new Uint8Array(1), c: new Uint8Array(1) }, async (zip, dir) => {
+      await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 2 }), (e: { status?: number }) => e.status === 413);
+    }));
+  it('stops a small zip that unpacks to too much, counting real bytes', () =>
+    withZip({ zeros: new Uint8Array(5_000_000) }, async (zip, dir) => {
+      await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1_000_000, maxEntries: 10 }), (e: { status?: number }) => e.status === 413);
+    }));
+  it('refuses something that is not a zip', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzip-test-'));
+    try {
+      writeFileSync(join(dir, 'x.zip'), 'not a zip at all');
+      const out = await unzipToDisk(join(dir, 'x.zip'), dir, { maxBytes: 1e6, maxEntries: 10 }).catch((e) => e);
+      assert.ok(out instanceof Map ? out.size === 0 : out.status === 400);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('outbound connections', () => {
+  it('check the address they actually connect to', async () => {
+    const server = createServer((_req, res) => res.end('ok')).listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      // "localhost" resolves to a loopback address at connect time: refused when private addresses aren't allowed.
+      const blocked = await undiciFetch(`http://localhost:${port}/`, { dispatcher: guardedAgent(false) }).then(
+        () => null,
+        (e: { cause?: { code?: string } }) => e.cause?.code,
+      );
+      assert.equal(blocked, 'EBLOCKEDADDRESS');
+      const allowed = await undiciFetch(`http://localhost:${port}/`, { dispatcher: guardedAgent(true) });
+      assert.equal(await allowed.text(), 'ok');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe('slide text cleaning', () => {
+  const purifier = createDOMPurify(new JSDOM('').window as never);
+  const clean = (html: string) => safeHtml(html, purifier as never);
+  it('keeps formatting', () => {
+    assert.equal(clean('<b>Bold</b> <i>and</i> <span style="color: red">red</span>'), '<b>Bold</b> <i>and</i> <span style="color: red">red</span>');
+  });
+  it('removes scripts, event handlers and active content', () => {
+    const out = clean('<img src=x onerror="alert(1)"><script>alert(2)</script><a href="javascript:alert(3)">x</a><iframe src="https://evil.example"></iframe><form><input></form><style>*{}</style>');
+    assert.doesNotMatch(out, /onerror|<script|javascript:|<iframe|<form|<input|<style/i);
+  });
+});
+
+describe('ffmpeg input', () => {
+  it('reads only local files in real video and audio containers', () => {
+    const args = ffmpegInput('/data/upload');
+    assert.deepEqual(args.slice(0, 4), ['-protocol_whitelist', 'file', '-format_whitelist', INPUT_FORMATS]);
+    assert.equal(args.at(-1), '/data/upload');
+    for (const risky of ['hls', 'concat', 'image2', 'lavfi', 'tee', 'data']) assert.ok(!INPUT_FORMATS.split(',').includes(risky), risky);
+  });
+  it('refuses a playlist pretending to be a video (when ffmpeg is installed)', (t) => {
+    const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
+    if (spawnSync(ffmpeg, ['-version']).error) return t.skip('ffmpeg is not installed');
+    const dir = mkdtempSync(join(tmpdir(), 'ffmpeg-test-'));
+    try {
+      const fake = join(dir, 'video.mp4');
+      writeFileSync(fake, ['#EXTM3U', '#EXT-X-TARGETDURATION:1', '#EXTINF:1,', 'http://127.0.0.1:9/segment.ts', '#EXT-X-ENDLIST', ''].join('\n'));
+      const run = spawnSync(ffmpeg, ['-hide_banner', ...ffmpegInput(fake), '-f', 'null', '-'], { encoding: 'utf8', timeout: 20_000 });
+      assert.notEqual(run.status, 0, 'ffmpeg should refuse it');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

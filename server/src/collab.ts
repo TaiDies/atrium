@@ -5,7 +5,7 @@ import { Hocuspocus } from '@hocuspocus/server';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { accessMap, atLeast } from './access.js';
-import { parseCookieHeader, sessionToken, userFromToken, type SessionUser } from './auth.js';
+import { parseCookieHeader, sessionToken, userFromToken, websocketOriginOk, type SessionUser } from './auth.js';
 import { one, query } from './db.js';
 import { updateDocIndex } from './docIndex.js';
 import { recordVersion } from './routes/history.js';
@@ -525,6 +525,11 @@ export function attachCollab(server: HttpServer) {
     // The web app signs in with its cookie; the desktop and phone apps pass a live-editing ticket instead.
     const cookie = sessionToken(parseCookieHeader(req.headers.cookie));
     const ticket = url.searchParams.get('ticket') ?? undefined;
+    if (!websocketOriginOk(req.headers, !cookie)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const user = await (cookie ? userFromToken(cookie) : userFromToken(ticket, 'live')).catch(() => null);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');

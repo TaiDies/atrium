@@ -31,6 +31,7 @@ services:
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
       PUBLIC_URL: ${PUBLIC_URL:-}
       ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       MAX_IMPORT_MB: ${MAX_IMPORT_MB:-1024}
       # Time zone for "today" (repeating tasks reset at midnight here), e.g. Europe/London.
@@ -52,6 +53,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_PANEL: ${ADMIN_PANEL:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      HISTORY_DAYS: ${HISTORY_DAYS:-90}
       # Where new versions are looked for (GitHub owner/repo); the admin panel shows and can install them.
       UPDATE_REPO: ${UPDATE_REPO:-TaiDies/atrium}
     ports:

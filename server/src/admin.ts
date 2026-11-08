@@ -131,7 +131,7 @@ const mailBody = z.object({
 });
 
 export async function startAdminServer() {
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 1024 * 1024, trustProxy: true });
+  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 1024 * 1024, trustProxy: config.trustProxy });
   await app.register(cookie);
   app.setErrorHandler(handleError);
   await ensurePassword((msg) => app.log.warn(msg));
@@ -165,7 +165,21 @@ export async function startAdminServer() {
                     (select count(*)::int from files) as files,
                     (select coalesce(sum(size), 0)::text from files) as storage`,
           );
-          return { ...counts!, storage: Number(counts!.storage), appName: config.appName };
+          // Settings worth a warning on this server.
+          const notices: { id: string; text: string }[] = [];
+          if (!(await mailEnabled())) {
+            notices.push({
+              id: 'no-email',
+              text: 'Email isn’t set up, so invitations can’t be confirmed: an invitation can be claimed by whoever signs up first with the invited address. Set up email (Sign-ups & security) before inviting people you don’t control the address of.',
+            });
+          }
+          if (config.allowPrivateUrls) {
+            notices.push({
+              id: 'private-urls',
+              text: 'ALLOW_PRIVATE_URLS is on: webhooks and AI service addresses may point at this server’s local network. That’s fine for a home or company server, but set ALLOW_PRIVATE_URLS=false on a shared or hosted server.',
+            });
+          }
+          return { ...counts!, storage: Number(counts!.storage), appName: config.appName, notices };
         });
 
         // ----- accounts -----

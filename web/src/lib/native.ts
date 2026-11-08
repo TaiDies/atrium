@@ -66,14 +66,40 @@ export async function loadNative(): Promise<NativeInfo | null> {
     info = null;
   }
   if (info?.server) {
-    try {
-      const t = await fetch('/api/auth/live-ticket', { cache: 'no-store', credentials: 'same-origin' });
-      info.ticket = t.ok ? ((await t.json()) as { ticket: string }).ticket : null;
-    } catch {
-      info.ticket = null;
-    }
+    info.ticket = await fetchTicket();
+    startTicketRenewal();
   }
   return info;
+}
+
+async function fetchTicket(): Promise<string | null> {
+  try {
+    const t = await fetch('/api/auth/live-ticket', { cache: 'no-store', credentials: 'same-origin' });
+    return t.ok ? ((await t.json()) as { ticket: string }).ticket : null;
+  } catch {
+    return null;
+  }
+}
+
+// Live tickets last a few hours, so the app quietly gets a fresh one every hour; connections pick it up
+// the next time they connect (see onTicketRenewed).
+const renewed = new Set<() => void>();
+let renewal: ReturnType<typeof setInterval> | undefined;
+function startTicketRenewal() {
+  if (renewal) return;
+  renewal = setInterval(async () => {
+    if (!info?.server) return;
+    const ticket = await fetchTicket();
+    if (!ticket) return;
+    info.ticket = ticket;
+    renewed.forEach((cb) => cb());
+  }, 60 * 60_000);
+}
+
+/** Calls `cb` whenever the app gets a fresh live ticket; returns the way to stop. */
+export function onTicketRenewed(cb: () => void): () => void {
+  renewed.add(cb);
+  return () => void renewed.delete(cb);
 }
 
 /** Where live editing connects: this site's /collab on the web, the chosen server in the apps. */

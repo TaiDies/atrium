@@ -14,7 +14,7 @@ import { getSettings, setSetting, type UpdateSettings } from './settings.js';
 // leaves it a request in the shared data folder; the updater pulls the new version, rebuilds the app
 // and writes back how it went.
 
-export const SERVER_VERSION = '1.10.2';
+export const SERVER_VERSION = '1.11.0';
 export const UPDATE_REPO = process.env.UPDATE_REPO || 'TaiDies/atrium';
 
 const dir = () => path.join(config.dataDir, 'update');

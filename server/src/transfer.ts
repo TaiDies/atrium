@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { strToU8, zipSync, type Zippable } from 'fflate';
+import { z } from 'zod';
 import * as Y from 'yjs';
 import { type Access, accessMap } from './access.js';
 import { DATABASE_TYPES, extractText, liveElementCount } from './collab.js';
@@ -9,6 +11,7 @@ import { config } from './config.js';
 import { one, query, tx } from './db.js';
 import { updateDocIndex } from './docIndex.js';
 import { databaseToCsv, docToMarkdown } from './readable.js';
+import { unzipToDisk } from './unzipDisk.js';
 import { HttpError } from './util.js';
 
 // Exporting pages (one, with or without its sub-pages, or a whole workspace) to a .zip that this app
@@ -334,32 +337,102 @@ function remapDoc(doc: Y.Doc, map: Map<string, string>) {
 /** The most an export .zip may unpack to (its files and pages together), and how many entries it may hold. */
 const MAX_UNPACKED = Math.min(2 * config.maxImportBytes, 1024 ** 3);
 const MAX_ENTRIES = 50_000;
+/** The list of pages, files and events inside (page contents are in it, so it can be large, but not this large). */
+const MAX_MANIFEST = 256 * 1024 * 1024;
 
-/** Reads an export .zip into `workspaceId`, under `parentId` (or at the top). Returns the new top-level pages. */
-export async function importExport(userId: string, workspaceId: string, zipBytes: Uint8Array, parentId: string | null) {
-  let entries: Record<string, Uint8Array>;
-  // A small .zip can unpack to something enormous: add up what each entry says it unpacks to (fflate
-  // won't write past that) and refuse before unpacking anything when it's too much.
-  let unpacked = 0;
-  let count = 0;
-  const tooBig = new HttpError(413, 'This .zip unpacks to too much to import here');
+const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+const many = <T extends z.ZodType>(item: T) => z.array(item).max(MAX_ENTRIES);
+/** What an export's manifest must look like before anything in it is used. */
+const manifestSchema = z.object({
+  format: z.literal(EXPORT_FORMAT),
+  version: z.literal(1),
+  exportedAt: z.string().max(64),
+  source: z.object({ workspace: z.string().max(500), scope: z.enum(['page', 'pages', 'workspace']) }),
+  pages: many(
+    z.object({
+      id: uuid,
+      parentId: uuid.nullable(),
+      type: z.enum(['document', ...DATABASE_TYPES] as [string, ...string[]]),
+      title: z.string().max(2000),
+      icon: z.string().max(2000),
+      cover: z.string().max(4000).nullable(),
+      position: z.number().finite(),
+      state: z.string().nullable(),
+      rows: many(z.object({ rowId: z.string().min(1).max(64), state: z.string() })),
+    }),
+  ),
+  files: many(
+    z.object({
+      id: uuid,
+      name: z.string().max(1000),
+      mimeType: z.string().max(255),
+      isNote: z.boolean(),
+      path: z.string().max(1000),
+      annotations: z.string().nullable(),
+    }),
+  ),
+  events: many(
+    z.object({
+      id: uuid,
+      title: z.string().max(2000),
+      description: z.string().max(200_000),
+      startDate: z.string().max(32),
+      startTime: z.string().max(32).nullable(),
+      endDate: z.string().max(32).nullable(),
+      endTime: z.string().max(32).nullable(),
+      color: z.string().max(32),
+      status: z.string().max(32).nullable(),
+      repeat: z.unknown(),
+      paths: z.unknown().optional(),
+      pathState: z.unknown().optional(),
+    }),
+  ),
+  whiteboards: many(z.object({ id: uuid, title: z.string().max(2000), state: z.string().nullable() })),
+});
+
+/**
+ * Reads an export .zip (a file on disk) into `workspaceId`, under `parentId` (or at the top). It's unpacked
+ * to a temporary folder entry by entry, never all in memory, and the folder is removed afterwards.
+ * Returns the new top-level pages.
+ */
+export async function importExport(userId: string, workspaceId: string, zipPath: string, parentId: string | null) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atrium-import-'));
   try {
-    entries = unzipSync(zipBytes, {
-      filter: (f) => {
-        unpacked += f.originalSize;
-        count++;
-        if (unpacked > MAX_UNPACKED || count > MAX_ENTRIES) throw tooBig;
-        return true;
-      },
-    });
-  } catch (err) {
-    if (err === tooBig) throw err;
-    throw new HttpError(400, 'That isn’t a valid .zip file');
+    return await importFrom(userId, workspaceId, zipPath, dir, parentId);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
-  const raw = entries[MANIFEST];
+}
+
+/** The same, for a .zip already in memory (templates, which are kept in the database). */
+export async function importExportBytes(userId: string, workspaceId: string, zipBytes: Uint8Array, parentId: string | null) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atrium-template-'));
+  try {
+    const zipPath = path.join(dir, 'template.zip');
+    await writeFile(zipPath, zipBytes);
+    return await importExport(userId, workspaceId, zipPath, parentId);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function importFrom(userId: string, workspaceId: string, zipPath: string, dir: string, parentId: string | null) {
+  const entries = await unzipToDisk(zipPath, dir, { maxBytes: MAX_UNPACKED, maxEntries: MAX_ENTRIES });
+  const raw = entries.get(MANIFEST);
   if (!raw) throw new HttpError(400, 'This .zip wasn’t exported from this app');
-  const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as Manifest;
-  if (manifest.format !== EXPORT_FORMAT || manifest.version !== 1) throw new HttpError(400, 'This export is from a newer version of the app');
+  if (raw.size > MAX_MANIFEST) throw new HttpError(413, 'This export is too large to import here');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(raw.file, 'utf8'));
+  } catch {
+    throw new HttpError(400, 'This export is damaged');
+  }
+  if ((parsed as { format?: unknown })?.format === EXPORT_FORMAT && (parsed as { version?: unknown }).version !== 1) {
+    throw new HttpError(400, 'This export is from a newer version of the app');
+  }
+  const checked = manifestSchema.safeParse(parsed);
+  if (!checked.success) throw new HttpError(400, 'This .zip wasn’t exported from this app, or it is damaged');
+  const manifest = checked.data as Manifest;
 
   const map = new Map<string, string>();
   for (const p of manifest.pages) map.set(p.id.toLowerCase(), randomUUID());
@@ -375,9 +448,9 @@ export async function importExport(userId: string, workspaceId: string, zipBytes
   const written: string[] = [];
   try {
     for (const f of manifest.files) {
-      const bytes = entries[f.path];
-      if (!bytes) continue;
-      await writeFile(path.join(config.uploadDir, id(f.id)), bytes);
+      const entry = entries.get(f.path);
+      if (!entry) continue;
+      await copyFile(entry.file, path.join(config.uploadDir, id(f.id)));
       written.push(id(f.id));
     }
 
@@ -392,7 +465,7 @@ export async function importExport(userId: string, workspaceId: string, zipBytes
           userId,
           f.name.slice(0, 255),
           f.mimeType,
-          entries[f.path].length,
+          entries.get(f.path)!.size,
           f.isNote,
         ]);
         if (f.annotations) await c.query('insert into file_annotations (file_id, state) values ($1, $2)', [id(f.id), Buffer.from(f.annotations, 'base64')]);

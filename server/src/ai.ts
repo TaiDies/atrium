@@ -5,7 +5,7 @@ import { config } from './config.js';
 import { one } from './db.js';
 import { getSettings } from './settings.js';
 import { HttpError } from './util.js';
-import { checkOutboundUrl } from './netGuard.js';
+import { checkOutboundUrl, outboundFetch } from './netGuard.js';
 
 // The AI assistant's connection to a model. People can bring their own key; the admin can also set one
 // for everybody, and then decides whether people may still use their own. Keys are stored encrypted
@@ -157,8 +157,9 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
 async function postJson(url: string, headers: Record<string, string>, body: unknown) {
   let res: Response;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
-  } catch {
+    res = await outboundFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' }, { private: 'allow', what: 'AI service address' });
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
     throw new HttpError(502, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
   }
   const data = (await res.json().catch(() => null)) as Record<string, any> | null;
@@ -229,11 +230,11 @@ export async function listModels(c: Omit<Connection, 'source'>): Promise<string[
   const base = trimSlash(c.baseUrl || (gemini ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'));
   let res: Response;
   try {
-    res = await fetch(`${base}/models`, {
+    res = await outboundFetch(`${base}/models`, {
       headers: gemini ? (c.key ? { 'x-goog-api-key': c.key } : {}) : c.key ? { Authorization: `Bearer ${c.key}` } : {},
       signal: AbortSignal.timeout(20_000),
       redirect: 'error',
-    });
+    }, { private: 'allow', what: 'AI service address' });
   } catch {
     throw new HttpError(502, `Couldn't reach ${new URL(base).host}`);
   }

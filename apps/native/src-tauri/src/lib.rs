@@ -78,11 +78,53 @@ impl AppState {
 
     fn update(&self, change: impl FnOnce(&mut Settings)) {
         let mut s = self.settings.lock().unwrap();
+        let before = s.token.clone();
         change(&mut s);
-        if let Ok(json) = serde_json::to_vec_pretty(&*s) {
-            let _ = fs::write(&self.file, json);
+        if s.token != before {
+            secret::save(s.token.as_deref());
         }
+        save_settings(&self.file, &s);
     }
+}
+
+/// Writes the settings file, leaving the session out when the OS keychain holds it.
+fn save_settings(file: &PathBuf, s: &Settings) {
+    let mut on_disk = s.clone();
+    if secret::AVAILABLE {
+        on_disk.token = None;
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(&on_disk) {
+        let _ = fs::write(file, json);
+    }
+}
+
+/// The session token in the OS keychain where there is one (Windows, macOS). Elsewhere (Android, Linux)
+/// it stays in the app's private settings file, which only the app can read.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod secret {
+    pub const AVAILABLE: bool = true;
+    fn entry() -> Option<keyring::Entry> {
+        keyring::Entry::new("io.github.taidies.atrium", "session").ok()
+    }
+    pub fn load() -> Option<String> {
+        entry()?.get_password().ok().filter(|t| !t.is_empty())
+    }
+    pub fn save(token: Option<&str>) {
+        let Some(e) = entry() else { return };
+        let _ = match token {
+            Some(t) if !t.is_empty() => e.set_password(t),
+            _ => e.delete_credential(),
+        };
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+mod secret {
+    pub const AVAILABLE: bool = false;
+    pub fn load() -> Option<String> {
+        None
+    }
+    pub fn save(_token: Option<&str>) {}
 }
 
 fn respond(status: StatusCode, content_type: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -365,7 +407,16 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
             let file = dir.join("settings.json");
-            let settings: Settings = fs::read(&file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            let mut settings: Settings = fs::read(&file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            if secret::AVAILABLE {
+                // Older versions kept the session in the settings file: move it into the keychain.
+                if let Some(token) = settings.token.clone().filter(|t| !t.is_empty()) {
+                    secret::save(Some(&token));
+                    save_settings(&file, &settings);
+                } else {
+                    settings.token = secret::load();
+                }
+            }
             let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(6)).build()?;
             app.manage(AppState { settings: Mutex::new(settings), file, client });
 

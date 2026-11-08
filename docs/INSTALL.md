@@ -78,6 +78,11 @@ git checkout v1.8.1   # the version you want
 docker compose up -d --build
 ```
 
+After the updater has installed a release, this folder is **on that release's tag, not on a branch**
+(git calls it "detached HEAD"), so `git pull` does nothing there. To update by hand from then on, use
+`git fetch --tags && git checkout <tag>` as above (or `git checkout main && git pull` to go back to
+following the main branch, which may include unreleased changes).
+
 **Ready-made images** — every release is also published as a Docker image, so you can skip building.
 Put `ATRIUM_IMAGE=ghcr.io/taidies/atrium:latest` (or a version, e.g. `:1.8.1`) in `.env`, then:
 
@@ -100,6 +105,21 @@ docker run --rm -v atrium_data:/data -v "$PWD":/backup alpine tar czf /backup/at
 export whole workspaces as a .zip from **Settings → Workspace → Export everything**.
 
 ---
+
+### Running a shared or hosted server
+
+Atrium's defaults suit a server for you, your family or your company. When people you don't know sign
+up on it (a public or hosted server), change these in `.env`:
+
+- **`ALLOW_PRIVATE_URLS=false`** — otherwise anyone who can add a webhook or an AI service address can
+  make the server send requests into the network it runs on. The admin panel's Overview shows a warning
+  while this is on.
+- **Set up email** (see *Email* below) — without it, invitations can't be confirmed, so an invitation can
+  be claimed by whoever signs up first with the invited address. The admin panel warns about this too.
+- **`PUBLIC_URL`** — the address people use, so links in emails point at it.
+- **`TRUST_PROXY`** — if your reverse proxy isn't on the same machine or a private network, list its
+  address, so rate limits see visitors' real addresses (and nobody else can fake them).
+- **`SECURE_COOKIES=true`** behind HTTPS.
 
 ## 2. Put it on the internet (HTTPS) — optional but recommended
 
@@ -222,6 +242,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `APP_PORT` | `3000` | Port the app is published on |
 | `POSTGRES_PASSWORD` | — | Database password (set before the first start) |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
+| `TRUST_PROXY` | local proxies | Which proxies may pass on the visitor's real address (for rate limits). Empty trusts only proxies on the same machine or a private network (your reverse proxy, the Docker network); `false` trusts none; a list like `203.0.113.7,10.0.0.0/8` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
 | `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
 | `MAX_UPLOAD_MB` | `25` | Largest upload |
 | `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |
@@ -231,6 +252,9 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `ADMIN_PASSWORD` | generated | Admin panel password |
 | `ADMIN_PANEL` | `true` | `false` turns the admin panel off |
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` |
+| `HISTORY_DAYS` | `90` | How long page history snapshots are kept (the newest 10 of each page are always kept) |
+| `ALLOW_PRIVATE_URLS` | `true` | Whether webhooks and AI addresses may point at the local network. **Set `false` on a shared or hosted server** |
+| `PUBLIC_URL` | — | The address people use (e.g. `https://atrium.example.com`), for links in emails and checking where live editing connects from |
 | `RTC_ICE_SERVERS` | public STUN | Meeting connection servers (see above) |
 
 In the admin panel: **Accounts** (everyone's accounts, their roles, usage and AI, delete accounts), **Roles** (permissions —

@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { stat, unlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { requireMember, requireOwner, requirePage } from '../access.js';
@@ -14,6 +20,9 @@ function sendZip(reply: FastifyReply, zip: Uint8Array, name: string) {
     .header('Content-Length', zip.length)
     .send(Buffer.from(zip));
 }
+
+/** People with an import running. */
+const importing = new Set<string>();
 
 export async function transferRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
@@ -45,14 +54,24 @@ export async function transferRoutes(app: FastifyInstance) {
       const parent = await requirePage(req.user.id, parentId, 'edit');
       if (parent.workspace_id !== id) throw new HttpError(400, 'That page is in another workspace');
     }
-    const file = await req.file({ limits: { fileSize: config.maxImportBytes } });
-    if (!file) throw new HttpError(400, 'No file uploaded');
-    const bytes = await file.toBuffer().catch(() => {
-      throw new HttpError(413, `Exports must be smaller than ${Math.round(config.maxImportBytes / 1024 / 1024)} MB`);
-    });
-    // The attachments inside count against the importer's storage (the .zip's size is a close estimate).
-    await checkStorage(req.user.id, bytes.length);
-    const result = await importExport(req.user.id, id, new Uint8Array(bytes), parentId ?? null);
+    // One import at a time per person: each one unpacks to disk and adds a lot at once.
+    if (importing.has(req.user.id)) throw new HttpError(429, 'An import is already running — try again when it has finished');
+    importing.add(req.user.id);
+    const upload = path.join(os.tmpdir(), `atrium-upload-${randomUUID()}.zip`);
+    let result;
+    try {
+      const file = await req.file({ limits: { fileSize: config.maxImportBytes } });
+      if (!file) throw new HttpError(400, 'No file uploaded');
+      // Written to a temporary file as it arrives, never held in memory.
+      await pipeline(file.file, createWriteStream(upload));
+      if (file.file.truncated) throw new HttpError(413, `Exports must be smaller than ${Math.round(config.maxImportBytes / 1024 / 1024)} MB`);
+      // The attachments inside count against the importer's storage (the .zip's size is a close estimate).
+      await checkStorage(req.user.id, (await stat(upload)).size);
+      result = await importExport(req.user.id, id, upload, parentId ?? null);
+    } finally {
+      importing.delete(req.user.id);
+      await unlink(upload).catch(() => {});
+    }
     return reply.code(201).send(result);
   });
 }
