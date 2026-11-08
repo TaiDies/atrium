@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { accessMap, requireMember } from '../access.js';
 import { requireUser } from '../auth.js';
 import { query } from '../db.js';
-import { checkOutboundUrl } from '../netGuard.js';
+import { checkOutboundUrl, outboundFetch } from '../netGuard.js';
 import { HttpError, idParams, parse } from '../util.js';
 
 // Small helpers for blocks: link previews for bookmarks, and the synced blocks in a workspace.
@@ -45,11 +45,14 @@ export async function extraRoutes(app: FastifyInstance) {
     let res: Response | null = null;
     // Follow a few redirects by hand, checking each address.
     for (let hop = 0; hop < 4; hop++) {
-      res = await fetch(url, {
+      res = await outboundFetch(url.toString(), {
         redirect: 'manual',
         signal: AbortSignal.timeout(6000),
         headers: { 'User-Agent': 'Mozilla/5.0 (link preview)', Accept: 'text/html,application/xhtml+xml' },
-      }).catch(() => null);
+      }, { private: 'block', what: 'Link preview' }).catch((err) => {
+        if (err instanceof HttpError) throw err;
+        return null;
+      });
       if (!res) throw new HttpError(502, 'That site didn’t answer');
       const next = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (!next) break;

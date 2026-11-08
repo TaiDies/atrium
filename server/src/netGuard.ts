@@ -1,5 +1,7 @@
+import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { config } from './config.js';
 import { HttpError } from './util.js';
 
@@ -48,4 +50,51 @@ export async function checkOutboundUrl(raw: string, opts: { private: 'allow' | '
   const allowPrivate = opts.private === 'allow' && config.allowPrivateUrls;
   if (!allowPrivate && addresses.some((a) => isPrivate(a.address))) throw new HttpError(400, `${opts.what}: addresses on the local network aren't allowed on this server`);
   return url;
+}
+
+/** Why an address may not be connected to, or null when it may. */
+function refusal(ip: string, allowPrivate: boolean): string | null {
+  if (isMetadata(ip)) return "that address can't be used";
+  if (!allowPrivate && isPrivate(ip)) return "addresses on the local network aren't allowed on this server";
+  return null;
+}
+
+/**
+ * Connections that check the address they actually connect to. Looking a name up once to check it and
+ * again to connect leaves a gap (DNS rebinding: the name answers a public address first, then a private
+ * one); here the check happens in the lookup the connection itself uses.
+ */
+export function guardedAgent(allowPrivate: boolean) {
+  return new Agent({
+    connect: {
+      lookup(hostname: string, options: object, cb: (err: Error | null, address: string | LookupAddress[], family?: number) => void) {
+        dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+          if (err) return cb(err, '');
+          const bad = addresses.map((a) => refusal(a.address, allowPrivate)).find(Boolean);
+          if (bad) return cb(Object.assign(new Error(bad), { code: 'EBLOCKEDADDRESS' }), '');
+          if ((options as { all?: boolean }).all) return cb(null, addresses);
+          cb(null, addresses[0].address, addresses[0].family);
+        });
+      },
+    },
+  });
+}
+
+const agents = { allow: guardedAgent(true), block: guardedAgent(false) };
+
+/**
+ * fetch for addresses people typed in: checked like checkOutboundUrl first (for a clear message), then
+ * connected through an agent that checks the address it really connects to. Redirects aren't followed
+ * (each hop would need checking): callers that want them handle them.
+ */
+export async function outboundFetch(raw: string, init: RequestInit & { redirect?: 'error' | 'manual' }, opts: { private: 'allow' | 'block'; what: string }): Promise<Response> {
+  const url = await checkOutboundUrl(raw, opts);
+  const allowPrivate = opts.private === 'allow' && config.allowPrivateUrls;
+  try {
+    return (await undiciFetch(url, { ...(init as object), redirect: init.redirect ?? 'error', dispatcher: allowPrivate ? agents.allow : agents.block } as never)) as unknown as Response;
+  } catch (err) {
+    const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+    if (cause?.code === 'EBLOCKEDADDRESS') throw new HttpError(400, `${opts.what}: ${cause.message}`);
+    throw err;
+  }
 }

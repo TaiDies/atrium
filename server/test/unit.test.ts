@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runFormula } from '../../web/src/database/formula.ts';
 import { groupTogether } from '../../web/src/lib/groupTogether.ts';
-import { checkOutboundUrl, isPrivate } from '../src/netGuard.ts';
+import { createServer } from 'node:http';
+import { fetch as undiciFetch } from 'undici';
+import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -139,6 +141,26 @@ describe('zip import unpacking', () => {
       assert.ok(out instanceof Map ? out.size === 0 : out.status === 400);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('outbound connections', () => {
+  it('check the address they actually connect to', async () => {
+    const server = createServer((_req, res) => res.end('ok')).listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      // "localhost" resolves to a loopback address at connect time: refused when private addresses aren't allowed.
+      const blocked = await undiciFetch(`http://localhost:${port}/`, { dispatcher: guardedAgent(false) }).then(
+        () => null,
+        (e: { cause?: { code?: string } }) => e.cause?.code,
+      );
+      assert.equal(blocked, 'EBLOCKEDADDRESS');
+      const allowed = await undiciFetch(`http://localhost:${port}/`, { dispatcher: guardedAgent(true) });
+      assert.equal(await allowed.text(), 'ok');
+    } finally {
+      server.close();
     }
   });
 });

@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { checkBaseUrl, type Connection } from './ai.js';
 import { config } from './config.js';
+import { FormData as UndiciFormData } from 'undici';
+import { outboundFetch } from './netGuard.js';
 import { HttpError } from './util.js';
 
 // Turning recorded speech (an audio or video attachment) into text, through the person's AI connection:
@@ -32,7 +34,7 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
 
   if (c.provider === 'gemini') {
     const base = trimSlash(c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-    const res = await fetch(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, {
+    const res = await outboundFetch(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(c.key ? { 'x-goog-api-key': c.key } : {}) },
       body: JSON.stringify({
@@ -48,7 +50,7 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
       }),
       signal: AbortSignal.timeout(10 * 60_000),
       redirect: 'error',
-    });
+    }, { private: 'allow', what: 'Transcription service address' });
     const json = (await res.json().catch(() => null)) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } } | null;
     if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : 502, `Google couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
     const text = json?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
@@ -57,17 +59,17 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
   }
 
   const base = trimSlash(c.baseUrl || 'https://api.openai.com/v1');
-  const form = new FormData();
+  const form = new UndiciFormData();
   form.append('file', new Blob([new Uint8Array(data)], { type: mime }), file.filename || 'recording');
   form.append('model', speechModel(base));
   form.append('response_format', 'json');
-  const res = await fetch(`${base}/audio/transcriptions`, {
+  const res = await outboundFetch(`${base}/audio/transcriptions`, {
     method: 'POST',
     headers: c.key ? { Authorization: `Bearer ${c.key}` } : {},
-    body: form,
+    body: form as unknown as BodyInit,
     signal: AbortSignal.timeout(10 * 60_000),
     redirect: 'error',
-  });
+  }, { private: 'allow', what: 'Transcription service address' });
   const json = (await res.json().catch(() => null)) as { text?: string; error?: { message?: string } } | null;
   if (res.status === 404) throw new HttpError(400, 'This AI service has no speech-to-text. Use OpenAI, Groq or Gemini to transcribe.');
   if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : 502, `The AI service couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
