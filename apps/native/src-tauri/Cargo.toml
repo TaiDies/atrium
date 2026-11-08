@@ -22,3 +22,7 @@ tauri-plugin-notification = "2"
 # Updates for the Windows app, from the GitHub releases (signed; see tauri.conf.json).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+
+# The session token lives in the OS keychain (Windows Credential Manager, macOS Keychain), not in a file.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+keyring = { version = "3", features = ["windows-native", "apple-native"] }

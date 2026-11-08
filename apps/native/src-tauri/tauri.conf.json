@@ -17,12 +17,13 @@
         "img-src": "'self' data: blob: https: http:",
         "media-src": "'self' data: blob: https: http:",
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost data: blob: https: http: wss: ws:",
-        "frame-src": "'self' blob: data: https: http:",
+        "connect-src": "'self' ipc: http://ipc.localhost data: blob: wss: ws:",
+        "frame-src": "'self' blob: data: https:",
         "worker-src": "'self' blob:",
         "object-src": "'none'",
         "base-uri": "'self'",
-        "form-action": "'self'"
+        "form-action": "'self'",
+        "frame-ancestors": "'none'"
       },
       "dangerousDisableAssetCspModification": ["style-src"]
     }
