@@ -4,6 +4,8 @@
 // SERVER_LOG is the server's output with MAIL_TRANSPORT=log, where the emailed codes appear.
 import { readFileSync } from 'node:fs';
 import { strToU8, zipSync } from 'fflate';
+import * as decoding from 'lib0/decoding';
+import * as encoding from 'lib0/encoding';
 
 const B = process.env.BASE_URL ?? 'http://localhost:3100';
 const LOG = process.env.SERVER_LOG;
@@ -54,6 +56,40 @@ const opens = (url, headers) =>
     };
     ws.onerror = () => resolve(false);
     setTimeout(() => resolve(false), 4000);
+  });
+
+/**
+ * Asks the live-editing server for a document the way the app does and says what it answered:
+ * 'read-write', 'readonly', or 'denied'.
+ */
+const liveAccess = (cookie, documentName) =>
+  new Promise((resolve) => {
+    const ws = new WebSocket(`${WS_BASE}/collab`, { headers: { cookie } });
+    ws.binaryType = 'arraybuffer';
+    const done = (v) => {
+      resolve(v);
+      try {
+        ws.close();
+      } catch {}
+    };
+    ws.onopen = () => {
+      const e = encoding.createEncoder();
+      encoding.writeVarString(e, documentName);
+      encoding.writeVarUint(e, 2); // auth
+      encoding.writeVarUint(e, 0); // token
+      encoding.writeVarString(e, 'session-cookie');
+      ws.send(encoding.toUint8Array(e));
+    };
+    ws.onmessage = (m) => {
+      const d = decoding.createDecoder(new Uint8Array(m.data));
+      decoding.readVarString(d);
+      if (decoding.readVarUint(d) !== 2) return;
+      const kind = decoding.readVarUint(d);
+      done(kind === 1 ? 'denied' : decoding.readVarString(d));
+    };
+    ws.onerror = () => done('error');
+    ws.onclose = () => done('denied');
+    setTimeout(() => done('timeout'), 5000);
   });
 
 // --- headers
@@ -148,6 +184,42 @@ let member;
   check('link previews never reach cloud metadata', r.status === 400, `got ${r.status}`);
 }
 
+// --- guests: names only, and only what's shared with them; files: only editors rename them
+{
+  const shared = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: `Shared ${stamp}`, type: 'document' }, cookie: owner.cookie })).data.page;
+  const guest = await signup('guest');
+  await verify(guest);
+  await req(`/api/pages/${shared.id}/guests`, { method: 'POST', body: { email: guest.email, level: 'view' }, cookie: owner.cookie });
+  const inviteId = (await req('/api/invitations', { cookie: guest.cookie })).data?.invitations?.[0]?.id;
+  const joined = await req(`/api/invitations/${inviteId}/accept`, { method: 'POST', cookie: guest.cookie });
+  const list = await req(`/api/workspaces/${ws}/members`, { cookie: guest.cookie });
+  check('a guest sees member names but no emails', joined.status === 200 && list.status === 200 && list.data.members.length > 0 && list.data.members.every((m) => !('email' in m) && m.name), `got ${list.status}`);
+  const ownerList = await req(`/api/workspaces/${ws}/members`, { cookie: owner.cookie });
+  check('…while members still see emails', ownerList.data.members.some((m) => m.email === owner.email));
+
+  const onPage = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'On the page', place: { pageId: shared.id } }, cookie: owner.cookie })).data.whiteboard;
+  const elsewhere = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'Not shared' }, cookie: owner.cookie })).data.whiteboard;
+  await sleep(500);
+  check('a guest can open a whiteboard on a page shared with them, read-only', (await liveAccess(guest.cookie, `board:${onPage.id}`)) === 'readonly');
+  check('a guest cannot open a whiteboard that is not on a shared page', (await liveAccess(guest.cookie, `board:${elsewhere.id}`)) === 'denied');
+  check('a member can open that whiteboard', (await liveAccess(member.cookie, `board:${elsewhere.id}`)) === 'read-write');
+
+  const form = new FormData();
+  form.append('file', new Blob(['hello']), 'notes.txt');
+  const up = await (await fetch(`${B}/api/workspaces/${ws}/files`, { method: 'POST', headers: { cookie: owner.cookie, 'x-forwarded-for': freshIp() }, body: form })).json();
+  check('a guest cannot open the pen layer of a file that is not on a shared page', (await liveAccess(guest.cookie, `file:${up.id}`)) === 'denied');
+
+  // A file on a page the member can only view: they can't rename it; its uploader can.
+  const viewOnly = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: `View only ${stamp}`, type: 'document' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${viewOnly.id}/permissions`, { method: 'PUT', body: { defaultAccess: 'view', members: [] }, cookie: owner.cookie });
+  await req(`/api/files/${up.id}/move`, { method: 'POST', body: { target: { pageId: viewOnly.id } }, cookie: owner.cookie });
+  await sleep(500);
+  const byMember = await req(`/api/files/${up.id}`, { method: 'PATCH', body: { name: 'renamed.txt' }, cookie: member.cookie });
+  const byOwner = await req(`/api/files/${up.id}`, { method: 'PATCH', body: { name: 'renamed.txt' }, cookie: owner.cookie });
+  check('a member who can only view the page cannot rename its file', byMember.status === 403, `got ${byMember.status}`);
+  check('…the uploader can', byOwner.status === 200, `got ${byOwner.status}`);
+}
+
 // --- zip import
 {
   const upload = async (bytes) => {
@@ -164,7 +236,8 @@ let member;
   check('an export with a malformed manifest is refused', (await upload(bad)) === 400);
   const lots = {};
   for (let i = 0; i <= 50_000; i++) lots[`f${i}`] = new Uint8Array(0);
-  check('a .zip with too many entries is refused', (await upload(zipSync(lots))) === 413);
+  const many = await upload(zipSync(lots));
+  check('a .zip with too many entries is refused', many === 413, `got ${many}`);
 }
 
 // --- public form flooding

@@ -156,7 +156,7 @@ function Heading({ title, description, action }: { title: string; description?: 
 function Overview() {
   const { data } = useQuery({
     queryKey: ['admin', 'overview'],
-    queryFn: () => adminApi<{ users: number; active: number; disabled: number; workspaces: number; pages: number; files: number; storage: number; appName: string }>('/overview'),
+    queryFn: () => adminApi<{ users: number; active: number; disabled: number; workspaces: number; pages: number; files: number; storage: number; appName: string; notices?: { id: string; text: string }[] }>('/overview'),
   });
   const stat = (label: string, value: ReactNode) => (
     <div className="rounded-xl border border-line p-4">
@@ -167,6 +167,11 @@ function Overview() {
   return (
     <>
       <Heading title={data?.appName ?? 'Overview'} description="This server at a glance." />
+      {data?.notices?.map((n) => (
+        <div key={n.id} role="alert" className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          {n.text}
+        </div>
+      ))}
       {!data ? (
         <Spinner />
       ) : (

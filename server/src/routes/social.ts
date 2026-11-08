@@ -76,7 +76,7 @@ export async function socialRoutes(app: FastifyInstance) {
   app.get('/pages/:id/guests', async (req) => {
     const { id } = parse(idParams, req.params);
     const page = await requirePage(req.user.id, id, 'view');
-    const guests = await query(
+    const guests = await query<{ email?: string }>(
       `select u.id, u.name, u.email, u.color, pp.level from page_permissions pp
          join users u on u.id = pp.user_id
          join workspace_members m on m.user_id = u.id and m.workspace_id = $2 and m.role = 'guest'
@@ -87,6 +87,10 @@ export async function socialRoutes(app: FastifyInstance) {
       `select email, pages from workspace_invites where workspace_id = $1 and role = 'guest' and pages @> $2::jsonb`,
       [page.workspace_id, JSON.stringify([{ pageId: id }])],
     );
+    // A guest viewing the page sees the other guests by name only.
+    if ((await requireMember(req.user.id, page.workspace_id, undefined, true)) === 'guest') {
+      return { guests: guests.map(({ email: _, ...g }) => g), pending: [] };
+    }
     return { guests, pending: pending.map((p) => ({ email: p.email, level: p.pages.find((x) => x.pageId === id)?.level ?? 'view' })) };
   });
 

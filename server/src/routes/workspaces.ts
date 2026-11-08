@@ -71,8 +71,8 @@ export async function workspaceRoutes(app: FastifyInstance) {
 
   app.get('/workspaces/:id/members', async (req) => {
     const { id } = parse(idParams, req.params);
-    await requireMember(req.user.id, id, undefined, true);
-    const members = await query(
+    const role = await requireMember(req.user.id, id, undefined, true);
+    const members = await query<{ email?: string }>(
       `select u.id, u.name, u.email, u.color, m.role, m.joined_at as "joinedAt"
          from workspace_members m join users u on u.id = m.user_id
         where m.workspace_id = $1
@@ -83,6 +83,8 @@ export async function workspaceRoutes(app: FastifyInstance) {
       `select id, email, role, created_at as "createdAt" from workspace_invites where workspace_id = $1 order by created_at`,
       [id],
     );
+    // Guests see who's in the workspace by name only: no email addresses, no pending invitations.
+    if (role === 'guest') return { members: members.map(({ email: _, ...m }) => m), invites: [] };
     return { members, invites };
   });
 
