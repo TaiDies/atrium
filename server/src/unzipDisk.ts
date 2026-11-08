@@ -1,8 +1,11 @@
 import { once } from 'node:events';
 import { createReadStream, createWriteStream, type WriteStream } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Unzip, UnzipInflate } from 'fflate';
 import { HttpError } from './util.js';
+
+const SLICE = 16 * 1024;
 
 export interface UnzippedEntry {
   /** Where the entry was written (named by number, so names inside the .zip can't point outside `dir`). */
@@ -24,6 +27,7 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
   let count = 0;
   const open = new Set<WriteStream>();
   const finished: Promise<unknown>[] = [];
+  let empties: Promise<void> = Promise.resolve();
 
   const unzip = new Unzip((entry) => {
     if (failure || entry.name.endsWith('/')) return;
@@ -33,16 +37,28 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
     }
     const record: UnzippedEntry = { file: path.join(dir, String(count)), size: 0 };
     out.set(entry.name, record);
-    const ws = createWriteStream(record.file);
-    open.add(ws);
-    finished.push(once(ws, 'close').catch(() => {}));
-    ws.on('error', () => (failure ??= invalid));
+    // The file is opened only once there's something to write, so a .zip of many empty entries doesn't
+    // open thousands of files at once.
+    let ws: WriteStream | null = null;
+    const stream = () => {
+      if (ws) return ws;
+      ws = createWriteStream(record.file);
+      open.add(ws);
+      finished.push(once(ws, 'close').catch(() => {}));
+      ws.on('error', () => (failure ??= invalid));
+      return ws;
+    };
     let ended = false;
     const end = () => {
       if (ended) return;
       ended = true;
-      open.delete(ws);
-      ws.end();
+      if (ws) {
+        open.delete(ws);
+        ws.end();
+      } else {
+        // Empty entries are written one after another (thousands at once would run out of file handles).
+        empties = empties.then(() => writeFile(record.file, '')).catch(() => void (failure ??= invalid));
+      }
     };
     entry.ondata = (err, chunk, final) => {
       if (ended) return;
@@ -57,7 +73,7 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
         entry.terminate();
         return end();
       }
-      ws.write(chunk);
+      if (chunk.length) stream().write(chunk);
       if (final) end();
     };
     try {
@@ -72,7 +88,10 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
   for await (const chunk of createReadStream(zipPath, { highWaterMark: 1 << 20 })) {
     if (failure) break;
     try {
-      unzip.push(chunk as Uint8Array);
+      // Small slices: fflate handles every entry that starts in a slice in one go (recursively), so a slice
+      // packed with thousands of tiny entries would run out of stack.
+      const bytes = chunk as Uint8Array;
+      for (let at = 0; at < bytes.length && !failure; at += SLICE) unzip.push(bytes.subarray(at, at + SLICE));
     } catch {
       failure ??= invalid;
       break;
@@ -89,6 +108,7 @@ export async function unzipToDisk(zipPath: string, dir: string, limits: { maxByt
   }
   for (const ws of open) ws.end();
   await Promise.all(finished);
+  await empties;
   if (failure) throw failure;
   return out;
 }

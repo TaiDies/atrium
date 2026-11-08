@@ -115,6 +115,14 @@ describe('zip import unpacking', () => {
       assert.equal(readFileSync(out.get('a.txt')!.file, 'utf8'), 'hello');
       assert.equal(out.get('sub/b.bin')!.size, 70_000);
     }));
+  it('copes with thousands of tiny entries', () => {
+    const lots: Record<string, Uint8Array> = {};
+    for (let i = 0; i < 5000; i++) lots[`f${i}`] = new Uint8Array(i % 2);
+    return withZip(lots, async (zip, dir) => {
+      const out = await unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 10_000 });
+      assert.equal(out.size, 5000);
+    });
+  });
   it('refuses more entries than allowed', () =>
     withZip({ a: new Uint8Array(1), b: new Uint8Array(1), c: new Uint8Array(1) }, async (zip, dir) => {
       await assert.rejects(unzipToDisk(zip, dir, { maxBytes: 1e6, maxEntries: 2 }), (e: { status?: number }) => e.status === 413);
