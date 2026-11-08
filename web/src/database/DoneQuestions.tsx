@@ -1,9 +1,13 @@
 import { Plus, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { Button } from '../components/ui';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type * as Y from 'yjs';
+import { setCardCells } from '../calendar/api';
+import { Button, toastError } from '../components/ui';
+import { useCollab } from '../lib/collab';
+import { getDirectory } from '../lib/directory';
 import { CellEditor, FieldIcon } from './cells';
 import { DatabaseContext, type DatabaseContextValue, useDb } from './context';
-import { COMPUTED_TYPES, type DatabaseState, type Field, isDoneOption, type Row } from './model';
+import { COMPUTED_TYPES, type DatabaseState, type Field, isDoneOption, type Row, useDatabase } from './model';
 
 /** One question asked when a card is marked done: a property to fill in, and whether it must be. */
 export interface DoneQuestion {
@@ -25,6 +29,11 @@ export interface DoneAsk {
   questions: { field: Field; required: boolean }[];
 }
 
+const questionsOf = (db: DatabaseState, field: Field) =>
+  (field.askOnDone ?? [])
+    .map((q) => ({ field: db.fields.find((f) => f.id === q.fieldId), required: !!q.required }))
+    .filter((q): q is { field: Field; required: boolean } => !!q.field && askable(q.field, field));
+
 /** The questions to ask before applying `patch` to a card, or null when it can go ahead as it is. */
 export function doneQuestionsFor(db: DatabaseState, rowId: string, patch: Record<string, unknown>): DoneAsk | null {
   const row = db.rows.find((r) => r.id === rowId);
@@ -33,12 +42,69 @@ export function doneQuestionsFor(db: DatabaseState, rowId: string, patch: Record
     const field = db.fields.find((f) => f.id === fieldId);
     if (!field?.askOnDone?.length) continue;
     if (!marksDone(field, value) || marksDone(field, row.cells[fieldId])) continue;
-    const questions = field.askOnDone
-      .map((q) => ({ field: db.fields.find((f) => f.id === q.fieldId), required: !!q.required }))
-      .filter((q): q is { field: Field; required: boolean } => !!q.field && askable(q.field, field));
+    const questions = questionsOf(db, field);
     if (questions.length) return { row, questions };
   }
   return null;
+}
+
+/** A card about to be finished some other way (a task in Today): the questions of its done property, if it isn't done yet. */
+function questionsForCard(db: DatabaseState, rowId: string): DoneAsk | null {
+  const row = db.rows.find((r) => r.id === rowId);
+  if (!row) return null;
+  for (const field of db.fields) {
+    if (!field.askOnDone?.length || !(field.type === 'checkbox' || field.type === 'select')) continue;
+    if (marksDone(field, row.cells[field.id])) continue;
+    const questions = questionsOf(db, field);
+    if (questions.length) return { row, questions };
+  }
+  return null;
+}
+
+/**
+ * Before a task that finishes a card is ticked (in Today): asks that card's questions, saves the answers on
+ * the card, then calls `onFinish`. Cards without questions (or that can't be opened) go straight on.
+ */
+export function CardDoneQuestions({ pageId, rowId, onFinish, onCancel }: { pageId: string; rowId: string; onFinish: () => void; onCancel: () => void }) {
+  const dir = getDirectory();
+  const { session, synced, denied } = useCollab(pageId, dir!.user, () => {});
+  useEffect(() => {
+    if (denied) onFinish();
+  }, [denied]);
+  if (!session || !synced || denied) return null;
+  return <CardQuestions doc={session.doc} pageId={pageId} rowId={rowId} workspaceId={dir!.workspaceId} onFinish={onFinish} onCancel={onCancel} />;
+}
+
+function CardQuestions({ doc, pageId, rowId, workspaceId, onFinish, onCancel }: { doc: Y.Doc; pageId: string; rowId: string; workspaceId: string; onFinish: () => void; onCancel: () => void }) {
+  const { db, actions } = useDatabase(doc, 'grid');
+  // Worked out once, when the card has loaded.
+  const ask = useRef<DoneAsk | null | undefined>(undefined);
+  if (ask.current === undefined) ask.current = questionsForCard(db, rowId);
+  useEffect(() => {
+    if (!ask.current) onFinish();
+  }, []);
+  const ctx = useMemo<DatabaseContextValue>(
+    () => ({ pageId, workspaceId, db, actions, readOnly: false, locked: true, openRow: () => {}, related: new Map() }),
+    [pageId, workspaceId, db, actions],
+  );
+  if (!ask.current) return null;
+  return (
+    <DatabaseContext.Provider value={ctx}>
+      <DoneQuestionsDialog
+        ask={ask.current}
+        onCancel={onCancel}
+        onDone={async (answers) => {
+          try {
+            // Saved by the server, so the answers are kept even though this view closes straight away.
+            if (Object.keys(answers).length) await setCardCells(workspaceId, pageId, rowId, answers);
+            onFinish();
+          } catch (err) {
+            toastError(err);
+          }
+        }}
+      />
+    </DatabaseContext.Provider>
+  );
 }
 
 /** Asks the questions; `onDone` gets the answers (only the ones filled in), `onCancel` leaves the card as it was. */

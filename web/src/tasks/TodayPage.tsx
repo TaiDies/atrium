@@ -16,6 +16,7 @@ import { IconButton, toastError } from '../components/ui';
 import { api, type PageType } from '../lib/api';
 import { OPTION_COLORS } from '../database/model';
 import { locationPath } from '../lib/placement';
+import { CardDoneQuestions } from '../database/DoneQuestions';
 import { queryClient } from '../lib/queries';
 import { notificationsKey, SidebarIcon } from '../notifications/Notifications';
 
@@ -135,6 +136,7 @@ export function TodayPage() {
   });
   const [eventDialog, setEventDialog] = useState<string | null>(null);
   const [choosing, setChoosing] = useState<Task | null>(null);
+  const [asking, setAsking] = useState<{ task: Task; pageId: string; rowId: string } | null>(null);
   const [cardDialog, setCardDialog] = useState<CalendarCard | null>(null);
   const [adding, setAdding] = useState('');
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -180,9 +182,14 @@ export function TodayPage() {
     queryClient.invalidateQueries({ queryKey: ['calendar', workspace.id] });
   };
 
-  const toggle = async (t: Task) => {
+  const toggle = async (t: Task, answered = false) => {
     // A task with paths asks which one first.
     if (t.paths && !t.choice && !t.done) return setChoosing(t);
+    // Finishing a card (the card itself, or today's step of a paths task) asks its database's questions first.
+    if (!t.done && !answered) {
+      const card = t.kind === 'card' && t.pageId && t.rowId ? { pageId: t.pageId, rowId: t.rowId } : t.choice?.step?.kind === 'card' ? t.choice.step : null;
+      if (card) return setAsking({ task: t, pageId: card.pageId, rowId: card.rowId });
+    }
     const done = !t.done;
     setPending((p) => ({ ...p, [t.key]: done }));
     try {
@@ -423,6 +430,18 @@ export function TodayPage() {
         )}
       </div>
 
+      {asking && (
+        <CardDoneQuestions
+          key={asking.task.key}
+          pageId={asking.pageId}
+          rowId={asking.rowId}
+          onCancel={() => setAsking(null)}
+          onFinish={() => {
+            setAsking(null);
+            toggle(asking.task, true);
+          }}
+        />
+      )}
       {choosing && <ChoosePathDialog eventId={choosing.eventId!} title={choosing.title} onClose={() => setChoosing(null)} onChosen={refresh} />}
       {reviewing && <ReviewDialog workspaceId={workspace.id} onClose={() => setReviewing(false)} />}
       {eventDialog && (
