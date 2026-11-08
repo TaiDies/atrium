@@ -84,7 +84,7 @@ const ws = (await req('/api/workspaces', { cookie: owner.cookie })).data.workspa
 // --- live tickets
 {
   const ticket = (await req('/api/auth/live-ticket', { cookie: owner.cookie })).data?.ticket;
-  const asSession = await req('/api/auth/me', { cookie: `af_session=${ticket}` });
+  const asSession = await req('/api/auth/me', { cookie: `atrium_session=${ticket}` });
   const session = owner.cookie.split('=')[1];
   check('a live ticket is not a session', !!ticket && asSession.status === 401);
   check('live socket opens with a ticket', await opens(`${WS_BASE}/live?ticket=${encodeURIComponent(ticket)}`));

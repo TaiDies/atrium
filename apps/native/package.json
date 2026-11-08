@@ -1,5 +1,5 @@
 {
-  "name": "workspace-native",
+  "name": "atrium-native",
   "private": true,
   "version": "1.0.0",
   "description": "The Windows and Android apps: the web app, working offline, connected to a server of your choice.",

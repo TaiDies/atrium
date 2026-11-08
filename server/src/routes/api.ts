@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireMember, requireOwner, requirePage } from '../access.js';
-import { requireUser, SESSION_COOKIE } from '../auth.js';
+import { requireUser, sessionToken } from '../auth.js';
 import { editDoc, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
 import { guideFor } from '../aiGuide.js';
@@ -21,7 +21,7 @@ const isDatabase = (type: string) => (DATABASE_TYPES as readonly string[]).inclu
 
 /** Managing tokens needs the person signed in to the app itself, not a token. */
 function requireSession(req: { cookies: Record<string, string | undefined>; headers: Record<string, unknown> }) {
-  if (!req.cookies[SESSION_COOKIE] || req.headers.authorization) throw new HttpError(403, 'Manage API tokens from the app');
+  if (!sessionToken(req.cookies) || req.headers.authorization) throw new HttpError(403, 'Manage API tokens from the app');
 }
 
 export async function apiRoutes(app: FastifyInstance) {
@@ -64,7 +64,7 @@ export async function apiRoutes(app: FastifyInstance) {
       if (body.workspaceId) await requireMember(req.user.id, body.workspaceId, undefined, true);
       const count = await one<{ n: number }>('select count(*)::int as n from api_tokens where user_id = $1', [req.user.id]);
       if ((count?.n ?? 0) >= 50) throw new HttpError(400, 'You have 50 tokens already: delete some first');
-      const token = `af_${randomBytes(24).toString('base64url')}`;
+      const token = `atr_${randomBytes(24).toString('base64url')}`;
       const row = await one<{ id: string }>(
         `insert into api_tokens (user_id, name, token_hash, prefix, expires_at, workspace_id) values ($1, $2, $3, $4, $5, $6) returning id`,
         [req.user.id, body.name, hashToken(token), token.slice(0, 9), body.days ? new Date(Date.now() + body.days * 86_400_000) : null, body.workspaceId],
@@ -212,7 +212,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid 
 <p>Everything the app does goes through this JSON API. Scripts and other apps use it with a <b>personal API token</b>, and act as the person who made it — seeing and changing only what they can.</p>
 <h2>Signing in</h2>
 <p>Make a token in the app: <b>Settings → API & webhooks → New token</b>. Send it with every request:</p>
-<pre>curl -H "Authorization: Bearer af_…" ${'$'}SERVER/api/workspaces</pre>
+<pre>curl -H "Authorization: Bearer atr_…" ${'$'}SERVER/api/workspaces</pre>
 <p>Send JSON bodies with <code>Content-Type: application/json</code>. Errors come back as <code>{"error": "message"}</code> with a 4xx/5xx status. Tokens can't make or delete other tokens.</p>
 <h2>Endpoints</h2>
 <table><tr><th>Method</th><th>Path</th><th>What it does</th></tr>
@@ -220,7 +220,7 @@ ${rows.map(([m, p, d]) => `<tr><td>${m}</td><td><code>${p}</code></td><td>${d.re
 </table>
 <h2>MCP (for AI assistants)</h2>
 <p><code>POST /api/mcp</code> is an MCP server (Streamable HTTP) that lets an assistant like Claude use a workspace as its memory: tools <code>search_notes</code>, <code>read_note</code>, <code>list_notes</code>, <code>recent_notes</code>, <code>create_note</code>, <code>update_note</code>, <code>related_notes</code> and <code>delete_note</code>, <code>set_note_group</code>, <code>graph_groups</code> and <code>app_guide</code>, with <code>[[Title]]</code> links. Use a token limited to one workspace (or add <code>?workspace=&lt;id&gt;</code>):</p>
-<pre>claude mcp add --transport http workspace-brain ${'$'}SERVER/api/mcp --header "Authorization: Bearer af_…"</pre>
+<pre>claude mcp add --transport http workspace-brain ${'$'}SERVER/api/mcp --header "Authorization: Bearer atr_…"</pre>
 <h2>Webhooks</h2>
 <p>Workspace owners add webhooks in <b>Settings → API & webhooks</b>. When something happens, the server sends a <code>POST</code> with JSON:</p>
 <pre>{"event": "page.created", "workspaceId": "…", "at": "2026-11-01T12:00:00.000Z", "data": { … }}</pre>

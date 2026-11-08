@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { parseCookieHeader, SESSION_COOKIE, userFromToken } from './auth.js';
+import { parseCookieHeader, sessionToken, userFromToken } from './auth.js';
 import { meetingAccess, type MeetingPerms } from './meetingAccess.js';
 
 // The live channel (WebSocket /live): new chat messages and changes reach people as they happen, and
@@ -71,7 +71,7 @@ export function attachLive(server: HttpServer) {
   server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/live') return;
-    const cookie = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE];
+    const cookie = sessionToken(parseCookieHeader(req.headers.cookie));
     const ticket = url.searchParams.get('ticket') ?? undefined;
     const user = await (cookie ? userFromToken(cookie) : userFromToken(ticket, 'live')).catch(() => null);
     if (!user) {

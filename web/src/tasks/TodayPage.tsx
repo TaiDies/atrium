@@ -141,10 +141,10 @@ export function TodayPage() {
   // "Plan my day": the hours of the day beside the list, to drag tasks into (remembered on this device).
   const dueCards = useDueCount(workspace.id);
   const [reviewing, setReviewing] = useState(false);
-  const [planning, setPlanning] = useState(() => getLocal<boolean>('af-today-plan', false));
+  const [planning, setPlanning] = useState(() => getLocal<boolean>('atrium-today-plan', false));
   const togglePlan = () =>
     setPlanning((p) => {
-      setLocal('af-today-plan', !p);
+      setLocal('atrium-today-plan', !p);
       return !p;
     });
 

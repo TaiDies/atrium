@@ -54,7 +54,7 @@ export function ConnectClaude() {
     }
   };
 
-  const t = token ?? 'af_…';
+  const t = token ?? 'atr_…';
   const code = `claude mcp add --transport http workspace-brain ${url} --header "Authorization: Bearer ${t}"`;
   const desktop = JSON.stringify(
     {

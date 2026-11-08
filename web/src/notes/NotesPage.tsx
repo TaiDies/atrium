@@ -75,16 +75,16 @@ export function NotesPage() {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [sort, setSort] = useState<Sort>(() => getLocal<Sort>('af-notes-sort', 'modified'));
-  const [layout, setLayout] = useState<'grid' | 'list'>(() => getLocal('af-notes-layout', 'grid'));
+  const [sort, setSort] = useState<Sort>(() => getLocal<Sort>('atrium-notes-sort', 'modified'));
+  const [layout, setLayout] = useState<'grid' | 'list'>(() => getLocal('atrium-notes-layout', 'grid'));
   const [fab, setFab] = useState<Anchor | null>(null);
   const [settings, setSettings] = useState<WorkspaceFile | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
   const input = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setLocal('af-notes-sort', sort), [sort]);
-  useEffect(() => setLocal('af-notes-layout', layout), [layout]);
+  useEffect(() => setLocal('atrium-notes-sort', sort), [sort]);
+  useEffect(() => setLocal('atrium-notes-layout', layout), [layout]);
   useEffect(() => {
     document.title = `Files · ${workspace.name}`;
   }, [workspace.name]);

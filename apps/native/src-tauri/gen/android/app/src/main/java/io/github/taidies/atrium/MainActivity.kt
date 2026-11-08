@@ -1,4 +1,4 @@
-package com.selfhosted.workspace
+package io.github.taidies.atrium
 
 import android.app.PictureInPictureParams
 import android.content.res.Configuration

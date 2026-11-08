@@ -1,11 +1,11 @@
 [package]
-name = "workspace-native"
+name = "atrium"
 version = "1.0.0"
 description = "The Windows and Android apps: the web app, working offline, connected to a server of your choice"
 edition = "2021"
 
 [lib]
-name = "workspace_native_lib"
+name = "atrium_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

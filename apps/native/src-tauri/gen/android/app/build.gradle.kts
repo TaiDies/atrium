@@ -36,11 +36,11 @@ android {
             }
         }
     }
-    namespace = "com.selfhosted.workspace"
+    namespace = "io.github.taidies.atrium"
     defaultConfig {
         // Self-hosted servers on a home or office network are usually plain http:// addresses.
         manifestPlaceholders["usesCleartextTraffic"] = "true"
-        applicationId = "com.selfhosted.workspace"
+        applicationId = "io.github.taidies.atrium"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

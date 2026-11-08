@@ -632,7 +632,7 @@ function RoomView() {
   }
 
   return (
-    <div className="af-ltr flex h-full min-h-0 flex-col bg-neutral-950 text-white">
+    <div className="atrium-ltr flex h-full min-h-0 flex-col bg-neutral-950 text-white">
       <div className="flex items-center gap-2 px-3 py-2">
         <button onClick={() => navigate(`/w/${workspace.id}/meetings`)} className="rounded-md p-1.5 text-white/70 hover:bg-white/10" title="Keep the call going and look around the app">
           <ArrowLeft size={17} />

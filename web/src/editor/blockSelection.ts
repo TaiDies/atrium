@@ -8,7 +8,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 // marks every such block inside the selection, so it's plain that they're selected along with the text
 // (and the AI button, copy, delete and the rest act on them too).
 
-const key = new PluginKey('af-block-selection');
+const key = new PluginKey('atrium-block-selection');
 
 // Where the pointer is while a selection is being dragged (to take in the block it's over).
 let dragPointer: { x: number; y: number } | null = null;
@@ -81,14 +81,14 @@ const blockSelectionPlugin = new Plugin({
       doc.nodesBetween(from, to, (node, pos) => {
         // A block's own content node with nothing editable inside (an atom), wholly in the selection.
         if (node.isBlock && node.isAtom && pos >= from && pos + node.nodeSize <= to) {
-          decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: 'af-selected-block' }));
+          decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: 'atrium-selected-block' }));
           return false;
         }
         return true;
       });
       if (!decorations.length) return null;
       // With a block like that in it, the browser can't draw the selection, so the text is marked too.
-      decorations.push(Decoration.inline(from, to, { class: 'af-selected-text' }));
+      decorations.push(Decoration.inline(from, to, { class: 'atrium-selected-text' }));
       return DecorationSet.create(doc, decorations);
     },
   },

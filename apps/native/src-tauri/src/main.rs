@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    workspace_native_lib::run()
+    atrium_lib::run()
 }

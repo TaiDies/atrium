@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 // that go through the API instead — making, renaming, moving or deleting pages — wait here, in order,
 // and are sent as soon as the server can be reached.
 
+// The database keeps its name from before 1.9.0 ("af-"): renaming it would lose changes still waiting to be sent.
 const store = createStore('af-offline', 'kv');
 
 /** Each server (and the web app on each address) keeps its own local data. */
@@ -263,7 +264,7 @@ export const cacheStorage = {
   removeItem: (key: string) => del(`${scope()}:${key}`, store),
 };
 
-const offlineKey = (userId: string) => `af-keep-offline:${scope()}:${userId}`;
+const offlineKey = (userId: string) => `atrium-keep-offline:${scope()}:${userId}`;
 
 /** Pages (with the pages inside them) kept downloaded on this device. */
 export function offlinePages(userId: string): string[] {

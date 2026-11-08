@@ -9,7 +9,7 @@ import { occurrencesBetween } from '../calendar/repeat';
 // time; blocks are dragged to move them and by their bottom edge to change how long they take.
 
 /** What the task list puts on a drag, so the plan knows what was dropped. */
-export const PLAN_DRAG = 'application/x-af-plan-task';
+export const PLAN_DRAG = 'application/x-atrium-plan-task';
 export interface PlanDrop {
   kind: 'event' | 'card' | 'block';
   eventId?: string;

@@ -2,7 +2,7 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { clearSessionCookie, endSessions, liveTicket, requireUser, SESSION_COOKIE, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
+import { clearSessionCookie, endSessions, liveTicket, requireUser, sessionToken, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
 import { closeUserSessions } from '../collab.js';
 import { config } from '../config.js';
 import { one, query, type Queryable, tx } from '../db.js';
@@ -183,7 +183,7 @@ export async function authRoutes(app: FastifyInstance) {
     let created = false;
     if (user) {
       const before = await one<{ email_verified_at: Date | null; password_hash: string | null }>('select email_verified_at, password_hash from users where id = $1', [user.id]);
-      const signedInHere = (await userFromToken(req.cookies[SESSION_COOKIE]))?.id === user.id;
+      const signedInHere = (await userFromToken(sessionToken(req.cookies)))?.id === user.id;
       if (!before?.email_verified_at && before?.password_hash && !signedInHere) {
         // The first proof that this person owns the address, on an account made with a password: the
         // password may have been set by someone else who signed up with this email first. Drop it and
@@ -207,7 +207,7 @@ export async function authRoutes(app: FastifyInstance) {
     // "Sign out everywhere" ends this person's sessions on all devices.
     const { everywhere } = parse(z.object({ everywhere: z.boolean().optional() }), req.body ?? {});
     if (everywhere) {
-      const user = await userFromToken(req.cookies[SESSION_COOKIE]);
+      const user = await userFromToken(sessionToken(req.cookies));
       if (user) {
         await endSessions(user.id);
         closeUserSessions(user.id);

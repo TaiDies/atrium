@@ -13,4 +13,4 @@ export function setLocal(key: string, value: unknown) {
   } catch {}
 }
 
-export const LAST_WORKSPACE_KEY = 'af-last-workspace';
+export const LAST_WORKSPACE_KEY = 'atrium-last-workspace';

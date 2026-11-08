@@ -477,7 +477,7 @@ body:has(.excalidraw) .ai-fab {
     padding-inline: 14px;
   }
   .af-sheet {
-    animation: af-sheet-up 180ms ease-out;
+    animation: atrium-sheet-up 180ms ease-out;
   }
   /* The bottom bar and the editing toolbar keep floating buttons clear. */
   body:has(.af-phone-nav) .ai-fab,
@@ -495,7 +495,7 @@ body:has(.excalidraw) .ai-fab {
     padding-bottom: 72px;
   }
 }
-@keyframes af-sheet-up {
+@keyframes atrium-sheet-up {
   from {
     transform: translateY(24px);
     opacity: 0.6;

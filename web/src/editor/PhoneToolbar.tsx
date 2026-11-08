@@ -55,7 +55,7 @@ export function PhoneToolbar({ editor, wrapper, ai }: { editor: any; wrapper: Re
   };
 
   return (
-    <div className="af-phone-toolbar fixed inset-x-0 bottom-0 z-40 flex items-center gap-0.5 overflow-x-auto border-t border-line bg-surface px-1 py-1 shadow-pop">
+    <div className="atrium-phone-toolbar fixed inset-x-0 bottom-0 z-40 flex items-center gap-0.5 overflow-x-auto border-t border-line bg-surface px-1 py-1 shadow-pop">
       <Key label="Add a block" onPress={() => suggestions?.openSuggestionMenu?.('/')}>
         <Plus size={20} />
       </Key>

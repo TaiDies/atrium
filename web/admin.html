@@ -9,7 +9,17 @@
     <title>Admin panel</title>
     <script>
       try {
-        var t = localStorage.getItem('af-theme') || 'system';
+        // Saved settings were named "af-..." before 1.9.0: move them to their new "atrium-..." names once.
+        [localStorage, sessionStorage].forEach(function (s) {
+          var old = [];
+          for (var i = 0; i < s.length; i++) if (/^af-/.test(s.key(i))) old.push(s.key(i));
+          old.forEach(function (k) {
+            var n = 'atrium-' + k.slice(3);
+            if (s.getItem(n) === null) s.setItem(n, s.getItem(k));
+            s.removeItem(k);
+          });
+        });
+        var t = localStorage.getItem('atrium-theme') || 'system';
         if (t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)) {
           document.documentElement.classList.add('dark');
         }

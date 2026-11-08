@@ -29,7 +29,7 @@ const DICTIONARIES: Record<string, { words: Record<string, string>; patterns: [R
   fr: { words: fr, patterns: frPatterns },
 };
 
-const KEY = 'af-lang';
+const KEY = 'atrium-lang';
 
 function initial(): string {
   try {

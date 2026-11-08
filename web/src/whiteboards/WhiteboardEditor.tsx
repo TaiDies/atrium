@@ -14,7 +14,7 @@ import '@excalidraw/excalidraw/index.css';
 // each person's cursor, selection and view travel through awareness so others can see and follow them.
 
 const LOCAL = 'excalidraw-local';
-const LIBRARY_KEY = 'af-whiteboard-library';
+const LIBRARY_KEY = 'atrium-whiteboard-library';
 
 type SceneElement = OrderedExcalidrawElement;
 

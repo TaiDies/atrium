@@ -120,7 +120,7 @@ export default function OfficeView({ file, kind, renderOriginal }: { file: Offic
       {mode === 'original' ? (
         <div className="min-h-0 flex-1">{renderOriginal()}</div>
       ) : state === 'ready' && session ? (
-        <div className={kind === 'document' ? 'min-h-0 flex-1' : 'af-ltr min-h-0 flex-1'} onKeyDownCapture={() => setArmed(true)} onPointerDownCapture={() => setArmed(true)} onPasteCapture={() => setArmed(true)} onDropCapture={() => setArmed(true)}>
+        <div className={kind === 'document' ? 'min-h-0 flex-1' : 'atrium-ltr min-h-0 flex-1'} onKeyDownCapture={() => setArmed(true)} onPointerDownCapture={() => setArmed(true)} onPasteCapture={() => setArmed(true)} onDropCapture={() => setArmed(true)}>
           {kind === 'document' && <DocEditor ref={editor} {...props} />}
           {kind === 'spreadsheet' && <SpreadsheetEditor ref={editor} {...props} />}
           {kind === 'presentation' && <SlidesEditor ref={editor} {...props} />}

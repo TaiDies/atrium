@@ -26,10 +26,10 @@ export function WhiteboardsPage() {
   const boards = useWhiteboards(workspace.id);
   const navigate = useNavigate();
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<Sort>(() => getLocal<Sort>('af-boards-sort', 'modified'));
+  const [sort, setSort] = useState<Sort>(() => getLocal<Sort>('atrium-boards-sort', 'modified'));
   const [settings, setSettings] = useState<Whiteboard | null>(null);
 
-  useEffect(() => setLocal('af-boards-sort', sort), [sort]);
+  useEffect(() => setLocal('atrium-boards-sort', sort), [sort]);
   useEffect(() => {
     document.title = `Whiteboards · ${workspace.name}`;
   }, [workspace.name]);
@@ -246,8 +246,8 @@ export function WhiteboardPage() {
   const [settings, setSettings] = useState(false);
   const [full, setFull] = useState(false);
   // Grid and light/dark are remembered per board on this device.
-  const [view, setView] = useState<BoardView>(() => getLocal<BoardView>(`af-board-view-${boardId}`, { grid: true, theme: 'app' }));
-  useEffect(() => setLocal(`af-board-view-${boardId}`, view), [boardId, view]);
+  const [view, setView] = useState<BoardView>(() => getLocal<BoardView>(`atrium-board-view-${boardId}`, { grid: true, theme: 'app' }));
+  useEffect(() => setLocal(`atrium-board-view-${boardId}`, view), [boardId, view]);
   const [themeMenu, setThemeMenu] = useState<Anchor | null>(null);
 
   useEffect(() => {
@@ -259,7 +259,7 @@ export function WhiteboardPage() {
 
   useEffect(() => {
     if (!full) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !document.querySelector('.excalidraw .Island, [data-af-popover]') && setFull(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !document.querySelector('.excalidraw .Island, [data-atrium-popover]') && setFull(false);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [full]);

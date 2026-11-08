@@ -68,7 +68,7 @@ export function PhoneNav() {
     { label: 'Search', icon: Search, active: false, go: openSearch },
   ];
   return (
-    <nav className="af-phone-nav flex shrink-0 border-t border-line bg-sidebar print:hidden" aria-label="Main">
+    <nav className="atrium-phone-nav flex shrink-0 border-t border-line bg-sidebar print:hidden" aria-label="Main">
       {items.map(({ label, icon: Icon, active, go }) => (
         <button
           key={label}

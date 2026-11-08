@@ -10,20 +10,30 @@
       // Whiteboard fonts are served by this app (see vite.config.ts), not a CDN.
       window.EXCALIDRAW_ASSET_PATH = '/excalidraw-assets/';
       try {
-        var t = localStorage.getItem('af-theme') || 'system';
+        // Saved settings were named "af-..." before 1.9.0: move them to their new "atrium-..." names once.
+        [localStorage, sessionStorage].forEach(function (s) {
+          var old = [];
+          for (var i = 0; i < s.length; i++) if (/^af-/.test(s.key(i))) old.push(s.key(i));
+          old.forEach(function (k) {
+            var n = 'atrium-' + k.slice(3);
+            if (s.getItem(n) === null) s.setItem(n, s.getItem(k));
+            s.removeItem(k);
+          });
+        });
+        var t = localStorage.getItem('atrium-theme') || 'system';
         if (t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)) {
           document.documentElement.classList.add('dark');
         }
-        document.documentElement.dataset.color = localStorage.getItem('af-color-theme') || 'default';
+        document.documentElement.dataset.color = localStorage.getItem('atrium-color-theme') || 'default';
         var d = document.documentElement.dataset;
-        d.font = localStorage.getItem('af-font') || 'sans';
-        d.size = localStorage.getItem('af-text-size') || 'default';
-        d.width = localStorage.getItem('af-page-width') || 'default';
-        d.density = localStorage.getItem('af-density') || 'comfortable';
-        var cc = JSON.parse(localStorage.getItem('af-custom-colors') || 'null');
+        d.font = localStorage.getItem('atrium-font') || 'sans';
+        d.size = localStorage.getItem('atrium-text-size') || 'default';
+        d.width = localStorage.getItem('atrium-page-width') || 'default';
+        d.density = localStorage.getItem('atrium-density') || 'comfortable';
+        var cc = JSON.parse(localStorage.getItem('atrium-custom-colors') || 'null');
         var own = cc && cc[document.documentElement.classList.contains('dark') ? 'dark' : 'light'];
         if (own) for (var k in own) if (/^[a-z]+$/.test(k) && /^#[0-9a-f]{6}$/i.test(own[k])) document.documentElement.style.setProperty('--' + k, own[k]);
-        var a = localStorage.getItem('af-accent');
+        var a = localStorage.getItem('atrium-accent');
         if (a && /^#[0-9a-f]{6}$/i.test(a)) {
           document.documentElement.style.setProperty('--custom-accent', a);
           document.documentElement.setAttribute('data-custom-accent', '');

@@ -123,7 +123,7 @@ export function PageGroupMenu({ workspaceId, style, page, onDone }: { workspaceI
     }
   };
   const row = (key: string, label: string, color: string | null, on: boolean, go: () => void, hint?: string) => (
-    <button key={key} onClick={go} title={hint} className="af-menu-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm hover:bg-hover">
+    <button key={key} onClick={go} title={hint} className="atrium-menu-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm hover:bg-hover">
       <span className={clsx('size-3 shrink-0 rounded-full', !color && 'border border-line')} style={color ? { background: color } : undefined} />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {on && <Check size={14} className="text-accent" />}

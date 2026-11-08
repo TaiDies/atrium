@@ -195,7 +195,7 @@ transcription (needs OpenAI, Groq or Gemini; `AI_TRANSCRIBE_MODEL` picks the mod
 ### API, webhooks and Claude (MCP)
 
 - **API tokens:** Settings → **API & webhooks** → New token (optionally limited to one workspace, with
-  an expiry). Use `Authorization: Bearer af_…`. The reference is at `https://your-server/api/docs`; a
+  an expiry). Use `Authorization: Bearer atr_…` (tokens made before 1.9.0 start with `af_` and still work). The reference is at `https://your-server/api/docs`; a
   guide to the whole app for programs and AI assistants is at `/api/guide`.
 - **Webhooks** (workspace owners): an address that receives signed JSON when pages, events, tasks or
   files change.

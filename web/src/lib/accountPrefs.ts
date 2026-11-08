@@ -6,8 +6,8 @@ import { setPrefsHandler } from './prefsSync';
 // (They're still kept on the device too, so the first paint is right before anything loads.)
 
 /** The settings that travel with the account (the same keys the device keeps them under). */
-const KEYS = ['af-theme', 'af-color-theme', 'af-font', 'af-text-size', 'af-page-width', 'af-density', 'af-accent', 'af-custom-colors', 'af-lang'];
-const LANG = 'af-lang';
+const KEYS = ['atrium-theme', 'atrium-color-theme', 'atrium-font', 'atrium-text-size', 'atrium-page-width', 'atrium-density', 'atrium-accent', 'atrium-custom-colors', 'atrium-lang'];
+const LANG = 'atrium-lang';
 
 function onDevice(): Record<string, string | null> {
   const out: Record<string, string | null> = {};

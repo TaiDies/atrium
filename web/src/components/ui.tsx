@@ -121,7 +121,7 @@ export function Dialog({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       // Escape closes the innermost thing first: menus inside the dialog, then the dialog.
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-af-popover], .bn-suggestion-menu')) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-atrium-popover], .bn-suggestion-menu')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -138,7 +138,7 @@ export function Dialog({
     >
       <div
         role="dialog"
-        className={clsx('shadow-pop flex w-full flex-col overflow-hidden bg-surface', phone ? 'af-sheet rounded-t-2xl' : 'rounded-xl', className)}
+        className={clsx('shadow-pop flex w-full flex-col overflow-hidden bg-surface', phone ? 'atrium-sheet rounded-t-2xl' : 'rounded-xl', className)}
         style={phone ? { maxWidth: '100%', maxHeight: '94dvh' } : { maxWidth: width, maxHeight }}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -200,8 +200,8 @@ export function Popover({
       const target = e.target as Element | null;
       if (!el || !target || el.contains(target)) return;
       // A click in a popover opened from this one (e.g. an option's menu) keeps this one open.
-      const popovers = [...document.querySelectorAll('[data-af-popover]')];
-      const inside = target.closest?.('[data-af-popover]');
+      const popovers = [...document.querySelectorAll('[data-atrium-popover]')];
+      const inside = target.closest?.('[data-atrium-popover]');
       if (inside && popovers.indexOf(inside) > popovers.indexOf(el)) return;
       onClose();
     };
@@ -219,10 +219,10 @@ export function Popover({
   if (phone) {
     // On phones: a sheet along the bottom, over a dimmed page (tapping it closes the sheet).
     return createPortal(
-      <div ref={ref} data-af-popover="" className="fixed inset-0 z-[60] flex flex-col justify-end">
+      <div ref={ref} data-atrium-popover="" className="fixed inset-0 z-[60] flex flex-col justify-end">
         <div className="absolute inset-0 bg-black/30" onPointerDown={onClose} />
         <div
-          className={clsx('af-sheet relative overflow-y-auto rounded-t-2xl bg-surface pb-[max(8px,env(safe-area-inset-bottom))] shadow-pop', className)}
+          className={clsx('atrium-sheet relative overflow-y-auto rounded-t-2xl bg-surface pb-[max(8px,env(safe-area-inset-bottom))] shadow-pop', className)}
           style={{ width: '100%', maxWidth: '100%', minWidth: 0, maxHeight: '75dvh' }}
         >
           <div className="mx-auto my-2 h-1 w-10 rounded-full bg-line" aria-hidden />
@@ -235,7 +235,7 @@ export function Popover({
   return createPortal(
     <div
       ref={ref}
-      data-af-popover=""
+      data-atrium-popover=""
       className={clsx('shadow-pop fixed z-[60] rounded-lg bg-surface', className)}
       style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999 }}
     >
@@ -272,7 +272,7 @@ export function MenuItem({
     <button
       onClick={onClick}
       className={clsx(
-        'af-menu-item flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-start text-sm hover:bg-hover',
+        'atrium-menu-item flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-start text-sm hover:bg-hover',
         danger ? 'text-danger' : 'text-fg',
       )}
     >
@@ -323,7 +323,7 @@ export function Toaster() {
     () => toasts,
   );
   return createPortal(
-    <div className="af-toasts pointer-events-none fixed bottom-4 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="atrium-toasts pointer-events-none fixed bottom-4 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
       {items.map((t) => (
         <div
           key={t.id}

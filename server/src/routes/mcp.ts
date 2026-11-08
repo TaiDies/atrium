@@ -403,7 +403,7 @@ export async function mcpRoutes(app: FastifyInstance) {
   app.get('/mcp', async (_req, reply) => reply.code(405).header('allow', 'POST').send({ error: 'Send MCP messages with POST' }));
 
   app.post('/mcp', { preHandler: requireUser, bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
-    if (!req.headers.authorization) throw new HttpError(401, 'Connect with an API token (Authorization: Bearer af_…)');
+    if (!req.headers.authorization) throw new HttpError(401, 'Connect with an API token (Authorization: Bearer atr_…)');
     const workspaceId = await workspaceFor(req);
     const ctx: Ctx = { userId: req.user.id, workspaceId, auth: req.headers.authorization, inject: app.inject.bind(app) };
     const msg = req.body as RpcRequest | RpcRequest[];

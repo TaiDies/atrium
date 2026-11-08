@@ -263,7 +263,7 @@ function InkedPdfInner({ file, user }: { file: FileInfo; user: NonNullable<Retur
 
 type Zoom = number | 'fit';
 
-const TOOL_KEY = 'af-ink-tool';
+const TOOL_KEY = 'atrium-ink-tool';
 
 /** `recent` holds the custom colours picked for a tool, newest first. */
 interface ToolPrefs {
@@ -352,10 +352,10 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   const [zoom, setZoom] = useState<Zoom>('fit');
   // Dark pages: the PDF drawn with its colours inverted (works for scanned pages too). Starts on in dark mode.
   const { resolved: appTheme } = useTheme();
-  const [darkPages, setDarkPagesState] = useState<boolean>(() => getLocal<boolean | null>('af-pdf-dark', null) ?? appTheme === 'dark');
+  const [darkPages, setDarkPagesState] = useState<boolean>(() => getLocal<boolean | null>('atrium-pdf-dark', null) ?? appTheme === 'dark');
   const setDarkPages = (v: boolean) => {
     setDarkPagesState(v);
-    setLocal('af-pdf-dark', v);
+    setLocal('atrium-pdf-dark', v);
   };
   const [width, setWidth] = useState(0);
   const [page, setPage] = useState(1);

@@ -7,7 +7,17 @@ import { one, query } from './db.js';
 import { limiter } from './rateLimit.js';
 import { HttpError } from './util.js';
 
-export const SESSION_COOKIE = 'af_session';
+export const SESSION_COOKIE = 'atrium_session';
+/**
+ * The cookie's name before 1.9.0. Still read, and still set next to the new one, so older Windows and
+ * Android apps (which look for this name) and browsers signed in before the rename stay signed in.
+ */
+const LEGACY_SESSION_COOKIE = 'af_session';
+
+/** The session token from a request's cookies, under the current name or the old one. */
+export function sessionToken(cookies: Record<string, string | undefined>): string | undefined {
+  return cookies[SESSION_COOKIE] ?? cookies[LEGACY_SESSION_COOKIE];
+}
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
 
 export interface SessionUser {
@@ -27,17 +37,14 @@ declare module 'fastify' {
 export async function setSessionCookie(reply: FastifyReply, userId: string) {
   const row = await one<{ session_version: number }>('select session_version from users where id = $1', [userId]);
   const token = jwt.sign({ sub: userId, v: row?.session_version ?? 0 }, config.sessionSecret, { expiresIn: SESSION_SECONDS });
-  reply.setCookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: config.secureCookies,
-    path: '/',
-    maxAge: SESSION_SECONDS,
-  });
+  const options = { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, path: '/', maxAge: SESSION_SECONDS } as const;
+  reply.setCookie(SESSION_COOKIE, token, options);
+  reply.setCookie(LEGACY_SESSION_COOKIE, token, options);
 }
 
 export function clearSessionCookie(reply: FastifyReply) {
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
+  reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
 }
 
 /** Ends every session of an account, on every device (sign-ins made before now stop working). */
@@ -85,9 +92,9 @@ function touch(userId: string) {
   query('update users set last_seen_at = now() where id = $1', [userId]).catch(() => {});
 }
 
-/** A personal API token ("Authorization: Bearer af_…"): acts as the person who made it. */
+/** A personal API token ("Authorization: Bearer atr_…", or "af_…" from before 1.9.0): acts as the person who made it. */
 async function userFromApiToken(header: string | undefined): Promise<SessionUser | null> {
-  const token = /^Bearer\s+(af_[A-Za-z0-9_-]{20,80})$/.exec(header ?? '')?.[1];
+  const token = /^Bearer\s+((?:atr|af)_[A-Za-z0-9_-]{20,80})$/.exec(header ?? '')?.[1];
   if (!token) return null;
   const hash = createHash('sha256').update(token).digest('hex');
   const user = await one<SessionUser & { tokenId: string; workspaceId: string | null }>(
@@ -118,7 +125,7 @@ export async function requireUser(req: FastifyRequest) {
     req.user = fromToken;
     return;
   }
-  const user = await userFromToken(req.cookies[SESSION_COOKIE]);
+  const user = await userFromToken(sessionToken(req.cookies));
   if (!user) throw new HttpError(401, 'Please sign in');
   req.user = user;
 }

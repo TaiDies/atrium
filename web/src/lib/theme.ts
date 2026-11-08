@@ -74,7 +74,7 @@ export const CUSTOM_COLORS: { key: string; label: string; hint: string }[] = [
 ];
 
 export type CustomColors = { light: Record<string, string>; dark: Record<string, string> };
-const COLORS_KEY = 'af-custom-colors';
+const COLORS_KEY = 'atrium-custom-colors';
 const HEX = /^#[0-9a-f]{6}$/i;
 
 function readColors(): CustomColors {
@@ -102,13 +102,13 @@ interface Prefs {
 
 // The index.html boot script reads the same keys so the first paint already has the right theme.
 const KEYS: Record<keyof Prefs, string> = {
-  mode: 'af-theme',
-  color: 'af-color-theme',
-  font: 'af-font',
-  size: 'af-text-size',
-  width: 'af-page-width',
-  density: 'af-density',
-  accent: 'af-accent',
+  mode: 'atrium-theme',
+  color: 'atrium-color-theme',
+  font: 'atrium-font',
+  size: 'atrium-text-size',
+  width: 'atrium-page-width',
+  density: 'atrium-density',
+  accent: 'atrium-accent',
 };
 
 const ALLOWED: { [K in keyof Prefs]: (v: string) => boolean } = {

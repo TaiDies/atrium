@@ -39,7 +39,7 @@ export function RowDetail({ rowId, full, onToggleFull, onClose }: { rowId: strin
   useEffect(() => {
     if (!full) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-af-popover], .bn-suggestion-menu')) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-atrium-popover], .bn-suggestion-menu')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey);

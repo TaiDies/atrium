@@ -127,7 +127,7 @@ function DatabaseViewInner({
     [liveActions, readOnly],
   );
   const [params, setParams] = useSearchParams();
-  const [viewId, setViewId] = useState<string | null>(() => getLocal<string | null>(`af-view-${pageId}`, null));
+  const [viewId, setViewId] = useState<string | null>(() => getLocal<string | null>(`atrium-view-${pageId}`, null));
   const view = linked ? db.views.find((v) => v.id === linked.viewId) : (db.views.find((v) => v.id === viewId) ?? db.views[0]);
 
   const rowParam = params.get('row');
@@ -155,7 +155,7 @@ function DatabaseViewInner({
 
   const selectView = (id: string) => {
     setViewId(id);
-    setLocal(`af-view-${pageId}`, id);
+    setLocal(`atrium-view-${pageId}`, id);
   };
 
   if (!view && linked) {

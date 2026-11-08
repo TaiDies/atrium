@@ -23,7 +23,7 @@ import { getRole, isPermission, listRoles, PERMISSIONS } from './roles.js';
 // The admin panel: a separate server on its own port (ADMIN_PORT) for managing accounts and the AI
 // connection offered to everyone. Nothing here is reachable from the main app's port.
 
-const COOKIE = 'af_admin';
+const COOKIE = 'atrium_admin';
 const SESSION_SECONDS = 12 * 60 * 60;
 const adminSecret = () => `${config.sessionSecret}:admin`;
 
@@ -65,7 +65,7 @@ function allowAttempt(ip: string) {
 }
 
 async function requireAdmin(req: FastifyRequest) {
-  const token = req.cookies[COOKIE];
+  const token = req.cookies[COOKIE] ?? req.cookies.af_admin; // af_admin: the name before 1.9.0
   try {
     if (token && typeof jwt.verify(token, adminSecret()) !== 'string') return;
   } catch {
@@ -148,6 +148,7 @@ export async function startAdminServer() {
 
       api.post('/logout', async (_req, reply) => {
         reply.clearCookie(COOKIE, { path: '/' });
+        reply.clearCookie('af_admin', { path: '/' });
         return { ok: true };
       });
 

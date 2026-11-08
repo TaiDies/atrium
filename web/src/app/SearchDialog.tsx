@@ -13,7 +13,7 @@ import { PageIcon } from './PageIcon';
 // Search (Ctrl/⌘+K) and the quick switcher (Ctrl/⌘+P): pages you opened lately, then results for
 // what's typed — pages, cards and the text inside files — with filters.
 
-const recentKey = (workspaceId: string) => `af-recent-pages:${workspaceId}`;
+const recentKey = (workspaceId: string) => `atrium-recent-pages:${workspaceId}`;
 
 /** Remembers that a page was opened (for "Recently opened"). */
 export function rememberVisit(workspaceId: string, pageId: string) {

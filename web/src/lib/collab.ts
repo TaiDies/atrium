@@ -45,6 +45,7 @@ export function useCollab(pageId: string, user: User, onPageUpdated: () => void)
       }
     };
     // The copy on this device (kept per server and per account).
+    // Named "af:" since before 1.9.0; kept, so copies with unsent edits aren't left behind.
     const local = new IndexeddbPersistence(`af:${scope()}:${user.id}:${pageId}`, doc);
     let fallback: ReturnType<typeof setTimeout> | undefined;
     local.on('synced', () => {

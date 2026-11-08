@@ -60,9 +60,9 @@ function FileOverlay() {
     if (!fileId) return;
     // Menus and pickers (like a card's file list) close when a file opens, so none stays on top of it.
     // (Dialogs leave Escape to an open menu, so a card underneath stays open.)
-    if (document.querySelector('[data-af-popover]')) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    if (document.querySelector('[data-atrium-popover]')) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-af-popover], [role="dialog"] [role="dialog"]')) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-atrium-popover], [role="dialog"] [role="dialog"]')) return;
       e.preventDefault();
       e.stopPropagation();
       closeRef.current();
@@ -132,20 +132,20 @@ export function AppLayout() {
     };
   }, [workspace?.id, user.id, !!pages.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(() => getLocal('af-sidebar-open', window.innerWidth >= 768));
+  const [sidebarOpen, setSidebarOpen] = useState(() => getLocal('atrium-sidebar-open', window.innerWidth >= 768));
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!workspace) return;
     setLocal(LAST_WORKSPACE_KEY, workspace.id);
-    setExpanded(new Set(getLocal<string[]>(`af-expanded-${workspace.id}`, [])));
+    setExpanded(new Set(getLocal<string[]>(`atrium-expanded-${workspace.id}`, [])));
   }, [workspace?.id]);
 
   const updateExpanded = useCallback(
     (fn: (prev: Set<string>) => Set<string>) => {
       setExpanded((prev) => {
         const next = fn(prev);
-        if (workspaceId) setLocal(`af-expanded-${workspaceId}`, [...next]);
+        if (workspaceId) setLocal(`atrium-expanded-${workspaceId}`, [...next]);
         return next;
       });
     },
@@ -164,7 +164,7 @@ export function AppLayout() {
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((open) => {
-      setLocal('af-sidebar-open', !open);
+      setLocal('atrium-sidebar-open', !open);
       return !open;
     });
   }, []);

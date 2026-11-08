@@ -371,7 +371,7 @@ function FloatingCall({ call, media, onBack }: { call: ActiveCall; media: { mic:
   }, []);
 
   return (
-    <div ref={box} className="fixed z-[60] w-80 overflow-hidden rounded-xl border border-white/10 bg-neutral-950 text-white shadow-2xl af-ltr" style={{ left: pos.x, top: pos.y }}>
+    <div ref={box} className="fixed z-[60] w-80 overflow-hidden rounded-xl border border-white/10 bg-neutral-950 text-white shadow-2xl atrium-ltr" style={{ left: pos.x, top: pos.y }}>
       <div
         className="flex cursor-grab touch-none items-center gap-2 px-3 py-1.5 text-xs select-none active:cursor-grabbing"
         onPointerDown={(e) => {

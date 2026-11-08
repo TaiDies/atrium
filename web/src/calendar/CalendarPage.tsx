@@ -160,15 +160,15 @@ const DEFAULT_FILTERS: Filters = { events: true, tasks: true, cards: true, block
 export function CalendarPage() {
   const { workspace, sidebarOpen, toggleSidebar, pages } = useApp();
   const navigate = useNavigate();
-  const [view, setView] = useState<View>(() => getLocal<View>('af-cal-view', window.innerWidth < 640 ? 'agenda' : 'month'));
+  const [view, setView] = useState<View>(() => getLocal<View>('atrium-cal-view', window.innerWidth < 640 ? 'agenda' : 'month'));
   const [params] = useSearchParams();
   // Links from reminders open the calendar on the event's day (?date=YYYY-MM-DD).
   const [cursor, setCursor] = useState(() => {
     const d = params.get('date');
     return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayStr();
   });
-  const [weekStart, setWeekStart] = useState<0 | 1>(() => getLocal<0 | 1>('af-cal-week-start', 1));
-  const [filters, setFilters] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, ...getLocal<Partial<Filters>>('af-cal-filters', {}) }));
+  const [weekStart, setWeekStart] = useState<0 | 1>(() => getLocal<0 | 1>('atrium-cal-week-start', 1));
+  const [filters, setFilters] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, ...getLocal<Partial<Filters>>('atrium-cal-filters', {}) }));
   const [filterAnchor, setFilterAnchor] = useState<Anchor | null>(null);
   const [newMenu, setNewMenu] = useState<Anchor | null>(null);
   const [moreMenu, setMoreMenu] = useState<Anchor | null>(null);
@@ -196,9 +196,9 @@ export function CalendarPage() {
   const [eventDialog, setEventDialog] = useState<{ id: string | null; draft?: EventDraft } | null>(null);
   const [cardDialog, setCardDialog] = useState<CalendarCard | null>(null);
 
-  useEffect(() => setLocal('af-cal-view', view), [view]);
-  useEffect(() => setLocal('af-cal-week-start', weekStart), [weekStart]);
-  useEffect(() => setLocal('af-cal-filters', filters), [filters]);
+  useEffect(() => setLocal('atrium-cal-view', view), [view]);
+  useEffect(() => setLocal('atrium-cal-week-start', weekStart), [weekStart]);
+  useEffect(() => setLocal('atrium-cal-filters', filters), [filters]);
   useEffect(() => {
     document.title = `Calendar · ${workspace.name}`;
   }, [workspace.name]);

@@ -47,8 +47,8 @@ const markRead = async (keys: string[]) => {
 
 // ---------- desktop alerts ----------
 
-const ALERTS_KEY = 'af-desktop-alerts';
-const SHOWN_KEY = 'af-alerted';
+const ALERTS_KEY = 'atrium-desktop-alerts';
+const SHOWN_KEY = 'atrium-alerted';
 
 const alertsOn = () => {
   try {

@@ -730,7 +730,7 @@ function GraphCanvas({
   }, [fitTick]);
 
   return (
-    <div ref={wrap} className="af-ltr absolute inset-0 touch-none overflow-hidden bg-bg">
+    <div ref={wrap} className="atrium-ltr absolute inset-0 touch-none overflow-hidden bg-bg">
       <canvas ref={canvas} className="block cursor-grab" aria-label="Graph of pages" />
       <button
         onClick={() => setFitTick((t) => t + 1)}

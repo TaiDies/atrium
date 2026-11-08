@@ -20,7 +20,41 @@ use tauri::{
     AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder,
 };
 
-const SESSION_COOKIE: &str = "af_session";
+const SESSION_COOKIE: &str = "atrium_session";
+
+/// The app's identifier before 1.9.0. Its saved data is copied over on the first launch after the rename.
+#[cfg(desktop)]
+const OLD_IDENTIFIER: &str = "com.selfhosted.workspace";
+
+/// Copies a folder and everything in it (best effort: files that can't be read are skipped).
+#[cfg(desktop)]
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    let Ok(entries) = fs::read_dir(from) else { return };
+    let _ = fs::create_dir_all(to);
+    for entry in entries.flatten() {
+        let target = to.join(entry.file_name());
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => copy_dir(&entry.path(), &target),
+            Ok(_) => {
+                let _ = fs::copy(entry.path(), target);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// On the first launch after the identifier changed, brings over the chosen server, the session and
+/// everything the page kept on the device (settings, offline copies, changes waiting to be sent).
+#[cfg(desktop)]
+fn move_old_data(app: &AppHandle) {
+    let dirs = [app.path().app_data_dir(), app.path().app_local_data_dir()];
+    for dir in dirs.into_iter().flatten() {
+        let Some(old) = dir.parent().map(|p| p.join(OLD_IDENTIFIER)) else { continue };
+        if old.is_dir() && !dir.exists() {
+            copy_dir(&old, &dir);
+        }
+    }
+}
 
 /// What the app remembers between launches.
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -326,6 +360,8 @@ pub fn run() {
             });
         })
         .setup(|app| {
+            #[cfg(desktop)]
+            move_old_data(app.handle());
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
             let file = dir.join("settings.json");

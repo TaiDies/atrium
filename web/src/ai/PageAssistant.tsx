@@ -11,7 +11,7 @@ import type { Chat } from './AiPage';
 
 const Conversation = lazy(() => import('./AiPage').then((m) => ({ default: m.Conversation })));
 
-const chatKey = (workspaceId: string, pageId?: string) => (pageId ? `af-page-ai:${pageId}` : `af-ai-general:${workspaceId}`);
+const chatKey = (workspaceId: string, pageId?: string) => (pageId ? `atrium-page-ai:${pageId}` : `atrium-ai-general:${workspaceId}`);
 
 /**
  * A small assistant in the corner of every screen, only when an AI connection is set up (the person's
