@@ -1,2 +1,5 @@
 # Shell scripts run inside Linux containers: keep Unix line endings on every system.
 *.sh text eol=lf
+# The app page's inline script is allowed by its hash (content security policy); browsers hash it with
+# Unix line endings, so the file must have them too.
+web/index.html text eol=lf

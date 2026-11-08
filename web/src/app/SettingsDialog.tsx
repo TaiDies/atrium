@@ -110,8 +110,8 @@ function AccountTab() {
     }
   };
 
-  const signOut = async () => {
-    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  const signOut = async (everywhere = false) => {
+    await api('/api/auth/logout', { method: 'POST', body: everywhere ? { everywhere: true } : undefined }).catch(() => {});
     await loadNative();
     queryClient.clear();
     queryClient.setQueryData(keys.me, null);
@@ -165,7 +165,22 @@ function AccountTab() {
       <UsageRow />
       <DigestRow />
       <Row label="Sign out" description={isNativeApp() ? "Sign out on this device." : "Sign out of this browser."}>
-        <Button onClick={signOut}>Sign out</Button>
+        <Button onClick={() => signOut()}>Sign out</Button>
+      </Row>
+      <Row label="Sign out everywhere" description="Ends your sessions on every browser, phone and computer, including this one. Use it if you lost a device or think someone else is signed in.">
+        <Button
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: 'Sign out everywhere?',
+              message: 'You will be signed out on all your devices and need to sign in again on each one.',
+              confirmLabel: 'Sign out everywhere',
+              danger: true,
+            });
+            if (ok) await signOut(true);
+          }}
+        >
+          Sign out everywhere
+        </Button>
       </Row>
       {isNativeApp() && (
         <Row label="Server" description={nativeInfo()?.server ?? ''}>

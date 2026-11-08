@@ -164,18 +164,27 @@ async fn proxy(state: &AppState, method: &str, path_and_query: &str, headers: &[
     }
 }
 
+/// Adds the content security policy from tauri.conf.json (with the hashes of the page's own inline
+/// script) to the app's pages, so the page can't run scripts from anywhere else.
+fn with_csp(mut res: Response<Vec<u8>>, csp: Option<String>) -> Response<Vec<u8>> {
+    if let Some(value) = csp.and_then(|c| HeaderValue::from_str(&c).ok()) {
+        res.headers_mut().insert(header::CONTENT_SECURITY_POLICY, value);
+    }
+    res
+}
+
 /// The built-in web app (any other path is a page of the app, so it gets index.html).
 fn asset(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
     let resolver = app.asset_resolver();
     let wanted = path.trim_start_matches('/');
     let wanted = if wanted.is_empty() { "index.html" } else { wanted };
     if let Some(a) = resolver.get(wanted.to_string()) {
-        return respond(StatusCode::OK, &a.mime_type, a.bytes);
+        return with_csp(respond(StatusCode::OK, &a.mime_type, a.bytes), a.csp_header);
     }
     let last = wanted.rsplit('/').next().unwrap_or("");
     if !last.contains('.') {
         if let Some(a) = resolver.get("index.html".to_string()) {
-            return respond(StatusCode::OK, &a.mime_type, a.bytes);
+            return with_csp(respond(StatusCode::OK, &a.mime_type, a.bytes), a.csp_header);
         }
     }
     respond(StatusCode::NOT_FOUND, "text/plain", b"Not found".to_vec())
