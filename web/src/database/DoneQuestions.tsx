@@ -48,6 +48,22 @@ export function doneQuestionsFor(db: DatabaseState, rowId: string, patch: Record
   return null;
 }
 
+/**
+ * The answers to clear when `patch` reopens a card (unticks it, or moves it out of done), as a cell patch;
+ * null when nothing needs clearing.
+ */
+export function clearedAnswersFor(db: DatabaseState, rowId: string, patch: Record<string, unknown>): Record<string, null> | null {
+  const row = db.rows.find((r) => r.id === rowId);
+  if (!row) return null;
+  const out: Record<string, null> = {};
+  for (const [fieldId, value] of Object.entries(patch)) {
+    const field = db.fields.find((f) => f.id === fieldId);
+    if (!field?.askOnDone?.length || marksDone(field, value) || !marksDone(field, row.cells[fieldId])) continue;
+    for (const q of field.askOnDone) if (!(q.fieldId in patch) && !isEmpty(row.cells[q.fieldId])) out[q.fieldId] = null;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** A card about to be finished some other way (a task in Today): the questions of its done property, if it isn't done yet. */
 function questionsForCard(db: DatabaseState, rowId: string): DoneAsk | null {
   const row = db.rows.find((r) => r.id === rowId);

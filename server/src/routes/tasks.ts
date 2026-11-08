@@ -240,8 +240,20 @@ export function setCardDone(doc: Y.Doc, rowId: string, done: boolean): boolean {
     if (!option) throw new HttpError(400, done ? 'Add a “Done” status to this database to tick cards off' : 'This card has no status to go back to');
     cells.set(field.id, option.id);
   }
+  // Reopened: the answers given when it was marked done (see askOnDone on the web) are cleared.
+  if (!done) for (const id of doneAnswerFields(doc)) cells.delete(id);
   row.set('updatedAt', Date.now());
   return true;
+}
+
+/** Properties a database asks about when a card is marked done (`askOnDone` on its done property). */
+function doneAnswerFields(doc: Y.Doc): string[] {
+  const ids: string[] = [];
+  for (const f of doc.getArray<Y.Map<unknown>>('fields').toArray()) {
+    const ask = f instanceof Y.Map ? f.get('askOnDone') : null;
+    if (Array.isArray(ask)) for (const q of ask) if (q && typeof q.fieldId === 'string') ids.push(q.fieldId);
+  }
+  return ids;
 }
 
 /** Ticks a to-do item off or reopens it. */

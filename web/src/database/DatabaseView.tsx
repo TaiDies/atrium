@@ -23,7 +23,7 @@ import type { LinkedView } from '../editor/EmbeddedDatabase';
 import { NewButton } from './CardTemplates';
 import { DatabaseMenu } from './DatabaseMenu';
 import { RowDetail } from './RowDetail';
-import { type DoneAsk, DoneQuestionsDialog, doneQuestionsFor } from './DoneQuestions';
+import { clearedAnswersFor, type DoneAsk, DoneQuestionsDialog, doneQuestionsFor } from './DoneQuestions';
 import { computeDatabase, useRelated } from './computed';
 import { TimelineView } from './TimelineView';
 
@@ -120,7 +120,12 @@ function DatabaseViewInner({
       ...liveActions,
       updateCell(rowId, fieldId, value) {
         const ask = doneQuestionsFor(storedRef.current, rowId, { [fieldId]: value });
-        if (!ask) return liveActions.updateCell(rowId, fieldId, value);
+        if (!ask) {
+          // Reopening a card clears the answers given when it was marked done.
+          const cleared = clearedAnswersFor(storedRef.current, rowId, { [fieldId]: value });
+          for (const id of Object.keys(cleared ?? {})) liveActions.updateCell(rowId, id, null);
+          return liveActions.updateCell(rowId, fieldId, value);
+        }
         setAsking({
           ...ask,
           apply: (answers) => {
@@ -131,7 +136,7 @@ function DatabaseViewInner({
       },
       moveRow(rowId, toIndex, cellPatch) {
         const ask = cellPatch && doneQuestionsFor(storedRef.current, rowId, cellPatch);
-        if (!ask) return liveActions.moveRow(rowId, toIndex, cellPatch);
+        if (!ask) return liveActions.moveRow(rowId, toIndex, cellPatch && { ...cellPatch, ...clearedAnswersFor(storedRef.current, rowId, cellPatch) });
         setAsking({ ...ask, apply: (answers) => liveActions.moveRow(rowId, toIndex, { ...cellPatch, ...answers }) });
       },
     }),
