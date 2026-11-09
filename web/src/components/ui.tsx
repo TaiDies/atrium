@@ -98,6 +98,16 @@ export function Input({ className, ...rest }: React.InputHTMLAttributes<HTMLInpu
   );
 }
 
+/** Open dialogs, newest last: keys go to the top one only. */
+const openDialogs: symbol[] = [];
+
+/** What Tab can reach inside an element. */
+function focusables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')].filter(
+    (el) => el.offsetParent !== null || el === document.activeElement,
+  );
+}
+
 export function Dialog({
   open,
   onClose,
@@ -117,15 +127,46 @@ export function Dialog({
   top?: string;
   className?: string;
 }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
+    const me = Symbol('dialog');
+    openDialogs.push(me);
+    const before = document.activeElement as HTMLElement | null;
+    // Focus moves into the dialog (unless something in it already took it, like an autofocus field).
+    requestAnimationFrame(() => {
+      const el = box.current;
+      if (el && !el.contains(document.activeElement)) (focusables(el)[0] ?? el).focus();
+    });
     const onKey = (e: KeyboardEvent) => {
+      // Only the dialog on top answers (one opened from another closes first).
+      if (openDialogs[openDialogs.length - 1] !== me) return;
+      if (e.key === 'Tab' && box.current) {
+        // Tab stays inside the dialog.
+        const items = focusables(box.current);
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       // Escape closes the innermost thing first: menus inside the dialog, then the dialog.
       if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[data-atrium-popover], .bn-suggestion-menu')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      openDialogs.splice(openDialogs.indexOf(me), 1);
+      // Focus goes back to what opened it.
+      if (before && document.contains(before)) before.focus();
+    };
   }, [open, onClose]);
   const phone = usePhone();
   useBackClose(open, onClose);
@@ -137,7 +178,10 @@ export function Dialog({
       onMouseDown={onClose}
     >
       <div
+        ref={box}
         role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
         className={clsx('shadow-pop flex w-full flex-col overflow-hidden bg-surface', phone ? 'atrium-sheet rounded-t-2xl' : 'rounded-xl', className)}
         style={phone ? { maxWidth: '100%', maxHeight: '94dvh' } : { maxWidth: width, maxHeight }}
         onMouseDown={(e) => e.stopPropagation()}

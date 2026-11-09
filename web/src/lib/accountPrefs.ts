@@ -59,19 +59,41 @@ export async function syncAccountPrefs() {
   }
   const here = onDevice();
   let changed = false;
+  let missing = false;
   for (const k of KEYS) {
     const want = stored[k] ?? null;
+    // Nothing saved for this one (e.g. no language chosen yet): keep this device's, and give it to the account.
+    if (want === null) {
+      if (here[k] !== null) missing = true;
+      continue;
+    }
     if (want === here[k]) continue;
     changed = true;
     try {
-      if (want === null) localStorage.removeItem(k);
-      else localStorage.setItem(k, want);
+      localStorage.setItem(k, want);
     } catch {
       // Can't keep it on this device: it still applies until the app closes.
     }
   }
+  if (missing) save();
   if (!changed) return;
   // A different language needs a fresh start (the editor reads it when it loads); the rest applies now.
-  if ((stored[LANG] ?? null) !== here[LANG]) location.reload();
+  // Only once, and only if the device really kept it: otherwise it would reload again and again.
+  const langNow = (() => {
+    try {
+      return localStorage.getItem(LANG);
+    } catch {
+      return null;
+    }
+  })();
+  const once = 'atrium-lang-reloaded';
+  let reloadedAlready = false;
+  try {
+    reloadedAlready = sessionStorage.getItem(once) === stored[LANG];
+    sessionStorage.setItem(once, stored[LANG] ?? '');
+  } catch {
+    reloadedAlready = true;
+  }
+  if (stored[LANG] && stored[LANG] !== here[LANG] && langNow === stored[LANG] && !reloadedAlready) location.reload();
   else reloadAppearance();
 }

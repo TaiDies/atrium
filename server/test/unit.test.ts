@@ -27,6 +27,9 @@ import { createWriteStream } from 'node:fs';
 import { Zip, ZipDeflate, zipSync } from 'fflate';
 import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
 import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
+import { SERVER_VERSION } from '../src/updates.ts';
+import { esPatterns } from '../../web/src/i18n/es.ts';
+import { frPatterns } from '../../web/src/i18n/fr.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
@@ -464,5 +467,25 @@ describe('offline changes and network errors', () => {
     assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
     assert.equal(isNetworkFailure(new DOMException('Stopped', 'AbortError')), false);
     assert.equal(isNetworkFailure(new Error('The app couldn’t send this request')), false);
+  });
+});
+
+describe('versions and translations (1.11.4)', () => {
+  it('every package and app file has the same version as server/package.json', () => {
+    const r = spawnSync(process.execPath, ['../tools/set-version.mjs', '--check'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const server = JSON.parse(readFileSync('package.json', 'utf8')).version;
+    assert.equal(SERVER_VERSION, server);
+  });
+  it('"1 month ago" is singular in Spanish and French', () => {
+    const first = (patterns: [RegExp, string][], text: string) => {
+      for (const [re, out] of patterns) if (re.test(text)) return text.replace(re, out);
+      return text;
+    };
+    assert.equal(first(esPatterns, '1 month ago'), 'hace 1 mes');
+    assert.equal(first(esPatterns, '3 months ago'), 'hace 3 meses');
+    assert.equal(first(esPatterns, '1 day ago'), 'hace 1 día');
+    assert.equal(first(frPatterns, '1 year ago'), 'il y a 1 an');
+    assert.equal(first(frPatterns, '2 years ago'), 'il y a 2 ans');
   });
 });

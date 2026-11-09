@@ -1258,6 +1258,12 @@ export const esPatterns: [RegExp, string][] = [
   [/^Edited (.+) ago$/, 'Editado hace $1'],
   [/^Edited just now$/, 'Editado ahora mismo'],
   [/^just now$/, 'ahora mismo'],
+  // One of something is singular ("hace 1 mes", not "hace 1 meses").
+  [/^1 day ago$/, 'hace 1 día'],
+  [/^1 week ago$/, 'hace 1 semana'],
+  [/^1 month ago$/, 'hace 1 mes'],
+  [/^1 year ago$/, 'hace 1 año'],
+  [/^(.+) · 1 day ago$/, '$1 · hace 1 día'],
   [/^(\d+) (minute|minutes) ago$/, 'hace $1 min'],
   [/^(\d+) (hour|hours) ago$/, 'hace $1 h'],
   [/^(\d+) (day|days) ago$/, 'hace $1 días'],
