@@ -115,11 +115,17 @@ curl -H "Authorization: Bearer $SIGNUP_EXPORT_TOKEN" https://atrium-five-xi.verc
 ```
 
 `SIGNUP_EXPORT_TOKEN` is an environment variable of the Vercel project (Settings → Environment
-Variables); without it the export is switched off. Removing someone means deleting their file in the
-Blob store (Storage → atrium-signups).
+Variables); without it the export is switched off. People ask to be removed by emailing
+abodede.atrium@gmail.com (shown under the form and in the privacy note on the site); removing someone
+means deleting their file in the Blob store (Storage → atrium-signups).
+
+Limits: each IP address may sign up 5 times a day and at most 300 new signups are taken a day in all.
+IP addresses are only kept as salted hashes in counter files under `ratelimit/` (never next to an email
+address), and counters older than two days are deleted.
 
 ## Screenshots and videos
 
-`docs/media/` holds the screenshots, GIFs and videos used in the README and on the website (the site uses
+`docs/media/` holds the screenshots and GIFs used in the README and on the website; the videos are attached
+to the v1.11.8 release instead, so clones stay small (the site uses
 JPEG copies of some screenshots in `site/media/`). They show a demo workspace ("Northlight Studio", made-up people) on a
 temporary server, captured from the Windows app at 1920×1080 and the Android app at 1080×2400.
