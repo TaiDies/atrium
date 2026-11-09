@@ -93,10 +93,17 @@ docker compose up -d --no-build
 
 Database changes are applied automatically when the server starts.
 
-**Page history after upgrading to 1.11:** page history is now thinned out daily. Snapshots older than
-90 days are removed, and the newest 10 of every page and card are always kept. The first time this
-removes anything, the server log says how many. To keep history longer, set `HISTORY_DAYS` in `.env`
-(for example `HISTORY_DAYS=365`).
+**Upgrading to 1.11.3:**
+
+- **Page history is kept in full again** unless you set `HISTORY_DAYS` (1.11.0 to 1.11.2 thinned it out
+  after 90 days by default). With `HISTORY_DAYS=90`, snapshots older than 90 days are removed daily and the
+  newest 10 of every page and card are always kept; the admin panel's Overview says when this is on.
+  `HISTORY_DAYS` must be a whole number: anything else stops the server with a message.
+- **No proxy is trusted by default.** Running Caddy, nginx or a tunnel in front? Set `TRUST_PROXY` to
+  its address (for example `loopback` on the same machine, or `172.16.0.0/12` for a proxy container on
+  the Docker network), or everyone behind it shares one set of sign-in and sign-up limits.
+- **API tokens** stop working when their owner signs out everywhere, changes their password, or loses
+  the "API tokens" permission. Make new ones in Settings → API & webhooks.
 
 **Backups** — everything lives in two Docker volumes: `db` (the database) and `data` (uploaded files,
 the admin password file). For example:
@@ -122,15 +129,15 @@ up on it (a public or hosted server), change these in `.env`:
 - **Set up email** (see *Email* below) — without it, invitations can't be confirmed, so an invitation can
   be claimed by whoever signs up first with the invited address. The admin panel warns about this too.
 - **`PUBLIC_URL`** — the address people use, so links in emails point at it.
-- **`TRUST_PROXY`** — if your reverse proxy isn't on the same machine or a private network, list its
-  address, so rate limits see visitors' real addresses (and nobody else can fake them).
+- **`TRUST_PROXY`** — set it to your reverse proxy's address (for example `loopback`), so rate limits
+  see visitors' real addresses. Since 1.11.3 nothing is trusted unless you set it.
 - **`SECURE_COOKIES=true`** behind HTTPS.
 
 **Docker Desktop without a reverse proxy:** when the app's port is published straight from Docker Desktop
 (Windows or Mac), Docker passes every visitor on from one private address. The server then sees everyone
 as that one address, so per-address limits (sign-in attempts, sign-ups, public forms) are shared by all
-visitors. Put a reverse proxy in front (see *Put it on the internet* below), or set `TRUST_PROXY=false` so
-nothing claiming to be a proxy is believed. The limits are still shared, but they can't be faked.
+visitors. Put a reverse proxy in front (see *Put it on the internet* below) and set `TRUST_PROXY` to it.
+Without a proxy the limits are still shared, but nobody can fake their address (nothing is trusted by default).
 
 ## 2. Put it on the internet (HTTPS) — optional but recommended
 
@@ -253,7 +260,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `APP_PORT` | `3000` | Port the app is published on |
 | `POSTGRES_PASSWORD` | — | Database password (set before the first start) |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
-| `TRUST_PROXY` | local proxies | Which proxies may pass on the visitor's real address (for rate limits). Empty trusts only proxies on the same machine or a private network (your reverse proxy, the Docker network); `false` trusts none; a list like `203.0.113.7,10.0.0.0/8` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
+| `TRUST_PROXY` | none | Which proxies may pass on the visitor's real address (for rate limits). Empty or `false` trusts none (the default since 1.11.3); `loopback` trusts a proxy on the same machine; a list like `203.0.113.7,172.16.0.0/12` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
 | `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
 | `MAX_UPLOAD_MB` | `25` | Largest upload |
 | `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |
@@ -264,7 +271,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `ADMIN_PASSWORD` | generated | Admin panel password |
 | `ADMIN_PANEL` | `true` | `false` turns the admin panel off |
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` |
-| `HISTORY_DAYS` | `90` | How long page history snapshots are kept (the newest 10 of each page are always kept) |
+| `HISTORY_DAYS` | `0` (keep all) | Thin out page history older than this many days (the newest 10 of each page are always kept). A whole number |
 | `AI_TIMEOUT_MS` | `90000` | How long one AI answer may take while a request waits for it. Keep it under your reverse proxy's limit (Cloudflare: 100 seconds); longer AI work runs in the background |
 | `ALLOW_PRIVATE_URLS` | `true` | Whether webhooks and AI addresses may point at the local network. **Set `false` on a shared or hosted server** |
 | `PUBLIC_URL` | — | The address people use (e.g. `https://atrium.example.com`), for links in emails and checking where live editing connects from |
