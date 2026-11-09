@@ -27,6 +27,15 @@ import { createWriteStream } from 'node:fs';
 import { Zip, ZipDeflate, zipSync } from 'fflate';
 import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
 import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
+import { SERVER_VERSION } from '../src/updates.ts';
+import { namedCells, normaliseCells } from '../src/rowCells.ts';
+import { checkArgs } from '../src/routes/mcp.ts';
+import { apiGuide } from '../src/apiGuide.ts';
+import { guideFor } from '../src/aiGuide.ts';
+import { handleError } from '../src/util.ts';
+import { z } from 'zod';
+import { esPatterns } from '../../web/src/i18n/es.ts';
+import { frPatterns } from '../../web/src/i18n/fr.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
@@ -464,5 +473,100 @@ describe('offline changes and network errors', () => {
     assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
     assert.equal(isNetworkFailure(new DOMException('Stopped', 'AbortError')), false);
     assert.equal(isNetworkFailure(new Error('The app couldn’t send this request')), false);
+  });
+});
+
+describe('versions and translations (1.11.4)', () => {
+  it('every package and app file has the same version as server/package.json', () => {
+    const r = spawnSync(process.execPath, ['../tools/set-version.mjs', '--check'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const server = JSON.parse(readFileSync('package.json', 'utf8')).version;
+    assert.equal(SERVER_VERSION, server);
+  });
+  it('"1 month ago" is singular in Spanish and French', () => {
+    const first = (patterns: [RegExp, string][], text: string) => {
+      for (const [re, out] of patterns) if (re.test(text)) return text.replace(re, out);
+      return text;
+    };
+    assert.equal(first(esPatterns, '1 month ago'), 'hace 1 mes');
+    assert.equal(first(esPatterns, '3 months ago'), 'hace 3 meses');
+    assert.equal(first(esPatterns, '1 day ago'), 'hace 1 día');
+    assert.equal(first(frPatterns, '1 year ago'), 'il y a 1 an');
+    assert.equal(first(frPatterns, '2 years ago'), 'il y a 2 ans');
+  });
+});
+
+describe('card values through the API', () => {
+  const fields = [
+    { id: 'f1', name: 'Name', type: 'text', primary: true },
+    { id: 'f2', name: 'Status', type: 'select', options: [{ id: 'o1', name: 'To do' }, { id: 'o2', name: 'Done' }] },
+    { id: 'f3', name: 'Due', type: 'date' },
+    { id: 'f4', name: 'Tags', type: 'multi_select', options: [{ id: 't1', name: 'Red' }] },
+    { id: 'f5', name: 'Owner', type: 'person' },
+    { id: 'f6', name: 'Total', type: 'formula' },
+    { id: 'f7', name: 'Steps', type: 'checklist' },
+    { id: 'f8', name: 'Hours', type: 'number' },
+  ];
+  it('takes names or ids, and option names', () => {
+    const out = normaliseCells(fields, { Name: 'Plan', status: 'done', f3: 'today', Tags: ['Red'], Owner: ['u1'], Hours: 2 }, { members: new Set(['u1']), today: '2026-11-09' });
+    assert.deepEqual(out, { f1: 'Plan', f2: 'o2', f3: '2026-11-09', f4: ['t1'], f5: ['u1'], f8: 2 });
+  });
+  it('refuses unknown properties, computed ones and wrong values, naming the property', () => {
+    assert.throws(() => normaliseCells(fields, { Nope: 1 }), /no property “Nope”/);
+    assert.throws(() => normaliseCells(fields, { Total: 3 }), /worked out by the app/);
+    assert.throws(() => normaliseCells(fields, { Status: 'Maybe' }), /no option “Maybe”/);
+    assert.throws(() => normaliseCells(fields, { Due: '09/11/2026' }), /“Due” \(date\)/);
+    assert.throws(() => normaliseCells(fields, { Hours: '2' }), /a number/);
+    assert.throws(() => normaliseCells(fields, { Owner: ['stranger'] }, { members: new Set(['u1']) }), /not members/);
+  });
+  it('makes checklist items and clears with null', () => {
+    const out = normaliseCells(fields, { Steps: ['One', { text: 'Two', done: true }], Due: null });
+    assert.equal((out.f7 as { text: string }[]).map((s) => s.text).join(','), 'One,Two');
+    assert.equal(out.f3, null);
+  });
+  it('shows stored values by name', () => {
+    assert.deepEqual(namedCells(fields, { f1: 'Plan', f2: 'o2', f4: ['t1'] }), { Name: 'Plan', Status: 'Done', Tags: ['Red'] });
+  });
+});
+
+describe('MCP tool arguments', () => {
+  const schema = { type: 'object', properties: { id: { type: 'string' }, group: { type: 'string' }, mode: { type: 'string', enum: ['append', 'replace'] }, values: { type: 'object' } }, required: ['group'] };
+  it('refuses a missing required argument (no more clearing a group by leaving it out)', () => {
+    assert.match(checkArgs(schema, { id: 'x' }) ?? '', /Missing "group"/);
+  });
+  it('checks types and allowed values, and ignores extra arguments', () => {
+    assert.match(checkArgs(schema, { group: 3 }) ?? '', /should be a string/);
+    assert.match(checkArgs(schema, { group: 'a', mode: 'merge' }) ?? '', /one of: append, replace/);
+    assert.match(checkArgs(schema, { group: 'a', values: [1] }) ?? '', /an object/);
+    assert.equal(checkArgs(schema, { group: 'a', extra: true }), null);
+  });
+});
+
+describe('API guide and error messages', () => {
+  it('documents tokens, background AI jobs, cards, webhook signing and MCP tools', () => {
+    const g = apiGuide();
+    for (const s of ['respond-async', '/api/ai/jobs/{jobId}', '/api/pages/{databaseId}/rows/batch', 'rotate-secret', 'X-Signature-V2', 'add_card', 'only possible in the app', 'af_', '423']) assert.ok(g.includes(s), s);
+    assert.ok(!g.includes('"mode": "append" | "replace"}.\''), 'no stale rows');
+  });
+  it('names the field in zod errors', () => {
+    let sent: { error: string; field?: string } | undefined;
+    const reply = { code: () => reply, send: (b: { error: string; field?: string }) => ((sent = b), reply) };
+    try {
+      z.object({ cells: z.object({ Due: z.string() }) }).parse({ cells: { Due: 5 } });
+    } catch (err) {
+      handleError(err, {} as never, reply as never);
+    }
+    assert.equal(sent?.field, 'cells.Due');
+    assert.match(sent?.error ?? '', /^cells\.Due: /);
+  });
+});
+
+describe('the app guide by topic', () => {
+  it('finds the right sections, at most three, and ignores filler words', () => {
+    const verify = guideFor('how do I verify a page');
+    assert.ok(verify.includes('Verify for 30 days'));
+    assert.ok((verify.match(/^## /gm) ?? []).length <= 3);
+    assert.match(guideFor('webhooks').split('\n')[0], /For developers/);
+    assert.match(guideFor('the and how'), /Nothing in the guide mentions/);
   });
 });

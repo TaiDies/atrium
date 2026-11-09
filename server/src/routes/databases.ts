@@ -9,6 +9,7 @@ import { query } from '../db.js';
 import { cardTasks } from '../taskStatus.js';
 import { fillAiField } from '../aiFill.js';
 import { asyncCapable } from '../aiJobs.js';
+import { addFieldFlat } from './rows.js';
 import { fieldsOf } from '../docIndex.js';
 import { HttpError, idParams, parse } from '../util.js';
 
@@ -72,6 +73,8 @@ export async function databaseRoutes(app: FastifyInstance) {
   });
 
   app.post('/pages/:id/fields', async (req, reply) => {
+    // {name, type, options…}: any type (rows.ts). {field: {…}}: the app's own shape, for relations.
+    if (!(req.body as { field?: unknown } | null)?.field) return addFieldFlat(req, reply);
     const { id } = parse(idParams, req.params);
     const body = parse(
       z.object({

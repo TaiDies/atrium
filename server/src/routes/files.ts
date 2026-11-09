@@ -56,7 +56,7 @@ export async function fileRoutes(app: FastifyInstance) {
       [fileId, id, req.user.id, file.filename.slice(0, 255) || 'file', file.mimetype || 'application/octet-stream', size],
     );
     queueFileText(fileId);
-    emit(id, 'file.uploaded', { id: fileId, url: `/api/files/${fileId}` });
+    emit(id, 'file.uploaded', { id: fileId, url: `/api/files/${fileId}` }, { id: req.user.id, name: req.user.name });
     return reply.code(201).send({ id: fileId, url: `/api/files/${fileId}` });
   });
 

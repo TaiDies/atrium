@@ -7,7 +7,7 @@ import { PageIcon } from '../app/PageIcon';
 import { FullScreenSpinner } from '../components/ui';
 import { DatabaseView } from '../database/DatabaseView';
 import type { ViewType } from '../database/model';
-import { pageTitle, type PageSummary } from '../lib/api';
+import { APP_NAME, pageTitle, type PageSummary } from '../lib/api';
 import { coverStyle } from '../lib/covers';
 import { setDirectory } from '../lib/directory';
 import { publicFileUrl, type PublicPageInfo, usePublicDoc } from '../lib/publicDoc';
@@ -99,7 +99,7 @@ export function PublicPage() {
         <h1 className="mb-4 text-4xl font-bold break-words">{pageTitle(page as unknown as PageSummary)}</h1>
       </div>
       <PublicContent key={page.id} token={token} page={page} />
-      <footer className="py-10 text-center text-xs text-faint">Published with Workspace</footer>
+      <footer className="py-10 text-center text-xs text-faint">Published with {APP_NAME}</footer>
     </div>
   );
 }

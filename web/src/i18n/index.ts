@@ -75,7 +75,7 @@ const done = new WeakMap<Node, { tr: string }>();
 /** Places whose text is people's own (being typed, or drawn by other tools) and is left as it is. */
 function skip(el: Element | null): boolean {
   if (!el) return true;
-  if (el.closest('script, style, textarea, input, select, code, pre, [data-no-translate], .excalidraw, .fortune-sheet-container')) return true;
+  if (el.closest('script, style, textarea, input, select, code, pre, [data-no-translate], .excalidraw, .fortune-sheet-container, .slide-text, .ProseMirror, .bn-editor, .doc-paper')) return true;
   const editable = el.closest('[contenteditable]');
   return !!editable && editable.getAttribute('contenteditable') !== 'false';
 }

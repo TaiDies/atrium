@@ -1,11 +1,14 @@
 # Instructions for AI assistants: make pages I can import
 
+*(For the AI: ignore this introduction, it is for the person. Your instructions start at "Your task".)*
+
 Copy everything below into a chat with any AI assistant (ChatGPT, Claude, Gemini, Copilot…), then say
 what you want, for example: *"Make me a revision plan for my biology exam on 1 December, with a board of
 topics, a weekly checklist, and my two attached PDFs."*
 
 **Importing the answer:** save the AI's reply as a file ending in **`.json`** (for example `pages.json`),
-then in the app: **Import** (sidebar or Home) → drop the file → **Import**.
+then in the app: **Import** (sidebar or Home; workspace owners) → drop the file → choose where they go
+under **Put them in** → **Import N pages**.
 **If the pages use files** (pictures, PDFs, documents, audio, video): put the `.json` and those files in
 **one folder**, zip the folder (or select the `.json` and the files together in the Import window), and
 import that. The AI will tell you which files are needed.
@@ -91,15 +94,15 @@ Each goes **on its own line**, except where it says *inline*.
 
 | What | How to write it |
 |---|---|
-| **Date** (*inline*) — a date chip. **To-dos with a date appear on the person's Today list and on the Calendar** | `@2026-12-01`, with a time `@2026-12-01 14:30`, or `@today`, `@tomorrow`, `@yesterday` |
+| **Date** (*inline*) — a date chip. **To-dos with a date appear on the person's Today list and on the Calendar** | `@2026-12-01`, or with a time `@2026-12-01 14:30` (a time only works after a written date); `@today`, `@tomorrow`, `@yesterday` take no time. (`@name` does **not** mention people.) |
 | **Link to another page in this file** (*inline*) | `[[key]]` (or `[[page:key]]`) — shows as a live link with the page's title |
 | **Database shown inside this page** | `[[database:key]]` — the database's `parent` should be this page |
 | **Callout** (coloured box with an icon) | `> [!NOTE] text`, `> [!TIP] text`, `> [!IMPORTANT] text`, `> [!WARNING] text`, `> [!CAUTION] text`; more lines can follow as `> …` |
 | **Callout with your own icon and colour** | `::: callout 📌 yellow` … lines … `:::` — colours `gray`, `blue`, `green`, `yellow`, `red`, `purple` |
 | **Toggle** (click to show/hide) | `::: toggle Title` … hidden content … `:::` (or `<details><summary>Title</summary> … </details>`) |
-| **Columns** (2–4 side by side) | `::: columns`, then `::: column` before each column's content, and one `:::` at the end |
+| **Columns** (2–4 side by side; columns beyond 4 are dropped) | `::: columns`, then `::: column` before each column's content, and one `:::` at the end |
 | **Equation** (displayed, LaTeX) | `$$ E = mc^2 $$` on one line, or `$$` / lines of LaTeX / `$$` |
-| **Inline equation** (*inline*) | `$a^2 + b^2 = c^2$` |
+| **Inline equation** (*inline*) | `$a^2 + b^2 = c^2$` — breaks with `_`, `*`, `\` or money amounts in the same line: for anything but simple maths use `$$` on its own line |
 | **Table of contents** (live links to the headings) | `[TOC]` |
 | **Breadcrumbs** (where the page sits) | `[BREADCRUMBS]` |
 | **Embedded video / map / document from the web** | `[embed](https://www.youtube.com/watch?v=…)` — YouTube, Vimeo, Loom, Figma, Google Maps, Google Docs/Sheets/Slides/Drive, Spotify, CodePen, Miro |
@@ -111,6 +114,9 @@ Each goes **on its own line**, except where it says *inline*.
 | **An audio file** (plays in the page; can be transcribed in the app) | `[audio](interview.mp3)` |
 
 Containers (`::: …` … `:::`) can be nested — a toggle inside a column, a callout inside a toggle.
+
+Things to avoid: the extras above are converted even inside code blocks, so don't put `[[…]]`, `@dates`
+or `$…$` in code you want shown as written. Dates and links inside **table cells** stay plain text.
 
 ---
 
@@ -153,8 +159,10 @@ file name anywhere a file goes; those aren't downloaded, just linked.
   list or table.
 - In the first page, add a callout listing every file the import needs
   (`> [!NOTE] Import this with: a.pdf, b.jpg`).
-- A missing file doesn't stop the import: the app imports everything else and shows a note
-  "*file … not included*" where it would have gone, so the person can add it later by hand.
+- A missing file doesn't stop the import: the app imports everything else, lists it under **Notes about
+  this import**, and leaves a note "*file … not included*" in a document where it would have gone. In a
+  property or a cover a missing file is simply left out.
+- Files larger than the server's upload limit (25 MB unless the administrator changed it) are left out.
 
 ---
 
@@ -173,9 +181,9 @@ Each property: `{ "name": "…", "type": "…", …options }`. The title column 
 | `text` | `"any text"` | |
 | `number` | `12` or `"12.5"` | |
 | `select` | `"Medium"` | `"options": ["Low", "Medium", "High"]`; an option can be `{ "name": "High", "color": "red" }`. Values that aren't options are added automatically. |
-| `status` | `"In progress"` | Like select, but each option is in a group — *to-do*, *in progress*, *done*. Options can be `{ "name": "Shipped", "group": "done", "color": "green" }`; without a group, names like *Done, Finished, Complete* count as done and *Doing, In progress, Review* as in progress. Default options: Not started / In progress / Done. Cards with a date and a status show on **Today**; done ones count as finished. |
+| `status` | `"In progress"` | Like select, but each option is in a group. **Give every option its group**: `{ "name": "Not started", "group": "todo" }`, `{ "name": "In progress", "group": "doing" }`, `{ "name": "Done", "group": "done", "color": "green" }` — guessing from names can put an option in the wrong group. Default options: Not started / In progress / Done. Cards with a date and a status show on **Today**; done ones count as finished. |
 | `multi_select` (or `tags`) | `["Unit 1", "Core"]` or `"Unit 1, Core"` | Options as for select. |
-| `date` | `"2026-12-01"`, `"today"`, `"tomorrow"` (or any date the computer can read) | Dated cards show on the Calendar. |
+| `date` | `"2026-12-01"`, `"today"` or `"tomorrow"` only — no time of day | Dated cards show on the Calendar. |
 | `checkbox` | `true` / `false` (also `"yes"`, `"x"`, `"done"`) | |
 | `url` (or `link`) | `"https://…"` | |
 | `email` | `"name@example.com"` | |
@@ -184,7 +192,7 @@ Each property: `{ "name": "…", "type": "…", …options }`. The title column 
 | `files` (or `file`, `media`, `attachments`, `images`) | `["report.pdf", "photo.jpg"]`, or `[{ "file": "cv.pdf", "name": "CV 2026" }]`, or web addresses | Files that come with the import (see **Files**). Pictures show as thumbnails and can be a gallery's card picture. |
 | `id` | — | Numbers the cards 1, 2, 3… in order; `"prefix": "BIO"` gives `BIO-1`, `BIO-2`… |
 | `formula` | — | `"formula": "…"` — see **Formulas**. |
-| `relation` | `["Card title", "Other card"]` | Links to cards of another database in this file: add `"to": "<that database's key>"`; values are the **titles** of its cards. |
+| `relation` | `["Card title", "Other card"]` | Links to cards of another database in this file: add `"to": "<that database's key>"`; values are the **titles** of its cards (titles that match no card are dropped). Relations are one-way: the other database gets no column back. |
 | `created_time`, `last_edited` | — | Filled in automatically. |
 
 Colours for options: `purple`, `pink`, `lightpink`, `orange`, `yellow`, `lime`, `green`, `aqua`, `blue`,
@@ -199,7 +207,8 @@ Colours for options: `purple`, `pink`, `lightpink`, `orange`, `yellow`, `lime`, 
 Example: `if(prop("Done"), "✅", dateBetween(prop("Due"), today(), "days") + " days left")`.
 
 **Not possible in an import** (add these in the app afterwards): people/assignees, rollups, button
-properties, AI autofill, automations, sub-items, dependencies, card templates, repeating cards.
+properties, AI autofill, automations, sub-items, dependencies, card templates, repeating cards. Those types
+(people, rollup, button, created by, last edited by, tasks, AI) become plain text columns if you list them.
 
 ### Cards
 
@@ -215,7 +224,9 @@ clicked); every Markdown extra and file works there.
 ### Views (optional)
 
 A list of tabs; each `{ "type": "…", "name": "…", …settings }`. Leave `views` out to get one view of the
-page's `type`.
+page's `type`. **Declare the properties a view uses** (the date of a calendar, the select of a board): only
+the page's own `type` adds a missing one automatically. Form views can't be imported. A database's
+`parent` should be a **document**, not another database.
 
 | Setting | Used by | Meaning |
 |---|---|---|
@@ -250,7 +261,7 @@ and *End* are added); a **gallery** looks best with a files property of pictures
       "title": "Biology revision",
       "icon": "🧬",
       "cover": "forest",
-      "markdown": "> [!NOTE] Import this together with: syllabus.pdf, cell-diagram.png, enzymes.pptx\n\n[TOC]\n\n> [!TIP] Start with the topics you find hardest.\n\n## This week\n- [ ] Read chapter 3 @today\n- [ ] Flashcards @tomorrow 18:00\n\n## Course\n[file: Syllabus](syllabus.pdf)\n\n![A plant cell](cell-diagram.png)\n\n::: columns\n::: column\n### Strengths\n- Genetics\n::: column\n### To work on\n- Enzymes\n:::\n\n## Topics\n[[database:topics]]\n\nNotes: [[cells]]"
+      "markdown": "> [!NOTE] Import this together with: syllabus.pdf, cell-diagram.png, enzymes.pptx\n\n[TOC]\n\n> [!TIP] Start with the topics you find hardest.\n\n## This week\n- [ ] Read chapter 3 @today\n- [ ] Flashcards @2026-11-26 18:00\n\n## Course\n[file: Syllabus](syllabus.pdf)\n\n![A plant cell](cell-diagram.png)\n\n::: columns\n::: column\n### Strengths\n- Genetics\n::: column\n### To work on\n- Enzymes\n:::\n\n## Topics\n[[database:topics]]\n\nNotes: [[cells]]"
     },
     {
       "key": "topics",
@@ -259,7 +270,7 @@ and *End* are added); a **gallery** looks best with a files property of pictures
       "icon": "📚",
       "type": "board",
       "properties": [
-        { "name": "Status", "type": "status", "options": ["Not started", "Revising", { "name": "Confident", "group": "done", "color": "green" }] },
+        { "name": "Status", "type": "status", "options": [{ "name": "Not started", "group": "todo" }, { "name": "Revising", "group": "doing" }, { "name": "Confident", "group": "done", "color": "green" }] },
         { "name": "Difficulty", "type": "select", "options": ["Easy", "Medium", { "name": "Hard", "color": "red" }] },
         { "name": "Exam date", "type": "date" },
         { "name": "Slides", "type": "files" },
@@ -292,7 +303,7 @@ and *End* are added); a **gallery** looks best with a files property of pictures
 
 | Problem | Fix |
 |---|---|
-| "Not a file this app can import" | The reply had text or a code fence around the JSON — save only from `{` to `}`; make sure the file ends in `.json`. |
+| "Nothing to import found in those files" | The reply had text or a code fence around the JSON — save only from `{` to `}`; make sure the file ends in `.json`. |
 | Nothing happens / an error about JSON | A comma or quote is wrong: no trailing commas, every string in double quotes, `\n` for line breaks, `\\` for backslashes. |
 | A page landed at the top instead of inside another | Its `parent` key doesn't match any page's `key`, or the parent comes later in the list. |
 | `[[key]]` shows as plain text | The key doesn't exist in the file (check spelling). |
@@ -306,10 +317,10 @@ and *End* are added); a **gallery** looks best with a files property of pictures
 2. `"format": "workspace-pages"` is there; every page has a unique `key` and a `title`; parents come before children.
 3. Every `parent`, `[[key]]`, `[[database:key]]` and relation `"to"` uses a key that exists in the file.
 4. Card values use property **names** exactly as in `properties`; select/status values match the options.
-5. Dates are `YYYY-MM-DD` (or `@today` / `@tomorrow` in Markdown); times `HH:MM`.
+5. Dates are `YYYY-MM-DD` (or `@today` / `@tomorrow` in Markdown, without a time); a time `HH:MM` only after a written date. Every status option has a group.
 6. Every file is named exactly as the person gave it, and all of them are listed in a NOTE callout on the first page.
 7. Strings are valid JSON: `\n` for line breaks, `\"` for quotes, `\\` for backslashes (LaTeX!).
 
 **Simpler alternative:** if JSON is impossible, reply with plain **Markdown** for one page; save it as a
-`.md` file. Everything under *Writing documents* works in it (including files next to it), except links
+`.md` file (the file's name becomes the page title). Everything under *Writing documents* works in it (including files next to it), except links
 between pages and databases.

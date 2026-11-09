@@ -10,6 +10,7 @@ import { GRAPH_COLORS, graphStyle, setGraphStyle, setPageGroup } from '../graphS
 import { linkedTitles, type PageLinks, writeMarkdown } from '../markdownBlocks.js';
 import { databaseToCsv, docToMarkdown } from '../readable.js';
 import { tokenWorkspace } from '../scope.js';
+import { SERVER_VERSION } from '../updates.js';
 import { HttpError } from '../util.js';
 
 // An MCP server (Model Context Protocol, the way AI assistants like Claude connect to tools), so an
@@ -46,10 +47,43 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Hints for the client: only reads, or deletes something. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
   run: (ctx: Ctx, args: Record<string, unknown>) => Promise<string>;
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/** Calls the REST API as the person (so every check applies); throws its error message. */
+async function api(ctx: Ctx, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, body?: unknown): Promise<unknown> {
+  const res = await ctx.inject({
+    method,
+    url,
+    headers: { authorization: ctx.auth, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
+  });
+  const data = res.json() as { error?: string };
+  if (res.statusCode >= 300) throw new Error(data?.error ?? `Request failed (${res.statusCode})`);
+  return data;
+}
+
+/** Arguments checked against a tool's inputSchema: required ones present, and of the right type. */
+export function checkArgs(schema: Record<string, unknown>, args: Record<string, unknown>): string | null {
+  const props = (schema.properties ?? {}) as Record<string, { type?: string; enum?: string[] }>;
+  for (const key of (schema.required as string[] | undefined) ?? []) {
+    if (args[key] === undefined || args[key] === null || args[key] === '') return `Missing "${key}".`;
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const p = props[key];
+    if (!p) continue; // extra arguments are ignored
+    if (value === undefined || value === null) continue;
+    const t = p.type;
+    const ok = !t || (t === 'object' ? typeof value === 'object' && !Array.isArray(value) : t === 'array' ? Array.isArray(value) : typeof value === t);
+    if (!ok) return `"${key}" should be ${t === 'object' ? 'an object' : `a ${t}`}.`;
+    if (p.enum && !p.enum.includes(value as string)) return `"${key}" must be one of: ${p.enum.join(', ')}.`;
+  }
+  return null;
+}
 
 // ---------- helpers ----------
 
@@ -146,6 +180,7 @@ async function neighbours(ctx: Ctx, id: string) {
 const TOOLS: Tool[] = [
   {
     name: 'search_notes',
+    annotations: { readOnlyHint: true },
     description: 'Search the notes by words in their titles and text. Returns the best matches with a short excerpt. Search before writing, to build on what is already there.',
     inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Words to look for' }, limit: { type: 'number', description: 'Most results (default 10)' } }, required: ['query'] },
     async run(ctx, args) {
@@ -176,6 +211,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'read_note',
+    annotations: { readOnlyHint: true },
     description: 'Read a note in full (as Markdown, with [[links]]), plus the notes it links to, the notes that link to it (backlinks), and the notes inside it. Give its id or its title.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } },
     async run(ctx, args) {
@@ -191,6 +227,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'list_notes',
+    annotations: { readOnlyHint: true },
     description: 'List every note as an outline (notes nested inside other notes are indented), with ids. Optionally only what is inside one note.',
     inputSchema: { type: 'object', properties: { inside: { type: 'string', description: 'Id or title of a note to list the inside of' } } },
     async run(ctx, args) {
@@ -211,6 +248,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'recent_notes',
+    annotations: { readOnlyHint: true },
     description: 'The notes changed most recently.',
     inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'How many (default 15)' } } },
     async run(ctx, args) {
@@ -238,6 +276,9 @@ const TOOLS: Tool[] = [
     async run(ctx, args) {
       const title = str(args.title).trim();
       if (!title) throw new Error('Give the note a title.');
+      // Only workspace owners make pages: say so before anything is written.
+      const role = await one<{ role: string }>('select role from workspace_members where workspace_id = $1 and user_id = $2', [ctx.workspaceId, ctx.userId]);
+      if (role?.role !== 'owner') throw new Error('Only workspace owners can create notes. Ask an owner, or add to an existing note with update_note.');
       const pages = await visiblePages(ctx);
       if (pages.some((p) => p.title.toLowerCase() === title.toLowerCase())) {
         throw new Error(`A note called "${title}" already exists — use update_note to add to it, or choose another title.`);
@@ -263,7 +304,8 @@ const TOOLS: Tool[] = [
       },
     },
     async run(ctx, args) {
-      const { note, pages } = await findNote(ctx, args, { exact: args.mode === 'replace' });
+      // Writing goes to the note with exactly that title (or id), never a near match.
+      const { note, pages } = await findNote(ctx, args, { exact: true });
       if (!note.canEdit) throw new Error(`[[${note.title}]] is read-only for you.`);
       if (note.type !== 'document') throw new Error(`[[${note.title}]] is a database, not a document — it can be read but not written as Markdown.`);
       const parts: string[] = [];
@@ -287,6 +329,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'related_notes',
+    annotations: { readOnlyHint: true },
     description: 'The notes connected to one note in the graph: what it links to, what links to it, its parent and the notes inside it — optionally two steps out.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, depth: { type: 'number', description: '1 (default) or 2' } } },
     async run(ctx, args) {
@@ -309,6 +352,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'delete_note',
+    annotations: { destructiveHint: true },
     description: 'Move a note (and the notes inside it) to the trash. It can be restored from the trash in the app.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } },
     async run(ctx, args) {
@@ -320,6 +364,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'app_guide',
+    annotations: { readOnlyHint: true },
     description:
       'How the app this memory lives in works — every feature (pages, databases, calendar, tasks, files, chat, meetings, graph, imports, notifications, API, MCP) with the exact menus and buttons. Give a topic (e.g. "meetings", "import files", "formulas") to get just the matching sections; leave it out for the whole guide. Use it before explaining the app to the person or when unsure how something works.',
     inputSchema: { type: 'object', properties: { topic: { type: 'string', description: 'What it is about (optional)' } } },
@@ -390,6 +435,101 @@ const TOOLS: Tool[] = [
       return [groups.length ? `Groups:\n${groups.join('\n')}` : 'No groups yet.', `Line colours: ${links.length ? links.map(([k, c]) => `${k} ${c}`).join(', ') : 'the defaults'}.`].join('\n\n');
     },
   },
+  {
+    name: 'list_members',
+    description: 'The people in this workspace (names and ids), e.g. to fill a "Person" property with add_card.',
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: {} },
+    async run(ctx) {
+      const rows = await query<{ id: string; name: string; role: string }>(
+        `select u.id, u.name, m.role from workspace_members m join users u on u.id = m.user_id where m.workspace_id = $1 order by u.name`,
+        [ctx.workspaceId],
+      );
+      return rows.map((r) => `- ${r.name} (${r.role}) — id ${r.id}`).join('\n') || 'Nobody.';
+    },
+  },
+  {
+    name: 'read_database',
+    description: 'A database note: its properties (with options) and its cards, values by property name. Use the card ids with update_card and delete_card.',
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string', description: 'Find it by exact title (if no id)' }, limit: { type: 'number', description: 'Most cards (default 100)' } } },
+    async run(ctx, args) {
+      const { note } = await findNote(ctx, args, { exact: true });
+      const res = await api(ctx, 'GET', `/api/pages/${note.id}/rows?format=named&limit=${Math.min(1000, Number(args.limit) || 100)}`);
+      const data = res as { fields: { name: string; type: string; options?: { name: string }[] }[]; rows: { id: string; cells: Record<string, unknown> }[] };
+      const props = data.fields.map((f) => `- ${f.name} (${f.type}${f.options?.length ? `: ${f.options.map((o) => o.name).join(', ')}` : ''})`).join('\n');
+      const cards = data.rows.map((r) => `- ${r.id}: ${JSON.stringify(r.cells)}`).join('\n');
+      return `[[${note.title}]] properties:\n${props}\n\nCards:\n${cards || '(none)'}`;
+    },
+  },
+  {
+    name: 'add_card',
+    description: 'Add a card to a database note. "values" maps property names to values: text, numbers, true/false, dates as YYYY-MM-DD, option names for select/status, user ids for people. Optional Markdown for the card\'s own page.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, title: { type: 'string', description: 'The database, by exact title (if no id)' }, values: { type: 'object' }, content: { type: 'string', description: 'Markdown for the card page' } },
+      required: ['values'],
+    },
+    async run(ctx, args) {
+      const { note } = await findNote(ctx, args, { exact: true });
+      const res = (await api(ctx, 'POST', `/api/pages/${note.id}/rows`, { cells: args.values, ...(str(args.content) ? { markdown: str(args.content) } : {}) })) as { row: { id: string } };
+      return `Added a card to [[${note.title}]] (card id ${res.row.id}).`;
+    },
+  },
+  {
+    name: 'update_card',
+    description: 'Change some values of a card in a database note (same value rules as add_card; null clears one).',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, title: { type: 'string', description: 'The database, by exact title (if no id)' }, card: { type: 'string', description: 'The card id (from read_database)' }, values: { type: 'object' } },
+      required: ['card', 'values'],
+    },
+    async run(ctx, args) {
+      const { note } = await findNote(ctx, args, { exact: true });
+      await api(ctx, 'PATCH', `/api/pages/${note.id}/rows/${encodeURIComponent(str(args.card))}`, { cells: args.values });
+      return `Card ${str(args.card)} in [[${note.title}]] updated.`;
+    },
+  },
+  {
+    name: 'delete_card',
+    description: 'Delete a card from a database note (it can\'t be brought back from the trash).',
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, title: { type: 'string', description: 'The database, by exact title (if no id)' }, card: { type: 'string', description: 'The card id (from read_database)' } },
+      required: ['card'],
+    },
+    async run(ctx, args) {
+      const { note } = await findNote(ctx, args, { exact: true });
+      await api(ctx, 'DELETE', `/api/pages/${note.id}/rows/${encodeURIComponent(str(args.card))}`);
+      return `Card ${str(args.card)} deleted from [[${note.title}]].`;
+    },
+  },
+  {
+    name: 'create_task',
+    description: 'Add a task (or an event) to the workspace calendar: a title and a date (YYYY-MM-DD), optionally a time (HH:MM) and a description. Tasks have a to-do status; events don\'t.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        date: { type: 'string', description: 'YYYY-MM-DD' },
+        time: { type: 'string', description: 'HH:MM (optional)' },
+        description: { type: 'string' },
+        kind: { type: 'string', enum: ['task', 'event'] },
+      },
+      required: ['title', 'date'],
+    },
+    async run(ctx, args) {
+      const res = (await api(ctx, 'POST', `/api/workspaces/${ctx.workspaceId}/events`, {
+        title: str(args.title),
+        startDate: str(args.date),
+        startTime: str(args.time) || null,
+        description: str(args.description),
+        status: args.kind === 'event' ? null : 'todo',
+      })) as { event: { id: string } };
+      return `${args.kind === 'event' ? 'Event' : 'Task'} "${str(args.title)}" added on ${str(args.date)} (id ${res.event.id}).`;
+    },
+  },
 ];
 
 // ---------- the protocol ----------
@@ -424,19 +564,22 @@ export async function mcpRoutes(app: FastifyInstance) {
           return ok({
             protocolVersion: typeof m.params?.protocolVersion === 'string' ? m.params.protocolVersion : PROTOCOL,
             capabilities: { tools: {} },
-            serverInfo: { name: `${config.appName} — ${ws?.name ?? 'workspace'}`, version: '1.0.0' },
+            serverInfo: { name: `${config.appName} — ${ws?.name ?? 'workspace'}`, version: SERVER_VERSION },
             instructions: INSTRUCTIONS,
           });
         }
         case 'ping':
           return ok({});
         case 'tools/list':
-          return ok({ tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+          return ok({ tools: TOOLS.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, ...(annotations ? { annotations } : {}) })) });
         case 'tools/call': {
           const tool = TOOLS.find((t) => t.name === m.params?.name);
           if (!tool) return fail(-32602, `Unknown tool ${String(m.params?.name)}`);
+          const args = (m.params?.arguments as Record<string, unknown>) ?? {};
+          const wrong = checkArgs(tool.inputSchema, args);
+          if (wrong) return ok({ content: [{ type: 'text', text: `${wrong} See tools/list for ${tool.name}'s arguments.` }], isError: true });
           try {
-            const text = await tool.run(ctx, (m.params?.arguments as Record<string, unknown>) ?? {});
+            const text = await tool.run(ctx, args);
             return ok({ content: [{ type: 'text', text }] });
           } catch (err) {
             return ok({ content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }], isError: true });

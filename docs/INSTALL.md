@@ -40,7 +40,7 @@ The first build takes a few minutes. When it's done, open **http://localhost:300
 **First steps**
 
 1. **Create an account** — the sign-up page appears on first visit.
-2. **Make a workspace** — you're its owner; invite others from **Settings & members**.
+2. **Your first workspace is created for you** — you're its owner; invite others from **Settings & members**.
 3. **Open the admin panel** (accounts, roles, limits, AI for everyone, email, sign-ups) at
    **http://localhost:3001** — on the server itself only. Its password is printed in the log on first
    start and saved in the data volume:
@@ -51,6 +51,9 @@ The first build takes a few minutes. When it's done, open **http://localhost:300
 
    Change it in the panel (or set `ADMIN_PASSWORD` in `.env`). To reach the panel from elsewhere, use an
    SSH tunnel: `ssh -L 3001:localhost:3001 you@your-server`.
+
+   **Forgot the admin password?** Set `ADMIN_PASSWORD=a-new-password` in `.env` and run
+   `docker compose up -d`: while it's set, that password is the one that works.
 
 **Updating**
 
@@ -68,13 +71,13 @@ start it**, because it needs the Docker socket (so it can control Docker on this
 docker compose --profile updater up -d
 ```
 
-It only installs **published releases**: it checks out the release's tag (for example `v1.8.1`) in this
+It only installs **published releases**: it checks out the release's tag (for example `v1.11.4`) in this
 folder and rebuilds the app, never unreleased code from the main branch. It only works when the folder is
 a `git clone` of this repository. Without it, update by hand to a release:
 
 ```bash
 git fetch --tags
-git checkout v1.8.1   # the version you want
+git checkout v1.11.4   # the version you want
 docker compose up -d --build
 ```
 
@@ -84,12 +87,15 @@ After the updater has installed a release, this folder is **on that release's ta
 following the main branch, which may include unreleased changes).
 
 **Ready-made images** — every release is also published as a Docker image, so you can skip building.
-Put `ATRIUM_IMAGE=ghcr.io/taidies/atrium:latest` (or a version, e.g. `:1.8.1`) in `.env`, then:
+Put `ATRIUM_IMAGE=ghcr.io/taidies/atrium:latest` (or a version, e.g. `:1.11.4`) in `.env`, then:
 
 ```bash
 docker compose pull app
 docker compose up -d --no-build
 ```
+
+Use **either** the updater (which builds from this folder) **or** ready-made images, not both: the updater
+would rebuild over the image you pulled.
 
 Database changes are applied automatically when the server starts.
 
@@ -115,6 +121,15 @@ docker run --rm -v atrium_data:/data -v "$PWD":/backup alpine tar czf /backup/at
 
 (The volumes are named `atrium_db` and `atrium_data` — check with `docker volume ls`.) Users can also
 export whole workspaces as a .zip from **Settings → Workspace → Export everything**.
+
+**Restoring** a backup on a fresh install (same `.env`, nothing created in the app yet):
+
+```bash
+docker compose up -d postgres
+docker compose exec -T postgres psql -U atrium atrium < atrium-backup.sql
+docker run --rm -v atrium_data:/data -v "$PWD":/backup alpine sh -c "cd /data && tar xzf /backup/atrium-files.tgz"
+docker compose up -d
+```
 
 ---
 
@@ -158,8 +173,35 @@ Then set in `.env` and restart (`docker compose up -d`):
 SECURE_COOKIES=true
 ```
 
-Nginx, Traefik or Cloudflare Tunnel work too; they must pass **WebSockets** (live editing at `/collab`,
-chat and calls at `/live`).
+Also set `PUBLIC_URL=https://atrium.example.com` (links in emails, and live editing only accepts
+connections from this address) and `TRUST_PROXY` to the proxy (`loopback` when it runs on the same machine),
+so rate limits see each visitor's address.
+
+Nginx, Traefik or Cloudflare Tunnel work too. Whatever you use must pass the original `Host` header and
+**WebSockets** (live editing at `/collab`, chat and calls at `/live`). With nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name atrium.example.com;
+    # ssl_certificate … ssl_certificate_key …
+    client_max_body_size 1100m;          # a bit more than MAX_IMPORT_MB
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+**Cloudflare** (proxy or Tunnel) ends any request after about 100 seconds. AI answers that can take
+longer run in the background, and the rest stop at `AI_TIMEOUT_MS` (90 seconds), so keep that below the
+limit. Cloudflare's free plan also limits uploads to 100 MB, which caps imports.
 
 ---
 
@@ -190,7 +232,7 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
 ### Web and other devices
 
 Any modern browser works: open the server's address. On phones the web app switches to a phone layout.
-iPhone and macOS/Linux users can use the web app (and "Add to Home Screen").
+iPhone and macOS/Linux users can use the web app in the browser (bookmark it).
 
 ---
 
@@ -276,6 +318,12 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `ALLOW_PRIVATE_URLS` | `true` | Whether webhooks and AI addresses may point at the local network. **Set `false` on a shared or hosted server** |
 | `PUBLIC_URL` | — | The address people use (e.g. `https://atrium.example.com`), for links in emails and checking where live editing connects from |
 | `RTC_ICE_SERVERS` | public STUN | Meeting connection servers (see above) |
+| `AI_TRANSCRIBE_MODEL` | `whisper-1` | Speech-to-text model for OpenAI-compatible services (Groq: `whisper-large-v3-turbo`) |
+| `CONVERT_TIMEOUT_MS` | `180000` | How long one document conversion (Office/PDF) may take |
+| `JWT_SECRET` | generated | Signs sign-in sessions; made on first start and kept in the data volume. Changing it signs everyone out |
+| `MAIL_TRANSPORT` | — | `log` writes emails to the server log instead of sending them (for testing) |
+| `UPDATE_REPO` | `TaiDies/atrium` | Where new versions are looked for (GitHub owner/repo) |
+| `ADMIN_HOST` | `0.0.0.0` | Address the admin panel listens on. Docker only publishes it on this machine; outside Docker set `127.0.0.1` |
 
 In the admin panel: **Accounts** (everyone's accounts, their roles, usage and AI, delete accounts), **Roles** (permissions —
 use AI, create workspaces, invite people, upload files, start meetings, create groups and teams, publish pages, API tokens —
@@ -287,7 +335,8 @@ and optional limits, given to people; everyone has the **Everyone** role), **Wor
 
 ## 5. Build the apps yourself (optional)
 
-Needs Node.js 22+, Rust, and for Android the Android SDK/NDK and Java 17.
+Needs Node.js 24, Rust, and for Android the Android SDK/NDK and Java 17. More detail (signing, the
+updater key, how releases are made) is in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ```bash
 cd apps/native
@@ -304,7 +353,8 @@ The Windows app's self-update checks `https://github.com/TaiDies/atrium/releases
 and only installs updates signed with the matching key. If you publish your own builds, make a key with
 `npx tauri signer generate -w signing/updater.key`, put the public key and your own release address under
 `plugins.updater` in `src-tauri/tauri.conf.json`, and build with `TAURI_SIGNING_PRIVATE_KEY` set to the
-private key; upload `latest.json`, the setup `.exe` and its `.sig` with each release.
+private key; upload `latest.json`, the setup `.exe` and its `.sig` with each release. There is no release
+workflow: release files are built and uploaded by hand (the Docker image is built by `image.yml`).
 
 ---
 

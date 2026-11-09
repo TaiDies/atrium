@@ -601,6 +601,63 @@ let member;
   hang.close();
 }
 
+// --- database cards and properties through the API
+{
+  const db = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'API tasks', type: 'grid' }, cookie: owner.cookie })).data.page;
+  const status = await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Status', type: 'status' } });
+  const title = await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Title', type: 'text' } });
+  const due = await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Due', type: 'date' } });
+  check('properties of any type can be added (201)', status.status === 201 && title.status === 201 && due.status === 201 && status.data.field.options.length === 3, `${status.status} ${JSON.stringify(status.data)}`);
+  const made = await req(`/api/pages/${db.id}/rows`, { method: 'POST', cookie: owner.cookie, body: { cells: { Title: 'Write docs', Status: 'Done', Due: '2026-12-01' }, markdown: '# Notes\n- [ ] first' } });
+  check('a card can be made with values by name (201)', made.status === 201 && made.data.row.id, `${made.status} ${JSON.stringify(made.data)}`);
+  const rowId = made.data?.row?.id;
+  const listed = await req(`/api/pages/${db.id}/rows?format=named`, { cookie: owner.cookie });
+  const mine = listed.data?.rows?.find((r) => r.id === rowId);
+  check('cards list with values by name', mine?.cells?.Status === 'Done' && mine?.cells?.Title === 'Write docs', JSON.stringify(mine));
+  const body = await req(`/api/pages/${db.id}/rows/${rowId}/markdown`, { cookie: owner.cookie });
+  check("a card's page reads as Markdown", body.status === 200 && body.data.content.includes('first'), JSON.stringify(body.data));
+  const changed = await req(`/api/pages/${db.id}/rows/${rowId}`, { method: 'PATCH', cookie: owner.cookie, body: { cells: { Status: 'In progress' } } });
+  check('a card can be changed and comes back', changed.status === 200 && changed.data.row.id === rowId, `${changed.status}`);
+  const unknown = await req(`/api/pages/${db.id}/rows/${rowId}`, { method: 'PATCH', cookie: owner.cookie, body: { cells: { Colour: 'red' } } });
+  const wrong = await req(`/api/pages/${db.id}/rows`, { method: 'POST', cookie: owner.cookie, body: { cells: { Due: 'next week' } } });
+  check('unknown properties and wrong values are refused with the property named', unknown.status === 400 && /Colour/.test(unknown.data.error) && wrong.status === 400 && /Due/.test(wrong.data.error), `${unknown.status} ${unknown.data?.error} / ${wrong.status} ${wrong.data?.error}`);
+  const batch = await req(`/api/pages/${db.id}/rows/batch`, { method: 'POST', cookie: owner.cookie, body: { rows: [{ cells: { Title: 'A' } }, { cells: { Title: 'B' } }, { cells: { Title: 'C' } }] } });
+  check('cards can be made in a batch', batch.status === 201 && batch.data.rows.length === 3, `${batch.status}`);
+  const del = await req(`/api/pages/${db.id}/rows/${rowId}`, { method: 'DELETE', cookie: owner.cookie });
+  const after = await req(`/api/pages/${db.id}/rows`, { cookie: owner.cookie });
+  check('a card can be deleted', del.status === 200 && !after.data.rows.some((r) => r.id === rowId), `${del.status} ${after.data?.rows?.length}`);
+  const order = await req(`/api/pages/${db.id}/fields/order`, { method: 'POST', cookie: owner.cookie, body: { fields: ['Due', 'Title'] } });
+  check('properties can be reordered', order.status === 200 && order.data.fields[0] === due.data.field.id, JSON.stringify(order.data));
+  const ren = await req(`/api/pages/${db.id}/fields/Due`, { method: 'PATCH', cookie: owner.cookie, body: { name: 'Deadline' } });
+  const gone = await req(`/api/pages/${db.id}/fields/Deadline`, { method: 'DELETE', cookie: owner.cookie });
+  check('a property can be renamed and deleted', ren.status === 200 && ren.data.field.name === 'Deadline' && gone.status === 200, `${ren.status} ${gone.status}`);
+
+  const hook = (await req(`/api/workspaces/${ws}/webhooks`, { method: 'POST', cookie: owner.cookie, body: { url: 'https://example.com/hook', events: ['row.created'] } })).data;
+  const rotated = await req(`/api/webhooks/${hook.id}/rotate-secret`, { method: 'POST', cookie: owner.cookie });
+  check('a webhook secret can be rotated', rotated.status === 200 && rotated.data.secret?.startsWith('whsec_') && rotated.data.secret !== hook.secret, `${rotated.status}`);
+}
+
+// --- MCP: arguments are checked, version is the server's, cards can be added
+{
+  const tok = (await req('/api/auth/tokens', { method: 'POST', cookie: owner.cookie, body: { name: 'mcp', workspaceId: ws } })).data?.token;
+  const rpc = async (method, params) => {
+    const r = await fetch(`${B}/api/mcp`, { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'x-forwarded-for': freshIp() }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+    return (await r.json()).result;
+  };
+  const init = await rpc('initialize', {});
+  const info = await (await fetch(`${B}/api/server/info`)).json();
+  check('MCP reports the server version', init?.serverInfo?.version === info.version, `${init?.serverInfo?.version} vs ${info.version}`);
+  const noGroup = await rpc('tools/call', { name: 'set_note_group', arguments: { title: 'Anything' } });
+  check('MCP refuses a call missing a required argument', noGroup?.isError === true && /Missing "group"/.test(noGroup.content[0].text), JSON.stringify(noGroup));
+  const tools = await rpc('tools/list', {});
+  check('MCP lists card tools with hints', ['read_database', 'add_card', 'update_card', 'delete_card', 'create_task', 'list_members'].every((n) => tools?.tools?.some((t) => t.name === n)) && tools.tools.find((t) => t.name === 'delete_card').annotations?.destructiveHint === true);
+  const db = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'MCP cards', type: 'grid' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Topic', type: 'text' } });
+  const added = await rpc('tools/call', { name: 'add_card', arguments: { title: 'MCP cards', values: { Topic: 'From Claude' } } });
+  const read = await rpc('tools/call', { name: 'read_database', arguments: { title: 'MCP cards' } });
+  check('MCP can add a card and read it back', !added?.isError && read?.content?.[0]?.text?.includes('From Claude'), JSON.stringify(added));
+}
+
 // --- public form flooding
 {
   let last;

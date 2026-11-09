@@ -9,6 +9,7 @@ import { guideFor } from '../aiGuide.js';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { writeMarkdown } from '../markdownBlocks.js';
+import { apiGuide } from '../apiGuide.js';
 import { databaseToCsv, docToMarkdown } from '../readable.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { deliver, WEBHOOK_EVENTS } from '../webhooks.js';
@@ -134,6 +135,15 @@ export async function apiRoutes(app: FastifyInstance) {
       return { ok: true };
     });
 
+    // A new signing secret (the old one stops working at once); shown this once.
+    auth.post('/webhooks/:id/rotate-secret', async (req) => {
+      const { id } = parse(idParams, req.params);
+      const hook = await hookOr404(req.user.id, id);
+      const secret = `whsec_${randomBytes(20).toString('base64url')}`;
+      await query('update webhooks set secret = $2 where id = $1', [hook.id, secret]);
+      return { id: hook.id, secret };
+    });
+
     // Sends a "ping" right away, to check the address works.
     auth.post('/webhooks/:id/test', async (req) => {
       const { id } = parse(idParams, req.params);
@@ -163,66 +173,4 @@ export async function apiRoutes(app: FastifyInstance) {
       return { ok: true, blocks };
     });
   });
-}
-
-/** The API guide: how to sign in with a token, and the main endpoints. */
-function apiGuide() {
-  const rows: [string, string, string][] = [
-    ['GET', '/api/auth/me', 'Who the token belongs to.'],
-    ['GET', '/api/workspaces', 'Your workspaces.'],
-    ['GET', '/api/workspaces/{workspaceId}/pages', 'Every page you can see (id, title, type, parentId, icon…).'],
-    ['POST', '/api/workspaces/{workspaceId}/pages', 'New page. Body: {"title": "…", "type": "document" | "grid" | "board" | "calendar" | "list" | "gallery" | "timeline", "parentId": "…"}.'],
-    ['GET', '/api/pages/{pageId}', 'One page’s details.'],
-    ['PATCH', '/api/pages/{pageId}', 'Rename or change: {"title": "…", "icon": "📚", "parentId": "…"}.'],
-    ['GET', '/api/pages/{pageId}/markdown', 'A document as Markdown (a database as CSV).'],
-    ['POST', '/api/pages/{pageId}/markdown', 'Add to a document: {"markdown": "# Notes\\n- [ ] Task", "mode": "append" | "replace"}.'],
-    ['POST', '/api/pages/{pageId}/trash', 'Move a page to the trash.'],
-    ['GET', '/api/workspaces/{workspaceId}/search?q=…', 'Search pages and files.'],
-    ['GET', '/api/workspaces/{workspaceId}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD', 'Events, tasks, dated cards and dated to-dos.'],
-    ['POST', '/api/workspaces/{workspaceId}/events', 'New event or task: {"title": "…", "startDate": "2026-12-01", "startTime": "09:00", "endTime": "10:00", "status": "todo" (makes it a task), "color": "blue"}.'],
-    ['PATCH', '/api/events/{eventId}', 'Change an event: any of the fields above (e.g. {"status": "done"}).'],
-    ['DELETE', '/api/events/{eventId}', 'Delete an event.'],
-    ['GET', '/api/workspaces/{workspaceId}/tasks?date=YYYY-MM-DD', 'The day’s tasks (as on Today).'],
-    ['GET', '/api/pages/{databaseId}/rows/{rowId}', 'One card of a database (its cells).'],
-    ['PATCH', '/api/pages/{databaseId}/rows/{rowId}/cells', 'Change a card’s cells: {"cells": {"<propertyId>": value}} (property ids from GET /api/pages/{databaseId}/fields).'],
-    ['POST', '/api/workspaces/{workspaceId}/files', 'Upload a file (multipart/form-data, field "file").'],
-    ['GET', '/api/guide', 'How the whole app works, in Markdown (no token needed); ?topic=meetings gives only the matching sections.'],
-    ['GET', '/api/workspaces/{workspaceId}/chats', 'Your private chats, groups and teams, with unread counts.'],
-    ['POST', '/api/workspaces/{workspaceId}/chats', 'Start a chat: {"kind": "direct" | "group" | "team", "name": "…", "memberIds": ["…"]}.'],
-    ['GET', '/api/chats/{chatId}/messages', 'A chat’s latest messages (?before=ISO time for older ones).'],
-    ['POST', '/api/chats/{chatId}/messages', 'Send a message: {"body": "…"} — <@userId>, <page:id>, <date:ISO> are drawn as chips.'],
-    ['GET', '/api/workspaces/{workspaceId}/meetings', 'Meetings you host, were invited to, or that are for your teams.'],
-    ['POST', '/api/workspaces/{workspaceId}/meetings', 'Schedule or start a meeting: {"title", "startsAt" (ISO, or null for now), "durationMin", "inviteeIds", "tasks": [{"title", "assigneeIds", "dueAt", "priority", "notes"}], "defaults": {"talk","camera","screen","chat"}}.'],
-    ['GET', '/api/meetings/{code}', 'A meeting: details, people, permissions and the tasks you can see.'],
-    ['POST', '/api/meetings/{code}/tasks', 'Add a meeting task (same fields as above).'],
-    ['GET', '/api/workspaces/{workspaceId}/graph', 'The graph: pages (with their group), connections and the groups (colours with meaning).'],
-  ];
-  const events = WEBHOOK_EVENTS.map((e) => `<code>${e}</code>`).join(', ');
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${config.appName} API</title>
-<style>
-body{font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#1f2328;background:#fff}
-@media (prefers-color-scheme:dark){body{color:#e6e6e6;background:#16181d}code,pre{background:#262a33!important}td,th{border-color:#333!important}}
-h1{font-size:28px}h2{margin-top:32px}code,pre{background:#f3f4f6;border-radius:5px;padding:1px 5px;font-size:13px}pre{padding:12px;overflow:auto}
-table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid #d0d7de;padding:6px 8px;text-align:left;vertical-align:top}td:first-child{font-weight:600;white-space:nowrap}
-</style></head><body>
-<h1>${config.appName} API</h1>
-<p>Everything the app does goes through this JSON API. Scripts and other apps use it with a <b>personal API token</b>, and act as the person who made it — seeing and changing only what they can.</p>
-<h2>Signing in</h2>
-<p>Make a token in the app: <b>Settings → API & webhooks → New token</b>. Send it with every request:</p>
-<pre>curl -H "Authorization: Bearer atr_…" ${'$'}SERVER/api/workspaces</pre>
-<p>Send JSON bodies with <code>Content-Type: application/json</code>. Errors come back as <code>{"error": "message"}</code> with a 4xx/5xx status. Tokens can't make or delete other tokens.</p>
-<h2>Endpoints</h2>
-<table><tr><th>Method</th><th>Path</th><th>What it does</th></tr>
-${rows.map(([m, p, d]) => `<tr><td>${m}</td><td><code>${p}</code></td><td>${d.replace(/</g, '&lt;')}</td></tr>`).join('\n')}
-</table>
-<h2>MCP (for AI assistants)</h2>
-<p><code>POST /api/mcp</code> is an MCP server (Streamable HTTP) that lets an assistant like Claude use a workspace as its memory: tools <code>search_notes</code>, <code>read_note</code>, <code>list_notes</code>, <code>recent_notes</code>, <code>create_note</code>, <code>update_note</code>, <code>related_notes</code> and <code>delete_note</code>, <code>set_note_group</code>, <code>graph_groups</code> and <code>app_guide</code>, with <code>[[Title]]</code> links. Use a token limited to one workspace (or add <code>?workspace=&lt;id&gt;</code>):</p>
-<pre>claude mcp add --transport http workspace-brain ${'$'}SERVER/api/mcp --header "Authorization: Bearer atr_…"</pre>
-<h2>Webhooks</h2>
-<p>Workspace owners add webhooks in <b>Settings → API & webhooks</b>. When something happens, the server sends a <code>POST</code> with JSON:</p>
-<pre>{"event": "page.created", "workspaceId": "…", "at": "2026-11-01T12:00:00.000Z", "data": { … }}</pre>
-<p>Events: ${events} (and <code>ping</code> from the Test button). Each request has an <code>X-Signature: sha256=…</code> header: the HMAC-SHA256 of the raw body with the webhook's secret, to check it came from this server:</p>
-<pre>const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');</pre>
-</body></html>`;
 }

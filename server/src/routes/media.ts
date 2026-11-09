@@ -137,7 +137,7 @@ export async function mediaRoutes(app: FastifyInstance) {
           size,
         ]);
         queueFileText(copyId);
-        emit(file.workspace_id, 'file.uploaded', { id: copyId, url: `/api/files/${copyId}` });
+        emit(file.workspace_id, 'file.uploaded', { id: copyId, url: `/api/files/${copyId}` }, { id: req.user.id, name: req.user.name });
         return reply.code(201).send({ id: copyId, url: `/api/files/${copyId}`, name, size });
       }
       if (file.uploaded_by) await checkStorage(file.uploaded_by, size, Number(file.size));

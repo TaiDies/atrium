@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from './config.js';
@@ -14,7 +14,8 @@ import { getSettings, setSetting, type UpdateSettings } from './settings.js';
 // leaves it a request in the shared data folder; the updater pulls the new version, rebuilds the app
 // and writes back how it went.
 
-export const SERVER_VERSION = '1.11.3';
+/** The running version: server/package.json is the one source (tools/set-version.mjs writes it everywhere). */
+export const SERVER_VERSION: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export const UPDATE_REPO = process.env.UPDATE_REPO || 'TaiDies/atrium';
 
 const dir = () => path.join(config.dataDir, 'update');

@@ -1258,6 +1258,8 @@ export const frPatterns: [RegExp, string][] = [
   [/^Edited (.+) ago$/, 'Modifié il y a $1'],
   [/^Edited just now$/, 'Modifié à l’instant'],
   [/^just now$/, 'à l’instant'],
+  // One of something is singular ("il y a 1 an", not "il y a 1 ans").
+  [/^1 year ago$/, 'il y a 1 an'],
   [/^(\d+) (minute|minutes) ago$/, 'il y a $1 min'],
   [/^(\d+) (hour|hours) ago$/, 'il y a $1 h'],
   [/^(\d+) (day|days) ago$/, 'il y a $1 j'],
