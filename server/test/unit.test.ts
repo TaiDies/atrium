@@ -29,6 +29,7 @@ import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
 import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { SERVER_VERSION } from '../src/updates.ts';
 import { namedCells, normaliseCells } from '../src/rowCells.ts';
+import { checkArgs } from '../src/routes/mcp.ts';
 import { esPatterns } from '../../web/src/i18n/es.ts';
 import { frPatterns } from '../../web/src/i18n/fr.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
@@ -521,5 +522,18 @@ describe('card values through the API', () => {
   });
   it('shows stored values by name', () => {
     assert.deepEqual(namedCells(fields, { f1: 'Plan', f2: 'o2', f4: ['t1'] }), { Name: 'Plan', Status: 'Done', Tags: ['Red'] });
+  });
+});
+
+describe('MCP tool arguments', () => {
+  const schema = { type: 'object', properties: { id: { type: 'string' }, group: { type: 'string' }, mode: { type: 'string', enum: ['append', 'replace'] }, values: { type: 'object' } }, required: ['group'] };
+  it('refuses a missing required argument (no more clearing a group by leaving it out)', () => {
+    assert.match(checkArgs(schema, { id: 'x' }) ?? '', /Missing "group"/);
+  });
+  it('checks types and allowed values, and ignores extra arguments', () => {
+    assert.match(checkArgs(schema, { group: 3 }) ?? '', /should be a string/);
+    assert.match(checkArgs(schema, { group: 'a', mode: 'merge' }) ?? '', /one of: append, replace/);
+    assert.match(checkArgs(schema, { group: 'a', values: [1] }) ?? '', /an object/);
+    assert.equal(checkArgs(schema, { group: 'a', extra: true }), null);
   });
 });

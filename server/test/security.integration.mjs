@@ -637,6 +637,27 @@ let member;
   check('a webhook secret can be rotated', rotated.status === 200 && rotated.data.secret?.startsWith('whsec_') && rotated.data.secret !== hook.secret, `${rotated.status}`);
 }
 
+// --- MCP: arguments are checked, version is the server's, cards can be added
+{
+  const tok = (await req('/api/auth/tokens', { method: 'POST', cookie: owner.cookie, body: { name: 'mcp', workspaceId: ws } })).data?.token;
+  const rpc = async (method, params) => {
+    const r = await fetch(`${B}/api/mcp`, { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'x-forwarded-for': freshIp() }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+    return (await r.json()).result;
+  };
+  const init = await rpc('initialize', {});
+  const info = await (await fetch(`${B}/api/server/info`)).json();
+  check('MCP reports the server version', init?.serverInfo?.version === info.version, `${init?.serverInfo?.version} vs ${info.version}`);
+  const noGroup = await rpc('tools/call', { name: 'set_note_group', arguments: { title: 'Anything' } });
+  check('MCP refuses a call missing a required argument', noGroup?.isError === true && /Missing "group"/.test(noGroup.content[0].text), JSON.stringify(noGroup));
+  const tools = await rpc('tools/list', {});
+  check('MCP lists card tools with hints', ['read_database', 'add_card', 'update_card', 'delete_card', 'create_task', 'list_members'].every((n) => tools?.tools?.some((t) => t.name === n)) && tools.tools.find((t) => t.name === 'delete_card').annotations?.destructiveHint === true);
+  const db = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'MCP cards', type: 'grid' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Topic', type: 'text' } });
+  const added = await rpc('tools/call', { name: 'add_card', arguments: { title: 'MCP cards', values: { Topic: 'From Claude' } } });
+  const read = await rpc('tools/call', { name: 'read_database', arguments: { title: 'MCP cards' } });
+  check('MCP can add a card and read it back', !added?.isError && read?.content?.[0]?.text?.includes('From Claude'), JSON.stringify(added));
+}
+
 // --- public form flooding
 {
   let last;
