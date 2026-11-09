@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { accessMap, atLeast, hiddenEvents, requireMember, requirePage } from '../access.js';
+import { accessMap, atLeast, hiddenEvents, requireMember, requirePage, requireUnlocked } from '../access.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, editDoc, eventBlock, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -367,6 +367,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   app.patch('/pages/:id/rows/:rowId/cells', async (req) => {
     const { id, rowId } = parse(rowParams, req.params);
     await databasePage(req.user.id, id, 'edit');
+    await requireUnlocked(id);
     const { cells } = parse(z.object({ cells: z.record(z.string().max(64), z.unknown()) }), req.body);
     const ok = await editDoc(id, null, (doc) => {
       const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === rowId);

@@ -403,7 +403,9 @@ export async function startAdminServer() {
         secured.put('/settings/ai', async (req) => {
           const body = parse(aiBody, req.body);
           const current = (await getSettings()).ai;
-          const keyEnc = body.key === undefined ? (current?.keyEnc ?? null) : body.key ? encryptKey(body.key) : null;
+          // The saved key is only kept for the same service at the same address.
+          const same = !!current && current.provider === body.provider && (current.baseUrl ?? '') === (body.baseUrl || '');
+          const keyEnc = body.key === undefined ? (same ? (current?.keyEnc ?? null) : null) : body.key ? encryptKey(body.key) : null;
           if (!keyEnc && body.provider !== 'openai') throw new HttpError(400, 'Enter the API key');
           await setSetting('ai', { provider: body.provider, model: body.model, baseUrl: body.baseUrl || null, keyEnc, allowOwn: body.allowOwn });
           return { ok: true };
@@ -417,7 +419,7 @@ export async function startAdminServer() {
         secured.post('/ai/models', async (req) => {
           const body = parse(aiBody.pick({ provider: true, baseUrl: true, key: true }), req.body);
           const saved = (await getSettings()).ai;
-          const key = body.key || (saved?.provider === body.provider ? decryptKey(saved.keyEnc) : null);
+          const key = body.key || (saved?.provider === body.provider && (saved.baseUrl ?? '') === (body.baseUrl || '') ? decryptKey(saved.keyEnc) : null);
           return { models: await listModels({ provider: body.provider, model: '', baseUrl: body.baseUrl || null, key }) };
         });
 

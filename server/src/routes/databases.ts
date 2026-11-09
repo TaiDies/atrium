@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { requirePage } from '../access.js';
+import { requirePage, requireUnlocked } from '../access.js';
 import { requireUser } from '../auth.js';
 import { editDoc, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -87,6 +87,11 @@ export async function databaseRoutes(app: FastifyInstance) {
     );
     const page = await requirePage(req.user.id, id, 'edit');
     if (!isDatabase(page.type)) throw new HttpError(400, 'Not a database');
+    await requireUnlocked(id);
+    // "Lock views and properties" on a database keeps its properties as they are.
+    if (await readDoc(id, null, (doc) => doc.getMap('dbSettings').get('locked') === true).catch(() => false)) {
+      throw new HttpError(423, 'Views and properties are locked. Unlock them from the database’s ••• menu first.');
+    }
     const added = await editDoc(
       id,
       null,

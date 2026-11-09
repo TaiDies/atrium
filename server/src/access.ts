@@ -117,6 +117,12 @@ export async function requirePage(userId: string, pageId: string, need: Access =
   return { ...page, access };
 }
 
+/** Stops a write to a page that's locked against accidental edits (423, like the app's read-only view). */
+export async function requireUnlocked(pageId: string, client?: Queryable) {
+  const row = await one<{ locked: boolean }>('select locked from pages where id = $1', [pageId], client);
+  if (row?.locked) throw new HttpError(423, 'This page is locked. Unlock it first (••• → Unlock page).');
+}
+
 /**
  * Which of these files a person may see (and so read the text of): their own uploads, files not used
  * on any page, and files on at least one page they can open. The same rule as the Files list.

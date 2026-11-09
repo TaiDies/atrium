@@ -2,7 +2,7 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { clearSessionCookie, endSessions, liveTicket, requireUser, sessionToken, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
+import { clearSessionCookie, endSessions, liveTicket, looksLikeApiToken, requireSession, requireUser, sessionToken, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
 import { closeUserSessions } from '../collab.js';
 import { config } from '../config.js';
 import { one, query, type Queryable, tx } from '../db.js';
@@ -209,6 +209,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/auth/logout', async (req, reply) => {
+    if (looksLikeApiToken(req.headers.authorization)) throw new HttpError(403, 'This can only be done in the app, not with an API token');
     // "Sign out everywhere" ends this person's sessions on all devices.
     const { everywhere } = parse(z.object({ everywhere: z.boolean().optional() }), req.body ?? {});
     if (everywhere) {
@@ -225,7 +226,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.get('/auth/me', { preHandler: requireUser }, async (req) => ({ user: req.user }));
 
   // For the desktop and phone apps: a ticket that only opens the live-editing connections.
-  app.get('/auth/live-ticket', { preHandler: requireUser }, async (req) => ({ ticket: await liveTicket(req.user.id) }));
+  app.get('/auth/live-ticket', { preHandler: [requireUser, requireSession] }, async (req) => ({ ticket: await liveTicket(req.user.id) }));
 
   // What this person may do (from their roles), so the app can hide what isn't allowed.
   app.get('/auth/me/permissions', { preHandler: requireUser }, async (req) => ({ permissions: [...(await permissionsFor(req.user.id))] }));
@@ -236,7 +237,7 @@ export async function authRoutes(app: FastifyInstance) {
     const row = await one<{ prefs: Record<string, string> }>('select prefs from users where id = $1', [req.user.id]);
     return { prefs: row?.prefs ?? {} };
   });
-  app.put('/auth/me/prefs', { preHandler: requireUser }, async (req) => {
+  app.put('/auth/me/prefs', { preHandler: [requireUser, requireSession] }, async (req) => {
     const body = parse(z.object({ prefs: z.record(z.string().max(64), z.string().max(4000).nullable()) }), req.body);
     const set = Object.fromEntries(Object.entries(body.prefs).filter(([, v]) => v !== null));
     const removed = Object.entries(body.prefs).filter(([, v]) => v === null).map(([k]) => k);
@@ -261,13 +262,13 @@ export async function authRoutes(app: FastifyInstance) {
     return { limits: await limitsFor(req.user.id), usage: { ...(await usageFor(req.user.id)), owned } };
   });
 
-  app.patch('/auth/me', { preHandler: requireUser }, async (req) => {
+  app.patch('/auth/me', { preHandler: [requireUser, requireSession] }, async (req) => {
     const body = parse(z.object({ name }), req.body);
     const user = await one<SessionUser>('update users set name = $2 where id = $1 returning id, email, name, color', [req.user.id, body.name]);
     return { user };
   });
 
-  app.post('/auth/password', { preHandler: requireUser }, async (req, reply) => {
+  app.post('/auth/password', { preHandler: [requireUser, requireSession] }, async (req, reply) => {
     const body = parse(z.object({ currentPassword: z.string().optional(), newPassword: password }), req.body);
     const row = (await one<{ password_hash: string | null }>('select password_hash from users where id = $1', [req.user.id]))!;
     // Accounts made with an email code can set a first password without a current one.

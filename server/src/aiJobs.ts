@@ -14,6 +14,8 @@ export const HELD_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 90_000;
 
 interface Job {
   userId: string;
+  /** The workspace an API token that started it was limited to: only that token's scope may read it. */
+  scope: string | null;
   done: boolean;
   result?: unknown;
   error?: { status: number; message: string };
@@ -61,7 +63,7 @@ export function asyncCapable<R extends FastifyRequest>(handler: (req: R) => Prom
     for (const j of jobs.values()) if (j.userId === userId && !j.done) running++;
     if (running >= MAX_RUNNING_PER_USER) throw new HttpError(429, 'Several AI requests are already running. Wait for one to finish.');
     const id = randomUUID();
-    const job: Job = { userId, done: false };
+    const job: Job = { userId, scope: (req as { tokenScope?: string | null }).tokenScope ?? null, done: false };
     jobs.set(id, job);
     void runInBackground(() => handler(req))
       .then(
@@ -77,10 +79,10 @@ export function asyncCapable<R extends FastifyRequest>(handler: (req: R) => Prom
 }
 
 /** A job's state, for its owner: not done yet, its answer, or its error (thrown with its status). */
-export function jobState(id: string, userId: string): { done: false } | { done: true; result: unknown } {
+export function jobState(id: string, userId: string, scope: string | null = null): { done: false } | { done: true; result: unknown } {
   sweep();
   const job = jobs.get(id);
-  if (!job || job.userId !== userId) throw new HttpError(404, 'That AI request is no longer available. Try again.');
+  if (!job || job.userId !== userId || (scope !== null && job.scope !== scope)) throw new HttpError(404, 'That AI request is no longer available. Try again.');
   if (!job.done) return { done: false };
   if (job.error) throw new HttpError(job.error.status, job.error.message);
   return { done: true, result: job.result };

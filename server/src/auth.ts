@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
-import { setTokenScope } from './scope.js';
+import { runWithScope } from './scope.js';
+import { permissionsFor } from './roles.js';
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { one, query } from './db.js';
@@ -30,6 +31,10 @@ export interface SessionUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user: SessionUser;
+    /** Signed in with an API token (not the app's own session). */
+    viaToken?: boolean;
+    /** The one workspace the API token may touch, if it's limited to one. */
+    tokenScope?: string | null;
   }
 }
 
@@ -94,41 +99,68 @@ function touch(userId: string) {
 }
 
 /** A personal API token ("Authorization: Bearer atr_…", or "af_…" from before 1.9.0): acts as the person who made it. */
-async function userFromApiToken(header: string | undefined): Promise<SessionUser | null> {
-  const token = /^Bearer\s+((?:atr|af)_[A-Za-z0-9_-]{20,80})$/.exec(header ?? '')?.[1];
+/** An Authorization header that carries one of this app's API tokens (any capitalisation of "Bearer"). */
+export const looksLikeApiToken = (header: string | undefined) => /^bearer\s+(?:atr|af)_/i.test(header ?? '');
+
+async function userFromApiToken(header: string | undefined): Promise<(SessionUser & { workspaceId: string | null }) | null> {
+  const token = /^bearer\s+((?:atr|af)_[A-Za-z0-9_-]{20,80})\s*$/i.exec(header ?? '')?.[1];
   if (!token) return null;
   const hash = createHash('sha256').update(token).digest('hex');
+  // A token stops working when its owner is switched off, signs out everywhere or changes their
+  // password (session_version), or loses the "API tokens" permission.
   const user = await one<SessionUser & { tokenId: string; workspaceId: string | null }>(
     `select u.id, u.email, u.name, u.color, t.id as "tokenId", t.workspace_id as "workspaceId" from api_tokens t join users u on u.id = t.user_id
-      where t.token_hash = $1 and u.disabled_at is null and (t.expires_at is null or t.expires_at > now())`,
+      where t.token_hash = $1 and u.disabled_at is null and (t.expires_at is null or t.expires_at > now())
+        and (t.session_version is null or t.session_version = u.session_version)`,
     [hash],
   );
   if (!user) return null;
+  if (!(await permissionsFor(user.id)).has('api_tokens')) return null;
   query("update api_tokens set last_used_at = now() where id = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')", [user.tokenId]).catch(() => {});
   touch(user.id);
-  // A token limited to one workspace keeps the whole request inside it.
-  setTokenScope(user.workspaceId);
-  return { id: user.id, email: user.email, name: user.name, color: user.color };
+  return { id: user.id, email: user.email, name: user.name, color: user.color, workspaceId: user.workspaceId };
 }
 
 /** Guessing API tokens: invalid ones per address. */
 const badTokensByIp = limiter(50, 15 * 60_000);
 
-export async function requireUser(req: FastifyRequest) {
+/**
+ * Signs the request in: with an API token ("Authorization: Bearer atr_…") or the app's session cookie.
+ * Other Authorization headers (such as a proxy's Basic login) are ignored and don't count as guesses.
+ */
+export async function authenticate(req: FastifyRequest) {
   const bearer = req.headers.authorization;
-  if (bearer) {
+  if (looksLikeApiToken(bearer)) {
     if (badTokensByIp.blocked(req.ip)) throw new HttpError(429, 'Too many invalid API tokens. Wait a few minutes and try again.');
     const fromToken = await userFromApiToken(bearer);
     if (!fromToken) {
       badTokensByIp.hit(req.ip);
-      throw new HttpError(401, 'That API token is not valid (it may have been deleted or have expired)');
+      throw new HttpError(401, 'That API token is not valid (it may have been deleted, have expired, or its owner can no longer use API tokens)');
     }
-    req.user = fromToken;
+    const { workspaceId, ...user } = fromToken;
+    req.user = user;
+    req.viaToken = true;
+    req.tokenScope = workspaceId;
     return;
   }
   const user = await userFromToken(sessionToken(req.cookies));
   if (!user) throw new HttpError(401, 'Please sign in');
   req.user = user;
+  req.viaToken = false;
+  req.tokenScope = null;
+}
+
+/** preHandler: signs the request in, then runs the rest of it with an API token's workspace limit in force. */
+export function requireUser(req: FastifyRequest, _reply: FastifyReply, done: (err?: Error) => void) {
+  authenticate(req).then(
+    () => runWithScope(req.tokenScope ?? null, done),
+    (err) => done(err),
+  );
+}
+
+/** preHandler (after requireUser): for things only the person in the app may do, never an API token. */
+export async function requireSession(req: FastifyRequest) {
+  if (req.viaToken || looksLikeApiToken(req.headers.authorization)) throw new HttpError(403, 'This can only be done in the app, not with an API token');
 }
 
 export function parseCookieHeader(header: string | undefined): Record<string, string> {

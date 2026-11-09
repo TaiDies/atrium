@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireMember, requireOwner, requirePage } from '../access.js';
-import { requireUser, sessionToken } from '../auth.js';
+import { requireMember, requireOwner, requirePage, requireUnlocked } from '../access.js';
+import { requireSession, requireUser } from '../auth.js';
 import { editDoc, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
 import { guideFor } from '../aiGuide.js';
@@ -19,10 +19,6 @@ import { requirePermission } from '../roles.js';
 export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 const isDatabase = (type: string) => (DATABASE_TYPES as readonly string[]).includes(type);
 
-/** Managing tokens needs the person signed in to the app itself, not a token. */
-function requireSession(req: { cookies: Record<string, string | undefined>; headers: Record<string, unknown> }) {
-  if (!sessionToken(req.cookies) || req.headers.authorization) throw new HttpError(403, 'Manage API tokens from the app');
-}
 
 export async function apiRoutes(app: FastifyInstance) {
   // The guide, readable without signing in.
@@ -39,7 +35,7 @@ export async function apiRoutes(app: FastifyInstance) {
 
     // ----- tokens -----
     auth.get('/auth/tokens', async (req) => {
-      requireSession(req);
+      await requireSession(req);
       const tokens = await query(
         `select t.id, t.name, t.prefix, t.created_at as "createdAt", t.last_used_at as "lastUsedAt", t.expires_at as "expiresAt",
                 t.workspace_id as "workspaceId", w.name as "workspaceName"
@@ -51,7 +47,7 @@ export async function apiRoutes(app: FastifyInstance) {
 
     auth.post('/auth/tokens', async (req) => {
       await requirePermission(req.user.id, 'api_tokens');
-      requireSession(req);
+      await requireSession(req);
       const body = parse(
         z.object({
           name: z.string().trim().min(1, 'Give it a name').max(80),
@@ -66,7 +62,8 @@ export async function apiRoutes(app: FastifyInstance) {
       if ((count?.n ?? 0) >= 50) throw new HttpError(400, 'You have 50 tokens already: delete some first');
       const token = `atr_${randomBytes(24).toString('base64url')}`;
       const row = await one<{ id: string }>(
-        `insert into api_tokens (user_id, name, token_hash, prefix, expires_at, workspace_id) values ($1, $2, $3, $4, $5, $6) returning id`,
+        `insert into api_tokens (user_id, name, token_hash, prefix, expires_at, workspace_id, session_version)
+         values ($1, $2, $3, $4, $5, $6, (select session_version from users where id = $1)) returning id`,
         [req.user.id, body.name, hashToken(token), token.slice(0, 9), body.days ? new Date(Date.now() + body.days * 86_400_000) : null, body.workspaceId],
       );
       // The only time the token itself is shown.
@@ -74,7 +71,7 @@ export async function apiRoutes(app: FastifyInstance) {
     });
 
     auth.delete('/auth/tokens/:id', async (req) => {
-      requireSession(req);
+      await requireSession(req);
       const { id } = parse(idParams, req.params);
       await query('delete from api_tokens where id = $1 and user_id = $2', [id, req.user.id]);
       return { ok: true };
@@ -161,6 +158,7 @@ export async function apiRoutes(app: FastifyInstance) {
       const body = parse(z.object({ markdown: z.string().max(1_000_000), mode: z.enum(['append', 'replace']).default('append') }), req.body);
       const page = await requirePage(req.user.id, id, 'edit');
       if (page.type !== 'document') throw new HttpError(400, 'Only document pages take Markdown');
+      await requireUnlocked(id);
       const blocks = await editDoc(id, null, (doc) => writeMarkdown(doc, body.markdown, body.mode === 'replace'), { editor: req.user.id });
       return { ok: true, blocks };
     });

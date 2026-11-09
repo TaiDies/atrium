@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireMember, requireOwner } from '../access.js';
-import { requireUser } from '../auth.js';
+import { requireSession, requireUser } from '../auth.js';
 import { config } from '../config.js';
 import { one, query, tx } from '../db.js';
 import { checkMembers, checkWorkspaces } from '../limits.js';
@@ -60,7 +60,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return { workspace };
   });
 
-  app.delete('/workspaces/:id', async (req) => {
+  app.delete('/workspaces/:id', { preHandler: requireSession }, async (req) => {
     const { id } = parse(idParams, req.params);
     await requireOwner(req.user.id, id);
     const files = await query<{ id: string }>('select id from files where workspace_id = $1', [id]);
@@ -117,7 +117,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return reply.code(201).send({ status: 'invited', hasAccount });
   });
 
-  app.patch('/workspaces/:id/members/:userId', async (req) => {
+  app.patch('/workspaces/:id/members/:userId', { preHandler: requireSession }, async (req) => {
     const { id, userId } = parse(z.object({ id: z.uuid(), userId: z.uuid() }), req.params);
     await requireOwner(req.user.id, id);
     const body = parse(z.object({ role }), req.body);
@@ -128,7 +128,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.delete('/workspaces/:id/members/:userId', async (req) => {
+  app.delete('/workspaces/:id/members/:userId', { preHandler: requireSession }, async (req) => {
     const { id, userId } = parse(z.object({ id: z.uuid(), userId: z.uuid() }), req.params);
     if (userId === req.user.id) await requireMember(req.user.id, id);
     else await requireOwner(req.user.id, id);

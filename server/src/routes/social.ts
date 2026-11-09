@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { accessMap, requireMember, requirePage } from '../access.js';
-import { requireUser } from '../auth.js';
+import { requireSession, requireUser } from '../auth.js';
 import { one, query } from '../db.js';
 import { checkMembers } from '../limits.js';
 import { inviteEmail, mailEnabled, sendMail } from '../mail.js';
@@ -193,7 +193,7 @@ export async function socialRoutes(app: FastifyInstance) {
     return { digest: !!row?.digest, hour: row?.digest_hour ?? 7, mailEnabled: await mailEnabled() };
   });
 
-  app.put('/auth/me/digest', async (req) => {
+  app.put('/auth/me/digest', { preHandler: requireSession }, async (req) => {
     const body = parse(z.object({ digest: z.boolean(), hour: z.number().int().min(0).max(23).default(7) }), req.body);
     if (body.digest && !(await mailEnabled())) throw new HttpError(400, 'Email isn’t set up on this server yet — ask the admin to add it in the admin panel');
     await query('update users set digest = $2, digest_hour = $3 where id = $1', [req.user.id, body.digest, body.hour]);
