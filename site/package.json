@@ -1,0 +1,9 @@
+{
+  "name": "atrium-site",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@vercel/blob": "2.8.2"
+  }
+}

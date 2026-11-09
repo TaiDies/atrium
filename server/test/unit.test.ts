@@ -629,3 +629,14 @@ describe('stylesheet', () => {
     assert.deepEqual(unused, []);
   });
 });
+
+describe('Markdown written into a page', () => {
+  it('keeps unticked to-dos unticked (a real boolean, not the text "false")', () => {
+    const doc = new Y.Doc();
+    writeMarkdown(doc, ['- [ ] open', '- [x] done'].join(String.fromCharCode(10)), true);
+    const items: Y.XmlElement[] = [];
+    const walk = (n: Y.XmlElement | Y.XmlFragment) => n.toArray().forEach((c) => { if (c instanceof Y.XmlElement) { if (c.nodeName === 'checkListItem') items.push(c); walk(c); } });
+    walk(doc.getXmlFragment('document-store'));
+    assert.deepEqual(items.map((i) => i.getAttribute('checked')), [false, true]);
+  });
+});
