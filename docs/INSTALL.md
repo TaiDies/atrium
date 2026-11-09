@@ -99,15 +99,20 @@ would rebuild over the image you pulled.
 
 Database changes are applied automatically when the server starts.
 
+**Upgrading to 1.11.5:** if a reverse proxy or tunnel runs on the Docker host and you followed the old
+advice `TRUST_PROXY=loopback`, it had no effect. Set `APP_BIND=127.0.0.1` and `TRUST_PROXY=172.16.0.0/12`
+instead (see *Behind a reverse proxy or tunnel*), then `docker compose up -d`.
+
 **Upgrading to 1.11.3:**
 
 - **Page history is kept in full again** unless you set `HISTORY_DAYS` (1.11.0 to 1.11.2 thinned it out
   after 90 days by default). With `HISTORY_DAYS=90`, snapshots older than 90 days are removed daily and the
   newest 10 of every page and card are always kept; the admin panel's Overview says when this is on.
   `HISTORY_DAYS` must be a whole number: anything else stops the server with a message.
-- **No proxy is trusted by default.** Running Caddy, nginx or a tunnel in front? Set `TRUST_PROXY` to
-  its address (for example `loopback` on the same machine, or `172.16.0.0/12` for a proxy container on
-  the Docker network), or everyone behind it shares one set of sign-in and sign-up limits.
+- **No proxy is trusted by default.** Running Caddy, nginx or a tunnel in front? Set `TRUST_PROXY` as
+  described in *Behind a reverse proxy or tunnel* below, or everyone behind it shares one set of sign-in
+  and sign-up limits. (Before 1.11.5 this guide said `loopback` for a proxy on the same machine; with
+  Docker that doesn't work, because the proxy reaches the app from Docker's bridge address.)
 - **API tokens** stop working when their owner signs out everywhere, changes their password, or loses
   the "API tokens" permission. Make new ones in Settings → API & webhooks.
 
@@ -144,14 +149,14 @@ up on it (a public or hosted server), change these in `.env`:
 - **Set up email** (see *Email* below) — without it, invitations can't be confirmed, so an invitation can
   be claimed by whoever signs up first with the invited address. The admin panel warns about this too.
 - **`PUBLIC_URL`** — the address people use, so links in emails point at it.
-- **`TRUST_PROXY`** — set it to your reverse proxy's address (for example `loopback`), so rate limits
-  see visitors' real addresses. Since 1.11.3 nothing is trusted unless you set it.
+- **`TRUST_PROXY`** — set it for your reverse proxy (see *Behind a reverse proxy or tunnel* below), so
+  rate limits see visitors' real addresses. Since 1.11.3 nothing is trusted unless you set it.
 - **`SECURE_COOKIES=true`** behind HTTPS.
 
 **Docker Desktop without a reverse proxy:** when the app's port is published straight from Docker Desktop
 (Windows or Mac), Docker passes every visitor on from one private address. The server then sees everyone
 as that one address, so per-address limits (sign-in attempts, sign-ups, public forms) are shared by all
-visitors. Put a reverse proxy in front (see *Put it on the internet* below) and set `TRUST_PROXY` to it.
+visitors. Put a reverse proxy in front and set `TRUST_PROXY` (see *Behind a reverse proxy or tunnel* below).
 Without a proxy the limits are still shared, but nobody can fake their address (nothing is trusted by default).
 
 ## 2. Put it on the internet (HTTPS) — optional but recommended
@@ -174,8 +179,8 @@ SECURE_COOKIES=true
 ```
 
 Also set `PUBLIC_URL=https://atrium.example.com` (links in emails, and live editing only accepts
-connections from this address) and `TRUST_PROXY` to the proxy (`loopback` when it runs on the same machine),
-so rate limits see each visitor's address.
+connections from this address), and set `TRUST_PROXY` so rate limits see each visitor's address (see
+*Behind a reverse proxy or tunnel* below).
 
 Nginx, Traefik or Cloudflare Tunnel work too. Whatever you use must pass the original `Host` header and
 **WebSockets** (live editing at `/collab`, chat and calls at `/live`). With nginx:
@@ -205,6 +210,34 @@ limit. Cloudflare's free plan also limits uploads to 100 MB, which caps imports.
 
 ---
 
+### Behind a reverse proxy or tunnel
+
+The app only believes the visitor address a proxy passes on (`X-Forwarded-For`) when the connection
+comes from an address in `TRUST_PROXY`. Which address that is depends on where the proxy runs:
+
+- **Proxy or tunnel on the Docker host** (Caddy, nginx or `cloudflared` installed on the same machine):
+  it reaches the app through Docker's bridge, so the app sees it as `172.x.0.1`, **not** as loopback —
+  `TRUST_PROXY=loopback` has no effect here. Set both:
+
+  ```ini
+  APP_BIND=127.0.0.1
+  TRUST_PROXY=172.16.0.0/12
+  ```
+
+  `APP_BIND=127.0.0.1` publishes the app's port on this machine only, so only your proxy can reach it.
+  **Trusting the bridge range is only safe when nobody else can reach the published port**: with the
+  port open to the network, anyone who connects to it directly arrives from the same bridge address and
+  could fake their address. (Docker usually gives its networks 172.16–172.31 addresses; if
+  `docker network inspect atrium_default` shows a 192.168 subnet, trust that gateway instead.)
+- **Proxy as a container on the same Compose network** (you added Caddy or Traefik to the compose file):
+  trust that network's range, `TRUST_PROXY=172.16.0.0/12` (or the subnet `docker network inspect`
+  shows). Only the proxy should publish a port then; remove or `APP_BIND` the app's own.
+- **Server run directly with `npm start`** (no Docker) and a proxy on the same machine:
+  `TRUST_PROXY=loopback` is correct.
+
+**Check it:** sign in through your domain, then run `docker compose logs app | grep remoteAddress | tail -3`
+and confirm your own address shows, not `172.x` (the admin panel doesn't show addresses).
+
 ## 3. Install the apps
 
 Download them from the [latest release](https://github.com/TaiDies/atrium/releases/latest).
@@ -228,6 +261,11 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
    server — the same Wi-Fi network, a VPN such as Tailscale, or a public HTTPS address.
 4. Allow notifications (Settings → Notifications in the app) and camera/microphone when asked in a
    meeting.
+
+**Known limit — exporting and printing don't work in the Android app yet.** *Export as Markdown*,
+*Export as PDF* (which prints), *Export…* (the .zip), exporting office files as .docx, .pdf or .xlsx, and
+saving statistics as a spreadsheet do nothing there: no file is saved and no print dialog opens. Use
+Atrium in the phone's browser (Chrome) or on a computer for these until the app can save files itself.
 
 ### Web and other devices
 
@@ -300,9 +338,10 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | Setting | Default | What it does |
 |---|---|---|
 | `APP_PORT` | `3000` | Port the app is published on |
+| `APP_BIND` | all addresses | Address the app's port is published on. `127.0.0.1` keeps it to this machine — use it with a reverse proxy or tunnel on the same machine |
 | `POSTGRES_PASSWORD` | — | Database password (set before the first start) |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
-| `TRUST_PROXY` | none | Which proxies may pass on the visitor's real address (for rate limits). Empty or `false` trusts none (the default since 1.11.3); `loopback` trusts a proxy on the same machine; a list like `203.0.113.7,172.16.0.0/12` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
+| `TRUST_PROXY` | none | Which proxies may pass on the visitor's real address (for rate limits). Empty or `false` trusts none (the default since 1.11.3); `172.16.0.0/12` trusts Docker's bridge (a proxy on the Docker host, with `APP_BIND=127.0.0.1`, or a proxy container); `loopback` only works without Docker; a list like `203.0.113.7,172.16.0.0/12` trusts those; `true` trusts any, so use it only when every request goes through a proxy you run |
 | `APP_NAME` | `Atrium` | The name shown on sign-in, in emails and in the apps |
 | `MAX_UPLOAD_MB` | `25` | Largest upload |
 | `MAX_IMPORT_MB` | `1024` | Largest export .zip that can be imported |
