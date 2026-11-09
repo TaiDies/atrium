@@ -36,7 +36,11 @@ export function colorFor(seed: string) {
 /** Turns errors into JSON replies: expected ones with their message, anything else as a logged 500. */
 export function handleError(err: any, req: FastifyRequest, reply: FastifyReply) {
   if (err instanceof ZodError) {
-    return reply.code(400).send({ error: err.issues[0]?.message ?? 'Invalid request' });
+    // Zod's own wording ("Invalid input: expected string…") doesn't say which field: name it.
+    const issue = err.issues[0];
+    const where = issue?.path?.length ? issue.path.join('.') : '';
+    const generic = /^(Invalid|Expected|Too (big|small)|Unrecognized|Required)/.test(issue?.message ?? '');
+    return reply.code(400).send({ error: issue ? (where && generic ? `${where}: ${issue.message}` : issue.message) : 'Invalid request', ...(where ? { field: where } : {}) });
   }
   if (err instanceof HttpError) {
     return reply.code(err.status).send({ error: err.message });

@@ -30,6 +30,9 @@ import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { SERVER_VERSION } from '../src/updates.ts';
 import { namedCells, normaliseCells } from '../src/rowCells.ts';
 import { checkArgs } from '../src/routes/mcp.ts';
+import { apiGuide } from '../src/apiGuide.ts';
+import { handleError } from '../src/util.ts';
+import { z } from 'zod';
 import { esPatterns } from '../../web/src/i18n/es.ts';
 import { frPatterns } from '../../web/src/i18n/fr.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
@@ -535,5 +538,24 @@ describe('MCP tool arguments', () => {
     assert.match(checkArgs(schema, { group: 'a', mode: 'merge' }) ?? '', /one of: append, replace/);
     assert.match(checkArgs(schema, { group: 'a', values: [1] }) ?? '', /an object/);
     assert.equal(checkArgs(schema, { group: 'a', extra: true }), null);
+  });
+});
+
+describe('API guide and error messages', () => {
+  it('documents tokens, background AI jobs, cards, webhook signing and MCP tools', () => {
+    const g = apiGuide();
+    for (const s of ['respond-async', '/api/ai/jobs/{jobId}', '/api/pages/{databaseId}/rows/batch', 'rotate-secret', 'X-Signature-V2', 'add_card', 'only possible in the app', 'af_', '423']) assert.ok(g.includes(s), s);
+    assert.ok(!g.includes('"mode": "append" | "replace"}.\''), 'no stale rows');
+  });
+  it('names the field in zod errors', () => {
+    let sent: { error: string; field?: string } | undefined;
+    const reply = { code: () => reply, send: (b: { error: string; field?: string }) => ((sent = b), reply) };
+    try {
+      z.object({ cells: z.object({ Due: z.string() }) }).parse({ cells: { Due: 5 } });
+    } catch (err) {
+      handleError(err, {} as never, reply as never);
+    }
+    assert.equal(sent?.field, 'cells.Due');
+    assert.match(sent?.error ?? '', /^cells\.Due: /);
   });
 });
