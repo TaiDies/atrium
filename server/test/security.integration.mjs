@@ -509,6 +509,35 @@ let member;
   check('the server is fine after them', (await fetch(`${B}/api/health`)).ok);
 }
 
+// --- access ends for open connections too: password change, leaving a workspace
+{
+  const own = new URL(B).origin;
+  const openLive = (cookie) =>
+    new Promise((resolve) => {
+      const ws = new WebSocket(`${WS_BASE}/live`, { headers: { cookie, origin: own } });
+      const closed = new Promise((r) => (ws.onclose = (e) => r(e.code)));
+      ws.onopen = () => resolve({ ws, closed });
+      ws.onerror = () => resolve(null);
+      setTimeout(() => resolve(null), 4000);
+    });
+  const within = (p, ms) => Promise.race([p, sleep(ms).then(() => 'still open')]);
+
+  const rev = await signup('revoked');
+  const s1 = await openLive(rev.cookie);
+  await req('/api/auth/password', { method: 'POST', cookie: rev.cookie, body: { currentPassword: rev.password, newPassword: 'a-new-password-9' } });
+  check('changing the password closes open live sockets', s1 && (await within(s1.closed, 3000)) === 4401, s1 ? String(await within(s1.closed, 10)) : 'never opened');
+
+  const leaver = await signup('leaver');
+  await verify(leaver);
+  await req(`/api/workspaces/${ws}/members`, { method: 'POST', body: { email: leaver.email, role: 'member' }, cookie: owner.cookie });
+  const inviteId = (await req('/api/invitations', { cookie: leaver.cookie })).data?.invitations?.[0]?.id;
+  await req(`/api/invitations/${inviteId}/accept`, { method: 'POST', cookie: leaver.cookie });
+  const s2 = await openLive(leaver.cookie);
+  const removed = await req(`/api/workspaces/${ws}/members/${leaver.id}`, { method: 'DELETE', cookie: owner.cookie });
+  check('removing a member closes their live socket', removed.status === 200 && s2 && (await within(s2.closed, 3000)) === 4403, `${removed.status}`);
+  check('…and they can no longer open the workspace', (await req(`/api/workspaces/${ws}/members`, { cookie: leaver.cookie })).status === 404);
+}
+
 // --- public form flooding
 {
   let last;

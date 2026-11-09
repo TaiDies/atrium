@@ -51,6 +51,8 @@ export async function findMeeting(codeOrId: string): Promise<MeetingRow> {
 
 /** Everyone's permissions, the members, and whether this person runs the meeting. */
 export async function meetingAccess(userId: string, codeOrId: string, opts: { joining?: boolean } = {}) {
+  // A switched-off account can't join or keep joining (its connections are closed too, see sockets.ts).
+  if (!(await one('select 1 from users where id = $1 and disabled_at is null', [userId]))) throw new HttpError(403, 'This account is switched off');
   const meeting = await findMeeting(codeOrId);
   const role = await requireMember(userId, meeting.workspace_id, undefined, true);
   let members = await query<MemberRow>('select * from meeting_members where meeting_id = $1', [meeting.id]);

@@ -59,7 +59,8 @@ export async function postMessage(chatId: string, userId: string | null, body: s
   );
   await query('update chats set last_message_at = now() where id = $1', [chatId]);
   const message = { id: msg!.id, chatId, userId, kind, body, createdAt: msg!.createdAt, editedAt: null, deleted: false };
-  pushTo(await memberIds(chatId), { t: 'message', chatId, message });
+  const chat = await one<{ workspace_id: string }>('select workspace_id from chats where id = $1', [chatId]);
+  void pushTo(await memberIds(chatId), { t: 'message', chatId, message }, chat?.workspace_id);
   return message;
 }
 

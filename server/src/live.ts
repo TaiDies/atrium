@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { parseCookieHeader, sessionToken, userFromToken, websocketOriginOk } from './auth.js';
 import { meetingAccess, type MeetingPerms } from './meetingAccess.js';
+import { liveSockets, trackSocket } from './sockets.js';
+import { query } from './db.js';
 
 // The live channel (WebSocket /live): new chat messages and changes reach people as they happen, and
 // meetings use it to set up their calls — each pair of people in a meeting connects directly (WebRTC),
@@ -18,7 +20,6 @@ interface Peer {
   media: { mic: boolean; cam: boolean; screen: boolean };
 }
 
-const socketsByUser = new Map<string, Set<WebSocket>>();
 /** meeting id → the people in it now (by connection). */
 const rooms = new Map<string, Map<string, Peer>>();
 
@@ -26,9 +27,21 @@ const send = (ws: WebSocket, msg: unknown) => {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 };
 
-/** Tells these people something (every device they have open). */
-export function pushTo(userIds: Iterable<string>, msg: unknown) {
-  for (const id of new Set(userIds)) for (const ws of socketsByUser.get(id) ?? []) send(ws, msg);
+/**
+ * Tells these people something (every device they have open). With `workspaceId`, only those still
+ * in that workspace hear it.
+ */
+export async function pushTo(userIds: Iterable<string>, msg: unknown, workspaceId?: string) {
+  let ids = [...new Set(userIds)];
+  if (workspaceId && ids.length) {
+    try {
+      const members = new Set((await query<{ user_id: string }>('select user_id from workspace_members where workspace_id = $1 and user_id = any($2)', [workspaceId, ids])).map((r) => r.user_id));
+      ids = ids.filter((id) => members.has(id));
+    } catch {
+      return; // can't tell who's still in it: tell nobody
+    }
+  }
+  for (const id of ids) for (const ws of liveSockets(id)) send(ws, msg);
 }
 
 function roomList(room: Map<string, Peer>) {
@@ -98,9 +111,7 @@ export function attachLive(server: HttpServer) {
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const mine = socketsByUser.get(user.id) ?? new Set();
-      mine.add(ws);
-      socketsByUser.set(user.id, mine);
+      const { untrack } = trackSocket(user.id, ws, 'live');
       const ping = setInterval(() => ws.ping(), 20_000);
       const peerId = randomUUID();
       let meetingId: string | null = null;
@@ -160,8 +171,7 @@ export function attachLive(server: HttpServer) {
       ws.on('close', () => {
         clearInterval(ping);
         leave();
-        mine.delete(ws);
-        if (!mine.size) socketsByUser.delete(user.id);
+        untrack();
       });
       ws.on('error', () => ws.terminate());
     });

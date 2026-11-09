@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireMember, requireOwner } from '../access.js';
 import { requireSession, requireUser } from '../auth.js';
+import { closeWorkspaceSockets } from '../sockets.js';
 import { config } from '../config.js';
 import { one, query, tx } from '../db.js';
 import { checkMembers, checkWorkspaces } from '../limits.js';
@@ -135,7 +136,12 @@ export async function workspaceRoutes(app: FastifyInstance) {
     await tx(async (c) => {
       await query('delete from workspace_members where workspace_id = $1 and user_id = $2', [id, userId], c);
       await assertHasOwner(id, c);
+      // Nothing of theirs keeps them in: chats, meetings and pages shared with them in this workspace.
+      await query('delete from chat_members where user_id = $2 and chat_id in (select id from chats where workspace_id = $1)', [id, userId], c);
+      await query('delete from meeting_members where user_id = $2 and meeting_id in (select id from meetings where workspace_id = $1)', [id, userId], c);
+      await query('delete from page_permissions where user_id = $2 and page_id in (select id from pages where workspace_id = $1)', [id, userId], c);
     });
+    closeWorkspaceSockets(userId, id);
     return { ok: true };
   });
 
