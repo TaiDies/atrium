@@ -66,7 +66,9 @@ services:
       # Where new versions are looked for (GitHub owner/repo); the admin panel shows and can install them.
       UPDATE_REPO: ${UPDATE_REPO:-TaiDies/atrium}
     ports:
-      - "${APP_PORT:-3000}:3000"
+      # Open to every network by default. With a reverse proxy or tunnel on this machine, set
+      # APP_BIND=127.0.0.1 so only that proxy can reach the app (see docs/INSTALL.md, "Behind a proxy").
+      - "${APP_BIND:+${APP_BIND}:}${APP_PORT:-3000}:3000"
       # The admin panel is only opened on this machine (use an SSH tunnel or VPN to reach it).
       - "127.0.0.1:${ADMIN_PORT:-3001}:3001"
     volumes:

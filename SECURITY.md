@@ -42,5 +42,14 @@ is published (Admin panel → Updates shows when one is out).
   it isn't in a hardware-backed keystore yet. (On Windows and macOS it's in the OS keychain.)
 - **No independent security audit has been done.** The checks so far are our own reviews and an outside
   code review; treat Atrium accordingly for very sensitive data.
+- **`ALLOW_PRIVATE_URLS` is on by default**, so self-hosters can use a local Ollama or n8n. While it's on,
+  anyone who can add a webhook (workspace owners) or set an AI service address (people with the
+  **Use AI** permission) can make the server send requests to addresses on its local network. On a shared
+  or hosted server, set `ALLOW_PRIVATE_URLS=false` in `.env` and run `docker compose up -d`; the admin
+  panel's Overview warns while it's on. Cloud metadata addresses are blocked either way.
+- **The server keeps running after an unexpected error.** An error that escapes a request or a connection
+  is written to the log ("Uncaught exception" or "Unhandled promise rejection", with its stack) instead of
+  stopping the server, so one bad request can't take it down. If something misbehaves, the logs
+  (`docker compose logs app`) are where to look.
 - **Meetings connect people directly to each other** (each person to every other), so they suit small
   groups. Large calls need a media server, which Atrium doesn't include.

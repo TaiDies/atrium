@@ -26,6 +26,9 @@ import { join } from 'node:path';
 import { createWriteStream } from 'node:fs';
 import { Zip, ZipDeflate, zipSync } from 'fflate';
 import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
+import { invitationBlock } from '../src/invitationRule.ts';
+import { trustProxySetting } from '../src/config.ts';
+import Fastify from 'fastify';
 import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { SERVER_VERSION } from '../src/updates.ts';
 import { namedCells, normaliseCells } from '../src/rowCells.ts';
@@ -568,5 +571,40 @@ describe('the app guide by topic', () => {
     assert.ok((verify.match(/^## /gm) ?? []).length <= 3);
     assert.match(guideFor('webhooks').split('\n')[0], /For developers/);
     assert.match(guideFor('the and how'), /Nothing in the guide mentions/);
+  });
+});
+
+describe('accepting an invitation', () => {
+  it('without email, a member invitation needs nothing but an owner invitation needs a confirmed address', () => {
+    assert.equal(invitationBlock({ mail: false, verified: false, role: 'member' }), null);
+    assert.equal(invitationBlock({ mail: false, verified: false, role: 'owner' }), 'admin');
+    assert.equal(invitationBlock({ mail: false, verified: true, role: 'owner' }), null);
+  });
+  it('with email, an unconfirmed address must be confirmed first, whatever the role', () => {
+    assert.equal(invitationBlock({ mail: true, verified: false, role: null }), 'confirm');
+    assert.equal(invitationBlock({ mail: true, verified: false, role: 'member' }), 'confirm');
+    assert.equal(invitationBlock({ mail: true, verified: true, role: 'owner' }), null);
+  });
+});
+
+describe('visitor address behind proxies', () => {
+  async function ipSeen(trust: string | undefined, headers: Record<string, string>) {
+    const app = Fastify({ trustProxy: trustProxySetting(trust) });
+    app.get('/', async (req) => ({ ip: req.ip }));
+    const res = await app.inject({ url: '/', headers, remoteAddress: '172.21.0.1' });
+    await app.close();
+    return res.json().ip as string;
+  }
+  it('with no TRUST_PROXY a spoofed X-Forwarded-For does not change the limit key', async () => {
+    for (const unset of [undefined, '', '  ', 'false']) {
+      const plain = await ipSeen(unset, {});
+      const spoofed = await ipSeen(unset, { 'x-forwarded-for': '1.2.3.4' });
+      assert.equal(spoofed, '172.21.0.1');
+      assert.equal(limitKey(spoofed), limitKey(plain));
+    }
+  });
+  it("loopback does not trust Docker's bridge; the bridge range does", async () => {
+    assert.equal(await ipSeen('loopback', { 'x-forwarded-for': '1.2.3.4' }), '172.21.0.1');
+    assert.equal(await ipSeen('172.16.0.0/12', { 'x-forwarded-for': '1.2.3.4' }), '1.2.3.4');
   });
 });

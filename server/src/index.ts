@@ -160,7 +160,9 @@ startUpdateChecks();
 await app.listen({ port: config.port, host: config.host });
 const admin = config.admin.enabled ? await startAdminServer() : null;
 
-// One bad request or connection must never take the whole server down.
+// One bad request or connection must never take the whole server down. After an unexpected error the
+// server logs it ("Unhandled promise rejection" / "Uncaught exception", with the stack) and keeps
+// running, so the logs (docker compose logs app) are where to look when something misbehaves.
 process.on('unhandledRejection', (reason) => app.log.error({ err: reason }, 'Unhandled promise rejection'));
 process.on('uncaughtException', (err) => app.log.error({ err }, 'Uncaught exception'));
 

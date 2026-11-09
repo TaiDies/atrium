@@ -4,6 +4,7 @@ import { hiddenEvents } from '../access.js';
 import { requireSession, requireUser } from '../auth.js';
 import { one, query, tx } from '../db.js';
 import { mailEnabled } from '../mail.js';
+import { invitationBlock } from '../invitationRule.js';
 import { notify } from '../notify.js';
 import { addDays } from '../repeat.js';
 import { HttpError, idParams, parse } from '../util.js';
@@ -218,24 +219,18 @@ export async function notificationRoutes(app: FastifyInstance) {
 
   app.post('/invitations/:id/accept', { preHandler: requireSession }, async (req, reply) => {
     const { id } = parse(idParams, req.params);
-    // Anyone can make an account with any address, so an invitation only goes to someone who has shown
-    // the address is theirs (with an emailed code). Servers without email can't check, and don't ask.
-    if (await mailEnabled()) {
-      const verified = await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]);
-      if (!verified) return reply.code(403).send({ error: 'Confirm your email first: we’ll send you a code.', verify: true, email: req.user.email });
+    const mail = await mailEnabled();
+    const verified = !!(await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]));
+    if (invitationBlock({ mail, verified, role: null }) === 'confirm') {
+      return reply.code(403).send({ error: 'Confirm your email first: we’ll send you a code.', verify: true, email: req.user.email });
     }
     const invite = await one<{ workspace_id: string; role: string; invited_by: string | null; name: string; pages: { pageId: string; level: string }[] }>(
       `select i.workspace_id, i.role, i.invited_by, w.name, i.pages from workspace_invites i join workspaces w on w.id = i.workspace_id where i.id = $1 and i.email = $2`,
       [id, req.user.email],
     );
     if (!invite) throw new HttpError(404, 'This invitation was withdrawn or already answered');
-    // Without email nobody can prove an address is theirs, so becoming an owner needs the
-    // administrator to have confirmed it (Admin panel → Accounts).
-    if (invite.role === 'owner' && !(await mailEnabled())) {
-      const verified = await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]);
-      if (!verified) {
-        throw new HttpError(403, 'This server can’t send email, so an invitation to join as an owner needs the administrator to confirm your email address first (Admin panel → Accounts → Email confirmed).');
-      }
+    if (invitationBlock({ mail, verified, role: invite.role }) === 'admin') {
+      throw new HttpError(403, 'This server can’t send email, so an invitation to join as an owner needs the administrator to confirm your email address first (Admin panel → Accounts → Email confirmed).');
     }
     await tx(async (c) => {
       await query(
@@ -273,3 +268,4 @@ export async function notificationRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 }
+
