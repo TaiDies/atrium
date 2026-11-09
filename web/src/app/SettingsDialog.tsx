@@ -1,4 +1,5 @@
 import { ApiTab } from './ApiSettings';
+import { signOut as signOutHere } from '../lib/signOut';
 import { NotificationsTab } from './NotificationSettings';
 import { language, LANGUAGES, setLanguage } from '../i18n';
 import { useQuery } from '@tanstack/react-query';
@@ -111,10 +112,7 @@ function AccountTab() {
   };
 
   const signOut = async (everywhere = false) => {
-    await api('/api/auth/logout', { method: 'POST', body: everywhere ? { everywhere: true } : undefined }).catch(() => {});
-    await loadNative();
-    queryClient.clear();
-    queryClient.setQueryData(keys.me, null);
+    await signOutHere(everywhere);
     navigate('/login', { replace: true });
   };
 

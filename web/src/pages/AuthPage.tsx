@@ -1,3 +1,4 @@
+import { stopLive } from '../lib/live';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowLeft, Mail } from 'lucide-react';
@@ -48,6 +49,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   }, [mode]);
 
   const finish = async (user: User) => {
+    // A live channel left from an earlier account closes before this one starts (AppLayout opens it again).
+    stopLive();
     // In the apps, pick up the new session for live editing.
     await loadNative();
     queryClient.clear();

@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import clsx from 'clsx';
 import { Check, Pencil, Plus, X } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
@@ -143,7 +144,7 @@ export function ScheduleDialog({ open, onClose, teamChatId = null, defaultTitle 
       onClose();
       if (now) navigate(`/w/${workspace.id}/meet/${code}`);
       else {
-        const link = `${location.origin}/w/${workspace.id}/meet/${code}`;
+        const link = `${publicOrigin()}/w/${workspace.id}/meet/${code}`;
         void navigator.clipboard?.writeText(link).catch(() => {});
         toast('Meeting scheduled — link copied');
         navigate(`/w/${workspace.id}/meet/${code}`);

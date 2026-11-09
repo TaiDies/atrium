@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import clsx from 'clsx';
 import {
   ArrowLeft,
@@ -88,7 +89,7 @@ function Lobby({ detail }: { detail: MeetingDetail }) {
   const { join, active } = useCall();
   const { meeting } = detail;
   const state = meetingState(meeting);
-  const link = `${location.origin}/w/${workspace.id}/meet/${meeting.code}`;
+  const link = `${publicOrigin()}/w/${workspace.id}/meet/${meeting.code}`;
   const [tab, setTab] = useState<'tasks' | 'people' | 'chat'>(state === 'ended' ? 'chat' : 'tasks');
   const canMedia = typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices;
   const busyElsewhere = active && active.detail.meeting.code !== meeting.code;
@@ -643,7 +644,7 @@ function RoomView() {
           </div>
           <div className="text-xs text-white/60">{state?.joined ? `${peers.length + 1} in the call` : 'Joining…'}</div>
         </div>
-        <button onClick={() => void navigator.clipboard.writeText(`${location.origin}/w/${workspace.id}/meet/${meeting.code}`).then(() => toast('Link copied'))} className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-white/70 hover:bg-white/10" title="Copy the meeting link">
+        <button onClick={() => void navigator.clipboard.writeText(`${publicOrigin()}/w/${workspace.id}/meet/${meeting.code}`).then(() => toast('Link copied'))} className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-white/70 hover:bg-white/10" title="Copy the meeting link">
           <Link2 size={14} /> Link
         </button>
       </div>

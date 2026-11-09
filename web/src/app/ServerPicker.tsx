@@ -13,6 +13,7 @@ export function ServerPicker() {
   const [choice, setChoice] = useState<'service' | 'own'>('own');
   const [address, setAddress] = useState('');
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [loading, setLoading] = useState(false);
 
   const connect = async (e: FormEvent) => {
@@ -20,12 +21,16 @@ export function ServerPicker() {
     setError('');
     let server = address.trim();
     if (!server) return;
-    // "192.168.1.20:3000" → "http://192.168.1.20:3000"
-    if (!/^https?:\/\//i.test(server)) server = `http://${server}`;
+    // Without http:// or https://, the app tries https first (http for addresses on this network).
     setLoading(true);
     try {
       const r = await chooseServer(server.replace(/\/+$/, ''));
       if (!r.ok) throw new Error(r.error ?? 'Couldn’t connect to that server');
+      if (r.warning) {
+        setWarning(r.warning);
+        setLoading(false);
+        return;
+      }
       location.replace('/login');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Couldn’t connect to that server');
@@ -61,6 +66,14 @@ export function ServerPicker() {
                 <div className="text-sm text-muted">The address of a self-hosted server, e.g. 192.168.1.20:3000 or notes.example.com.</div>
                 <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.20:3000" className="mt-3 w-full" autoFocus inputMode="url" autoCapitalize="off" autoCorrect="off" required />
                 {error && <p className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
+                {warning && (
+                  <div className="mt-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-muted">
+                    <p>{warning}</p>
+                    <Button type="button" className="mt-2" onClick={() => location.replace('/login')}>
+                      Continue without encryption
+                    </Button>
+                  </div>
+                )}
                 <Button type="submit" variant="primary" className="mt-3 w-full" loading={loading}>
                   Connect
                 </Button>

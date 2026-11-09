@@ -1,3 +1,4 @@
+import { signOut as signOutHere } from '../lib/signOut';
 import clsx from 'clsx';
 import {
   ChevronDown,
@@ -161,9 +162,7 @@ function WorkspaceSwitcher() {
   const [creating, setCreating] = useState(false);
 
   const signOut = async () => {
-    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    queryClient.clear();
-    queryClient.setQueryData(keys.me, null);
+    await signOutHere();
     navigate('/login', { replace: true });
   };
 

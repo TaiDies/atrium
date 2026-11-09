@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import { AudioLines, BookmarkCheck, Download, ExternalLink, FileText, Link2, Sparkles } from 'lucide-react';
 import { type Anchor, Menu, MenuDivider, MenuItem, toast } from '../components/ui';
 import { type RefObject, useEffect, useState } from 'react';
@@ -147,7 +148,7 @@ export function FileActions({
           <MenuItem
             icon={<Link2 size={15} />}
             label="Copy link"
-            onClick={() => void navigator.clipboard.writeText(new URL(viewerUrl(context.file!.url, context.file!.name), location.origin).toString()).then(() => toast('Link copied'))}
+            onClick={() => void navigator.clipboard.writeText(new URL(viewerUrl(context.file!.url, context.file!.name), publicOrigin()).toString()).then(() => toast('Link copied'))}
           />
         </>
       )}

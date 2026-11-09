@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import clsx from 'clsx';
 import { ArrowLeft, Check, Copy, Layers, LayoutTemplate, Link2, Maximize2, Minimize2, MoreHorizontal, Plus, Repeat, Trash2, X } from 'lucide-react';
 import { useContext, useEffect, useRef, useState } from 'react';
@@ -121,7 +122,7 @@ export function RowDetail({ rowId, full, onToggleFull, onClose }: { rowId: strin
         label="Copy link"
         onClick={async () => {
           try {
-            await navigator.clipboard.writeText(`${location.origin}${location.pathname}?row=${pageId}:${rowId}${full ? '&full=1' : ''}`);
+            await navigator.clipboard.writeText(`${publicOrigin()}${location.pathname}?row=${pageId}:${rowId}${full ? '&full=1' : ''}`);
             toast('Link copied');
           } catch {
             toast('Could not copy the link', 'error');

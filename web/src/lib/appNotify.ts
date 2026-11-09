@@ -106,8 +106,13 @@ const plain = (body: string) =>
 let started = false;
 
 /** Starts showing notifications for what arrives on the live channel. */
-export function startAppNotifications(opts: { userId: string; workspaceId: () => string | undefined; navigate: (link: string) => void }) {
-  goTo = opts.navigate;
+let current: { userId: string; workspaceId: () => string | undefined } | null = null;
+
+export function startAppNotifications(options: { userId: string; workspaceId: () => string | undefined; navigate: (link: string) => void }) {
+  goTo = options.navigate;
+  // Whoever is signed in now (after switching accounts, the listener below must not use the old one).
+  current = { userId: options.userId, workspaceId: options.workspaceId };
+  const opts = { get userId() { return current?.userId ?? ''; }, workspaceId: () => current?.workspaceId() };
   if (started) return;
   started = true;
 

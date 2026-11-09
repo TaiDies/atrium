@@ -2,7 +2,7 @@ import { Brain, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { Button, toast, toastError } from '../components/ui';
 import { api } from '../lib/api';
-import { nativeInfo } from '../lib/native';
+import { publicOrigin } from '../lib/native';
 import { queryClient, useWorkspaces } from '../lib/queries';
 
 // Settings → API & webhooks → Connect Claude: give an AI assistant (Claude Code, Claude Desktop, or any
@@ -10,7 +10,7 @@ import { queryClient, useWorkspaces } from '../lib/queries';
 // workspace, with the setup ready to paste.
 
 /** The server's own address (in the desktop and phone apps the page itself lives elsewhere). */
-const serverAddress = () => (nativeInfo()?.server ?? location.origin).replace(/\/+$/, '');
+const serverAddress = () => publicOrigin();
 
 function Snippet({ label, text }: { label: string; text: string }) {
   return (
