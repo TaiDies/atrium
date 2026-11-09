@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
+import { type FieldDef, normaliseCells } from '../rowCells.js';
 import { accessMap, atLeast, hiddenEvents, requireMember, requirePage, requireUnlocked } from '../access.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, editDoc, eventBlock, readDoc } from '../blocks.js';
@@ -216,7 +217,7 @@ export async function calendarRoutes(app: FastifyInstance) {
       });
     }
     const created = await eventOr404(row!.id);
-    emit(id, 'event.created', created);
+    emit(id, 'event.created', created, { id: req.user.id, name: req.user.name });
     return reply.code(201).send({ event: created });
   });
 
@@ -274,8 +275,8 @@ export async function calendarRoutes(app: FastifyInstance) {
     if (body.status !== undefined && body.status !== event.status) await syncCardStatuses(id);
     const locations = await locationsFor('event_refs', 'event_id', [id], await accessMap(req.user.id, event.workspaceId));
     const updated = await eventOr404(id);
-    emit(event.workspaceId, 'event.updated', updated);
-    if (updated.status === 'done' && event.status !== 'done') emit(event.workspaceId, 'task.completed', { kind: 'event', id, title: updated.title });
+    emit(event.workspaceId, 'event.updated', updated, { id: req.user.id, name: req.user.name });
+    if (updated.status === 'done' && event.status !== 'done') emit(event.workspaceId, 'task.completed', { kind: 'event', id, title: updated.title }, { id: req.user.id, name: req.user.name });
     return { event: { ...updated, locations: locations.get(id) ?? [] } };
   });
 
@@ -291,7 +292,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     const event = await visibleEvent(req.user.id, id);
     const { trail } = parse(z.object({ trail: z.array(z.string().max(64)).max(6).nullable() }), req.body);
     const view = await choosePath(req.user.id, id, trail);
-    emit(event.workspaceId, 'event.updated', await eventOr404(id));
+    emit(event.workspaceId, 'event.updated', await eventOr404(id), { id: req.user.id, name: req.user.name });
     return view;
   });
 
@@ -300,7 +301,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     const { id } = parse(idParams, req.params);
     const event = await visibleEvent(req.user.id, id);
     const view = await undoLastDay(req.user.id, id, req.user.id);
-    emit(event.workspaceId, 'event.updated', await eventOr404(id));
+    emit(event.workspaceId, 'event.updated', await eventOr404(id), { id: req.user.id, name: req.user.name });
     return view;
   });
 
@@ -311,7 +312,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     if (role !== 'owner' && event.createdBy !== req.user.id) throw new HttpError(403, 'Only the person who added this event or a workspace owner can delete it');
     await removeEverywhere(await accessMap(req.user.id, event.workspaceId), { table: 'event_refs', column: 'event_id', id }, eventBlock(id));
     await query('delete from events where id = $1', [id]);
-    emit(event.workspaceId, 'event.deleted', { id, title: event.title });
+    emit(event.workspaceId, 'event.deleted', { id, title: event.title }, { id: req.user.id, name: req.user.name });
     return { ok: true };
   });
 
@@ -371,23 +372,23 @@ export async function calendarRoutes(app: FastifyInstance) {
     await databasePage(req.user.id, id, 'edit');
     await requireUnlocked(id);
     const { cells } = parse(z.object({ cells: z.record(z.string().max(64), z.unknown()) }), req.body);
-    const ok = await editDoc(id, null, (doc) => {
+    const members = new Set((await query<{ user_id: string }>('select user_id from workspace_members m join pages p on p.workspace_id = m.workspace_id where p.id = $1', [id])).map((r) => r.user_id));
+    const row = await editDoc(id, null, (doc) => {
       const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === rowId);
       const map = row?.get('cells');
-      if (!row || !(map instanceof Y.Map)) return false;
-      const fields = new Map(fieldsOf(doc).map((f) => [f.id, f]));
-      for (const [fieldId, value] of Object.entries(cells)) {
-        const field = fields.get(fieldId);
-        if (!field) continue;
-        if (field.type === 'date' && value !== null && !isDate(value)) throw new HttpError(400, 'Dates must be YYYY-MM-DD');
+      if (!row || !(map instanceof Y.Map)) return null;
+      // Properties by id or name; unknown ones and wrong values are refused (see rowCells.ts).
+      const clean = normaliseCells(fieldsOf(doc) as FieldDef[], cells, { members, today: new Date().toISOString().slice(0, 10) });
+      for (const [fieldId, value] of Object.entries(clean)) {
         if (value === null) map.delete(fieldId);
         else map.set(fieldId, value);
       }
       row.set('updatedAt', Date.now());
-      return true;
+      row.set('updatedBy', req.user.id);
+      return { id: rowId, cells: map.toJSON() };
     }, { editor: req.user.id });
-    if (!ok) throw new HttpError(404, 'Card not found');
-    return { ok: true };
+    if (!row) throw new HttpError(404, 'Card not found');
+    return { ok: true, row };
   });
 
   // Make a card repeat (or stop repeating).

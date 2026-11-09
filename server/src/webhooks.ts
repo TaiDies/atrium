@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { query } from './db.js';
 import { outboundFetch } from './netGuard.js';
 import { config } from './config.js';
@@ -16,6 +16,9 @@ export const WEBHOOK_EVENTS = [
   'event.deleted',
   'task.completed',
   'file.uploaded',
+  'row.created',
+  'row.updated',
+  'row.deleted',
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
@@ -41,14 +44,26 @@ export function deliveryError(err: unknown): string {
 }
 
 /** Sends one delivery and notes how it went. */
-export async function deliver(hook: { id: string; url: string; secret: string }, event: string, workspaceId: string, data: unknown) {
-  const body = JSON.stringify({ event, workspaceId, at: new Date().toISOString(), data });
+export async function deliver(hook: { id: string; url: string; secret: string }, event: string, workspaceId: string, data: unknown, actor: Actor | null = null) {
+  const at = new Date();
+  const body = JSON.stringify({ event, workspaceId, at: at.toISOString(), actor, data });
+  const timestamp = String(Math.floor(at.getTime() / 1000));
   let status: number | null = null;
   let error: string | null = null;
   try {
     const res = await outboundFetch(hook.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': `${config.appName}-webhooks/1`, 'x-event': event, 'x-signature': signature(hook.secret, body) },
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': `${config.appName}-webhooks/1`,
+        'x-event': event,
+        'x-delivery-id': randomUUID(),
+        'x-timestamp': timestamp,
+        // x-signature signs the body (as before); x-signature-v2 signs "timestamp.body", so a replayed
+        // delivery can be spotted by its age.
+        'x-signature': signature(hook.secret, body),
+        'x-signature-v2': signature(hook.secret, `${timestamp}.${body}`),
+      },
       body,
       signal: AbortSignal.timeout(TIMEOUT_MS),
       redirect: 'manual',
@@ -63,12 +78,15 @@ export async function deliver(hook: { id: string; url: string; secret: string },
 }
 
 /** Tells the workspace's webhooks about something that happened (never holds up the request). */
-export function emit(workspaceId: string, event: WebhookEvent, data: unknown) {
+/** Who did it (absent for things the server does by itself, like repeating tasks). */
+export type Actor = { id: string; name: string };
+
+export function emit(workspaceId: string, event: WebhookEvent, data: unknown, actor: Actor | null = null) {
   void (async () => {
     const hooks = await query<{ id: string; url: string; secret: string }>(
       `select id, url, secret from webhooks where workspace_id = $1 and active and (cardinality(events) = 0 or $2 = any(events))`,
       [workspaceId, event],
     );
-    for (const hook of hooks) await deliver(hook, event, workspaceId, data);
+    for (const hook of hooks) await deliver(hook, event, workspaceId, data, actor);
   })().catch((err) => console.error('Webhook delivery failed', err));
 }

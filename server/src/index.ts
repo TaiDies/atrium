@@ -43,6 +43,7 @@ import { socialRoutes } from './routes/social.js';
 import { publicPageRoutes, publishRoutes, shareIndexable } from './routes/publish.js';
 import { aiRoutes } from './routes/ai.js';
 import { databaseRoutes } from './routes/databases.js';
+import { rowRoutes } from './routes/rows.js';
 import { startAdminServer } from './admin.js';
 import { handleError } from './util.js';
 
@@ -101,6 +102,7 @@ await app.register(
     await api.register(notificationRoutes);
     await api.register(aiRoutes);
     await api.register(databaseRoutes);
+    await api.register(rowRoutes);
     await api.register(templateRoutes);
     await api.register(publishRoutes);
     await api.register(publicPageRoutes);

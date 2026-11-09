@@ -120,7 +120,7 @@ export async function pageRoutes(app: FastifyInstance) {
         doc.destroy();
       }
     }
-    emit(id, 'page.created', { id: page.id, title: page.title, type: page.type, parentId: page.parentId ?? null });
+    emit(id, 'page.created', { id: page.id, title: page.title, type: page.type, parentId: page.parentId ?? null }, { id: req.user.id, name: req.user.name });
     return reply.code(201).send({ page });
   });
 
@@ -207,7 +207,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
     await query(`update pages set ${sets.join(', ')}, updated_at = now() where id = $1`, params);
     notifyPageChanged(id);
-    emit(current.workspace_id, 'page.updated', { id, ...body });
+    emit(current.workspace_id, 'page.updated', { id, ...body }, { id: req.user.id, name: req.user.name });
     return { ok: true };
   });
 
@@ -431,7 +431,7 @@ export async function pageRoutes(app: FastifyInstance) {
        ) update pages set deleted_at = now() where id in (select id from sub) and deleted_at is null`,
       [id],
     );
-    emit(trashed.workspace_id, 'page.trashed', { id, title: trashed.title });
+    emit(trashed.workspace_id, 'page.trashed', { id, title: trashed.title }, { id: req.user.id, name: req.user.name });
     closePage(id);
     return { ok: true };
   });

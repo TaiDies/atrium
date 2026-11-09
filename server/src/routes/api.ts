@@ -134,6 +134,15 @@ export async function apiRoutes(app: FastifyInstance) {
       return { ok: true };
     });
 
+    // A new signing secret (the old one stops working at once); shown this once.
+    auth.post('/webhooks/:id/rotate-secret', async (req) => {
+      const { id } = parse(idParams, req.params);
+      const hook = await hookOr404(req.user.id, id);
+      const secret = `whsec_${randomBytes(20).toString('base64url')}`;
+      await query('update webhooks set secret = $2 where id = $1', [hook.id, secret]);
+      return { id: hook.id, secret };
+    });
+
     // Sends a "ping" right away, to check the address works.
     auth.post('/webhooks/:id/test', async (req) => {
       const { id } = parse(idParams, req.params);

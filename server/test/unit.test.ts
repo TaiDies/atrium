@@ -28,6 +28,7 @@ import { Zip, ZipDeflate, zipSync } from 'fflate';
 import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
 import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { SERVER_VERSION } from '../src/updates.ts';
+import { namedCells, normaliseCells } from '../src/rowCells.ts';
 import { esPatterns } from '../../web/src/i18n/es.ts';
 import { frPatterns } from '../../web/src/i18n/fr.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
@@ -487,5 +488,38 @@ describe('versions and translations (1.11.4)', () => {
     assert.equal(first(esPatterns, '1 day ago'), 'hace 1 día');
     assert.equal(first(frPatterns, '1 year ago'), 'il y a 1 an');
     assert.equal(first(frPatterns, '2 years ago'), 'il y a 2 ans');
+  });
+});
+
+describe('card values through the API', () => {
+  const fields = [
+    { id: 'f1', name: 'Name', type: 'text', primary: true },
+    { id: 'f2', name: 'Status', type: 'select', options: [{ id: 'o1', name: 'To do' }, { id: 'o2', name: 'Done' }] },
+    { id: 'f3', name: 'Due', type: 'date' },
+    { id: 'f4', name: 'Tags', type: 'multi_select', options: [{ id: 't1', name: 'Red' }] },
+    { id: 'f5', name: 'Owner', type: 'person' },
+    { id: 'f6', name: 'Total', type: 'formula' },
+    { id: 'f7', name: 'Steps', type: 'checklist' },
+    { id: 'f8', name: 'Hours', type: 'number' },
+  ];
+  it('takes names or ids, and option names', () => {
+    const out = normaliseCells(fields, { Name: 'Plan', status: 'done', f3: 'today', Tags: ['Red'], Owner: ['u1'], Hours: 2 }, { members: new Set(['u1']), today: '2026-11-09' });
+    assert.deepEqual(out, { f1: 'Plan', f2: 'o2', f3: '2026-11-09', f4: ['t1'], f5: ['u1'], f8: 2 });
+  });
+  it('refuses unknown properties, computed ones and wrong values, naming the property', () => {
+    assert.throws(() => normaliseCells(fields, { Nope: 1 }), /no property “Nope”/);
+    assert.throws(() => normaliseCells(fields, { Total: 3 }), /worked out by the app/);
+    assert.throws(() => normaliseCells(fields, { Status: 'Maybe' }), /no option “Maybe”/);
+    assert.throws(() => normaliseCells(fields, { Due: '09/11/2026' }), /“Due” \(date\)/);
+    assert.throws(() => normaliseCells(fields, { Hours: '2' }), /a number/);
+    assert.throws(() => normaliseCells(fields, { Owner: ['stranger'] }, { members: new Set(['u1']) }), /not members/);
+  });
+  it('makes checklist items and clears with null', () => {
+    const out = normaliseCells(fields, { Steps: ['One', { text: 'Two', done: true }], Due: null });
+    assert.equal((out.f7 as { text: string }[]).map((s) => s.text).join(','), 'One,Two');
+    assert.equal(out.f3, null);
+  });
+  it('shows stored values by name', () => {
+    assert.deepEqual(namedCells(fields, { f1: 'Plan', f2: 'o2', f4: ['t1'] }), { Name: 'Plan', Status: 'Done', Tags: ['Red'] });
   });
 });
