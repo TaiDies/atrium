@@ -4,7 +4,7 @@ import { Check, ChevronDown, FileText, Layers, Paperclip, Plus, RotateCcw, Spark
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Button, confirmDialog, Dialog, Input, Spinner, toast, toastError } from '../components/ui';
 import { useAiAvailable } from '../editor/AiSelection';
-import { api } from '../lib/api';
+import { aiApi, api } from '../lib/api';
 import { queryClient } from '../lib/queries';
 
 // Flashcards kept with a page or a card (shared by everyone who can see it), studied with spaced
@@ -282,7 +282,7 @@ function QuizPanel({ pageId, rowId, state }: { pageId: string; rowId: string | n
   const make = async () => {
     setBusy(true);
     try {
-      const { questions } = await api<{ questions: QuizQuestion[] }>(`/api/pages/${pageId}/quiz`, { method: 'POST', body: { count: 8, row: rowId, material: state.material } });
+      const { questions } = await aiApi<{ questions: QuizQuestion[] }>(`/api/pages/${pageId}/quiz`, { method: 'POST', body: { count: 8, row: rowId, material: state.material } });
       setQuestions(questions);
       setPicked({});
     } catch (err) {
@@ -381,7 +381,7 @@ function CardsPanel({ pageId, rowId, cards, canEdit, state }: { pageId: string; 
   const suggest = async () => {
     setBusy(true);
     try {
-      const { cards } = await api<{ cards: { front: string; back: string }[] }>(`/api/pages/${pageId}/flashcards/generate`, { method: 'POST', body: { count: 12, row: rowId, material: state.material } });
+      const { cards } = await aiApi<{ cards: { front: string; back: string }[] }>(`/api/pages/${pageId}/flashcards/generate`, { method: 'POST', body: { count: 12, row: rowId, material: state.material } });
       setSuggested(cards.map((c) => ({ ...c, keep: true })));
       setPicking(false);
     } catch (err) {
