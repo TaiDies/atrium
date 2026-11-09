@@ -1,5 +1,6 @@
 import { toast, toastError } from '../components/ui';
 import { convertBytes, downloadBlob } from '../office/shared';
+import { printDocument } from './save';
 
 // "Export as PDF" for a document page: the page as HTML (its pictures built in, since the converter
 // can't sign in to fetch them), made into a PDF by the server's LibreOffice. Without it (a server set
@@ -71,20 +72,6 @@ async function pageHtml(editor: any, title: string): Promise<string> {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body><h1>${escapeHtml(title)}</h1>${html}</body></html>`;
 }
 
-function printHtml(html: string) {
-  const frame = document.createElement('iframe');
-  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
-  document.body.appendChild(frame);
-  frame.contentDocument!.open();
-  frame.contentDocument!.write(html);
-  frame.contentDocument!.close();
-  setTimeout(() => {
-    frame.contentWindow!.focus();
-    frame.contentWindow!.print();
-    setTimeout(() => frame.remove(), 60_000);
-  }, 400);
-}
-
 export async function exportPagePdf(editor: any, title: string, workspaceId: string) {
   const name = (title || 'Untitled').replace(/[\\/:*?"<>|]/g, '-');
   toast('Making the PDF…');
@@ -101,7 +88,7 @@ export async function exportPagePdf(editor: any, title: string, workspaceId: str
     // No converter on this server: the browser can print it to a PDF.
     if (err instanceof Error && /LibreOffice/i.test(err.message)) {
       toast('Choose “Save as PDF” in the print window');
-      printHtml(html);
+      void printDocument(html, title || 'Untitled');
     } else toastError(err);
   }
 }

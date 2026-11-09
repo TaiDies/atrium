@@ -8,6 +8,14 @@ import { WEBHOOK_EVENTS } from './webhooks.js';
 type Row = [method: string, path: string, what: string, who?: string];
 
 const S: Record<string, Row[]> = {
+  'About the server': [
+    ['GET', '/api/health', 'Whether the server is up: {"status": "ok"}. No sign-in.', 'anyone'],
+    ['GET', '/api/server/info', '{"app", "name", "version", "api"}. No sign-in.', 'anyone'],
+    ['GET', '/api/docs', 'This guide. No sign-in.', 'anyone'],
+    ['GET', '/api/openapi.json', 'Every route as OpenAPI 3.1, generated from the server itself, with the descriptions from this guide. No sign-in.', 'anyone'],
+    ['GET', '/api/guide?topic=…', 'How the app works, in Markdown (the built-in assistant’s knowledge); topic picks the best-matching sections. No sign-in.', 'anyone'],
+    ['GET / POST', '/api/mcp', 'The MCP server for AI assistants (see below): POST with an API token; GET answers 405.'],
+  ],
   'Account and workspaces': [
     ['GET', '/api/auth/me', 'Who the token belongs to: {"user": {id, email, name, color}}.'],
     ['GET', '/api/auth/me/permissions', 'What your account’s roles allow ({"permissions": [...]}).'],
@@ -15,7 +23,8 @@ const S: Record<string, Row[]> = {
     ['POST', '/api/workspaces', 'New workspace: {"name", "icon"}. Not with a workspace-limited token.', 'role: create workspaces'],
     ['PATCH', '/api/workspaces/{workspaceId}', 'Rename: {"name", "icon"}.', 'owner'],
     ['GET', '/api/workspaces/{workspaceId}/members', 'Members (guests see names only, without emails) and pending invitations.'],
-    ['POST', '/api/workspaces/{workspaceId}/members', 'Invite: {"email", "role": "member" | "owner"}.', 'owner'],
+    ['POST', '/api/workspaces/{workspaceId}/members', 'Invite: {"email", "role": "member" | "owner"}.', 'owner (and role: invite people)'],
+    ['DELETE', '/api/workspaces/{workspaceId}/invites/{email}', 'Withdraw an invitation that hasn’t been answered.', 'owner'],
   ],
   Pages: [
     ['GET', '/api/workspaces/{workspaceId}/pages', 'Every page you can see: id, title, type, parentId, icon, access, locked…'],
@@ -24,23 +33,28 @@ const S: Record<string, Row[]> = {
     ['PATCH', '/api/pages/{pageId}', 'Change {"title", "icon", "cover", "locked", "archived", "layout"}; moving it ({"parentId"}, {"teamspaceId"}) changes who sees it and needs manage.', 'edit'],
     ['GET', '/api/pages/{pageId}/markdown', 'JSON {"id", "title", "type", "format": "markdown" | "csv", "content"} — a document as Markdown, a database as CSV.', 'view'],
     ['POST', '/api/pages/{pageId}/markdown', 'Add to a document: {"markdown", "mode": "append" | "replace"} → {"ok", "blocks"}. [[Title]] links are only turned into links through MCP.', 'edit, not locked'],
-    ['POST', '/api/pages/{pageId}/trash', 'Move to the trash (with the pages inside it).', 'edit'],
+    ['POST', '/api/pages/{pageId}/trash', 'Move to the trash (with the pages inside it). {"deleteEvents": true, "deleteFiles": true} also deletes the events and files used only there.', 'edit'],
     ['GET', '/api/workspaces/{workspaceId}/trash', 'What’s in the trash.'],
     ['POST', '/api/pages/{pageId}/restore', 'Bring back from the trash.', 'edit'],
+    ['DELETE', '/api/workspaces/{workspaceId}/trash', 'Empty the trash: deletes for good the pages in it that you can edit.'],
     ['DELETE', '/api/pages/{pageId}', 'Delete for good (only once it’s in the trash).', 'edit'],
-    ['POST', '/api/pages/{pageId}/duplicate', 'Copy a page (and what’s inside it).', 'edit'],
+    ['POST', '/api/pages/{pageId}/duplicate', 'Copy a page (and what’s inside it).', 'edit, and a workspace owner'],
     ['GET', '/api/pages/{pageId}/versions', 'Page history (snapshots).', 'view'],
+    ['GET', '/api/pages/{pageId}/versions/{versionId}', 'One snapshot, as a binary Yjs update (application/octet-stream).', 'view'],
     ['POST', '/api/pages/{pageId}/versions/{versionId}/restore', 'Go back to a snapshot.', 'edit'],
     ['GET', '/api/pages/{pageId}/permissions', 'Who can see and edit it.', 'manage'],
     ['PUT', '/api/pages/{pageId}/permissions', '{"defaultAccess": "edit" | "view" | "none", "members": [{"userId", "level"}]}.', 'manage'],
-    ['GET / POST / DELETE', '/api/pages/{pageId}/guests', 'People outside the workspace with access to this page: {"email", "level": "view" | "edit"}.', 'manage'],
-    ['GET / PUT', '/api/pages/{pageId}/publish', 'Publish to the web: {"published", "subpages", "allowIndex"} → a public link.', 'manage (and role: publish pages)'],
-    ['GET', '/api/workspaces/{workspaceId}/search?q=…', 'Search pages, cards and files.'],
+    ['GET / POST / DELETE', '/api/pages/{pageId}/guests', 'People outside the workspace with access to this page; add {"email", "level": "view" | "edit"}; remove with ?userId= or ?email=.', 'view to list, manage to add or remove'],
+    ['GET / PUT', '/api/pages/{pageId}/publish', 'Publish to the web: {"published", "subpages", "allowIndex"} → a public link.', 'view to read; manage to change (and role: publish pages to publish)'],
+    ['GET', '/api/workspaces/{workspaceId}/search?q=…', 'Search pages, cards and files; also kind=all|pages|databases|files, edited=any|1|7|30|365 (days), mine=1.'],
     ['GET', '/api/pages/{pageId}/backlinks', 'Pages linking to this one.', 'view'],
+    ['GET', '/api/workspaces/{workspaceId}/recent', 'Recently changed pages you can see, with who changed them.'],
+    ['PUT / DELETE', '/api/pages/{pageId}/favorite', 'Add to or remove from your favourites.', 'view'],
+    ['GET / PUT', '/api/pages/{pageId}/follow', 'Whether you get notified about changes: {"following": true | false}.', 'view'],
     ['GET', '/api/workspaces/{workspaceId}/graph', 'The graph: pages (with their group), connections and the groups.'],
   ],
   'Databases (cards and properties)': [
-    ['GET', '/api/pages/{databaseId}/rows?format=named&limit=200&cursor=0', 'Properties and cards. format=named gives values by property name (option names instead of ids); nextCursor pages through. View filters are not applied.', 'view'],
+    ['GET', '/api/pages/{databaseId}/rows?format=named&limit=200&cursor=0', 'Properties and cards. format=named gives values by property name (option names instead of ids); nextCursor pages through. view={viewIdOrName} applies that view’s filters and sorting; filters=[{"property", "op", "value"}] (JSON; ops: contains, not_contains, is, is_not, is_empty, is_not_empty, gt, lt; dates also take "@today", "@this_week", "@next_7"…; people "@me"), filterMode=and|or and sort=[{"property", "dir": "asc" | "desc"}] add your own. Formula and rollup properties can’t be filtered or sorted on here.', 'view'],
     ['POST', '/api/pages/{databaseId}/rows', 'New card → 201 {"row"}: {"cells": {"Title": "…", "Status": "Done", "Due": "2026-12-01"}, "afterRowId", "templateId", "markdown"}. Properties by name or id; select/status by option name or id; dates YYYY-MM-DD, "today" or "tomorrow"; people by member ids; relations by card ids. Computed properties are refused.', 'edit, not locked'],
     ['POST', '/api/pages/{databaseId}/rows/batch', 'Up to 200 cards: {"rows": [ … as above … ]} → 201 {"rows"}.', 'edit, not locked'],
     ['GET', '/api/pages/{databaseId}/rows/{rowId}', 'One card (stored values, by property id).', 'view'],
@@ -53,6 +67,10 @@ const S: Record<string, Row[]> = {
     ['PATCH', '/api/pages/{databaseId}/fields/{fieldIdOrName}', 'Rename, or change {"options", "formula", "aiPrompt", "prefix"}.', 'edit, properties not locked'],
     ['DELETE', '/api/pages/{databaseId}/fields/{fieldIdOrName}', 'Delete a property (not the first one) and its values.', 'edit, properties not locked'],
     ['POST', '/api/pages/{databaseId}/fields/order', '{"fields": ["Due", "Title"]}: these first, in this order.', 'edit, properties not locked'],
+    ['GET', '/api/pages/{databaseId}/views', 'The views (tabs), with their filters and sorting (property names next to the ids).', 'view'],
+    ['POST', '/api/pages/{databaseId}/views', 'New view → 201 {"view"}: {"name", "type": "grid" | "board" | "calendar" | "timeline" | "chart" | "form" | "list" | "gallery" | "feed", "groupBy", "subGroupBy", "dateField", "endField", "coverField", "filters": [{"property", "op", "value"}], "filterMode", "sorts": [{"property", "dir"}], "hidden": [properties]}. Properties and options by name or id. A board without groupBy groups by the first select or status property; a calendar or timeline needs a date property.', 'edit, views not locked'],
+    ['PATCH', '/api/pages/{databaseId}/views/{viewIdOrName}', 'Change any of the settings above → {"view"}.', 'edit, views not locked'],
+    ['DELETE', '/api/pages/{databaseId}/views/{viewIdOrName}', 'Delete a view (not the last one).', 'edit, views not locked'],
   ],
   'Calendar and tasks': [
     ['GET', '/api/workspaces/{workspaceId}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD', 'Events, tasks, dated cards and dated to-dos (not ones on pages hidden from you).'],
@@ -60,6 +78,8 @@ const S: Record<string, Row[]> = {
     ['GET / PATCH', '/api/events/{eventId}', 'One event, or change any of the fields above (e.g. {"status": "done"}).', 'member'],
     ['DELETE', '/api/events/{eventId}', 'Delete an event.', 'its creator or an owner'],
     ['GET', '/api/workspaces/{workspaceId}/tasks?date=YYYY-MM-DD', 'The day’s tasks (as on Today).'],
+    ['GET', '/api/workspaces/{workspaceId}/my-tasks', 'Cards assigned to you in databases you can see.', 'member'],
+    ['POST', '/api/workspaces/{workspaceId}/tasks/done', 'Tick or untick a task: {"key" (from GET …/tasks or …/my-tasks), "done"}.', 'member who can edit its page'],
     ['GET', '/api/workspaces/{workspaceId}/calendar/feed', 'The private .ics subscription address.'],
     ['POST', '/api/workspaces/{workspaceId}/events/import', 'Import an .ics file (text in {"ics"}).', 'member'],
   ],
@@ -67,15 +87,23 @@ const S: Record<string, Row[]> = {
     ['POST', '/api/workspaces/{workspaceId}/files', 'Upload (multipart/form-data, field "file") → {"url"}.', 'role: upload files'],
     ['GET', '/api/workspaces/{workspaceId}/files', 'Files you can see.'],
     ['GET', '/api/files/{fileId}', 'Download (?download=1 to save rather than show). Guests: only files used on pages shared with them.'],
-    ['PATCH', '/api/files/{fileId}', 'Rename: {"filename"}.', 'uploader, an owner, or an editor of a page it’s on'],
+    ['PATCH', '/api/files/{fileId}', 'Rename: {"name"}.', 'uploader, an owner, or an editor of a page it’s on'],
     ['DELETE', '/api/files/{fileId}', 'Delete a file.', 'uploader or an owner'],
     ['GET / POST', '/api/workspaces/{workspaceId}/whiteboards', 'Whiteboards; new one: {"title", "place": {"pageId"}}.'],
+    ['GET', '/api/whiteboards/{whiteboardId}', 'One whiteboard and the pages it’s on.', 'member'],
+    ['PATCH', '/api/whiteboards/{whiteboardId}', 'Rename: {"title"}.', 'member'],
+    ['DELETE', '/api/whiteboards/{whiteboardId}', 'Delete a whiteboard (and its blocks on pages).', 'its creator or an owner'],
   ],
   'Templates, teamspaces, study': [
     ['GET', '/api/workspaces/{workspaceId}/templates', 'Saved templates.'],
-    ['POST', '/api/templates/{templateId}/use', 'Make a page from a template.', 'owner'],
-    ['GET / POST', '/api/workspaces/{workspaceId}/teamspaces', 'Teamspaces.', 'owner to create'],
-    ['GET / POST', '/api/pages/{pageId}/flashcards', 'Flashcards of a page.', 'view / edit'],
+    ['POST', '/api/templates/{templateId}/use', 'Make a page from a template: {"parentId", "title"} → 201 {"page"}.', 'owner (and edit on the parent)'],
+    ['PATCH / DELETE', '/api/templates/{templateId}', 'Change {"name", "description", "icon", "repeat"}, or delete a template.', 'its creator or an owner'],
+    ['GET / POST', '/api/workspaces/{workspaceId}/teamspaces', 'Teamspaces (owners see all, members the ones they’re in, guests none); new one: {"name", "icon", "memberIds"}.', 'owner to create'],
+    ['PATCH / DELETE', '/api/teamspaces/{teamspaceId}', 'Change {"name", "icon", "memberIds"}, or delete it (its pages go back to the whole workspace).', 'owner'],
+    ['GET / POST', '/api/pages/{pageId}/flashcards', 'Flashcards of a page; add {"cards": [{"front", "back"}]} (up to 200).', 'view / edit'],
+    ['PATCH / DELETE', '/api/flashcards/{cardId}', 'Change {"front", "back"}, or delete a flashcard.', 'edit'],
+    ['POST', '/api/flashcards/{cardId}/review', 'Record how a review went: {"grade": 0 to 3} (0 again, 3 easy); schedules the next one.', 'view'],
+    ['GET', '/api/workspaces/{workspaceId}/flashcards/due', 'Flashcards due today (?today=YYYY-MM-DD).'],
   ],
   'Export and import': [
     ['GET', '/api/workspaces/{workspaceId}/export', 'The whole workspace as a .zip.', 'owner'],
@@ -85,7 +113,7 @@ const S: Record<string, Row[]> = {
   'Chat and meetings': [
     ['GET / POST', '/api/workspaces/{workspaceId}/chats', 'Your chats; start one: {"kind": "direct" | "group" | "team", "name", "memberIds"}.'],
     ['GET / POST', '/api/chats/{chatId}/messages', 'Messages (?before=ISO time); send {"body"} — <@userId>, <page:id>, <date:ISO> show as chips.'],
-    ['GET / POST', '/api/workspaces/{workspaceId}/meetings', 'Meetings; schedule {"title", "startsAt", "durationMin", "inviteeIds", "tasks", "defaults"}.'],
+    ['GET / POST', '/api/workspaces/{workspaceId}/meetings', 'Meetings; schedule {"title", "startsAt", "durationMin", "inviteeIds", "tasks", "defaults"}.', 'member; scheduling: not guests, role: start meetings'],
     ['GET', '/api/meetings/{code}', 'A meeting: details, people, permissions and the tasks you can see.'],
   ],
   'Webhooks (workspace owners)': [
@@ -97,11 +125,11 @@ const S: Record<string, Row[]> = {
   AI: [
     ['POST', '/api/workspaces/{workspaceId}/ai/transform', 'Rewrite text: {"text", "instruction", "context"} → {"text", "events"}. Can run in the background.', 'role: use AI'],
     ['POST', '/api/workspaces/{workspaceId}/ai/transcribe', 'A recording you can see as text: {"fileId"} → {"text"}. Can run in the background.', 'role: use AI'],
-    ['POST', '/api/pages/{pageId}/flashcards/generate', 'Suggested flashcards from a page → {"cards"}. Can run in the background.', 'edit'],
-    ['POST', '/api/pages/{pageId}/quiz', 'A multiple-choice quiz → {"questions"}. Can run in the background.', 'view'],
-    ['POST', '/api/pages/{databaseId}/fields/{fieldId}/ai-fill', 'Fill an AI property: {"rowIds", "overwrite"} → {"filled", "remaining"}. Can run in the background.', 'edit'],
-    ['POST', '/api/workspaces/{workspaceId}/ai/ask', 'Ask the assistant: {"message", "today"} → the chat; the answer is saved to it when ready (poll GET /api/ai/chats/{chatId}).', 'role: use AI'],
-    ['GET / DELETE', '/api/ai/jobs/{jobId}', 'How a background request is doing ({"done": false} or {"done": true, "result"}; an error comes back with its status), or stop it.'],
+    ['POST', '/api/pages/{pageId}/flashcards/generate', 'Suggested flashcards from a page → {"cards"}. Can run in the background.', 'edit (and role: use AI)'],
+    ['POST', '/api/pages/{pageId}/quiz', 'A multiple-choice quiz → {"questions"}. Can run in the background.', 'view (and role: use AI)'],
+    ['POST', '/api/pages/{databaseId}/fields/{fieldId}/ai-fill', 'Fill an AI property: {"rowIds", "overwrite"} → {"filled", "remaining"}. Can run in the background.', 'edit (and role: use AI)'],
+    ['POST', '/api/workspaces/{workspaceId}/ai/ask', 'Ask the assistant: {"message", "today", "attachments": [{"name", "text"}]} → the chat; the answer is saved to it when ready (poll GET /api/ai/chats/{chatId}).', 'role: use AI'],
+    ['GET / DELETE', '/api/ai/jobs/{jobId}', 'How a background request is doing ({"done": false} or {"done": true, "result"}; an error comes back with its status), or stop it.', 'the person who started it'],
   ],
 };
 
@@ -116,6 +144,11 @@ const SESSION_ONLY = [
 ];
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+/** The guide's endpoints, one entry per path with its methods (for openapi.json and its check). */
+export function guideRows() {
+  return Object.values(S).flatMap((rows) => rows.map(([m, path, what, who]) => ({ methods: m.split('/').map((x) => x.trim()), path, what, who: who ?? 'anyone who can see it' })));
+}
 
 export function apiGuide() {
   const events = WEBHOOK_EVENTS.map((e) => `<code>${e}</code>`).join(', ');
@@ -166,7 +199,7 @@ ${sections}
 <pre>const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');</pre>
 
 <h2>MCP (for AI assistants)</h2>
-<p><code>POST /api/mcp</code> is an MCP server (Streamable HTTP) that lets an assistant like Claude use a workspace as its memory. Tools: <code>search_notes</code>, <code>read_note</code>, <code>list_notes</code>, <code>recent_notes</code>, <code>related_notes</code>, <code>app_guide</code>, <code>graph_groups</code> (read); <code>create_note</code> (owners), <code>update_note</code>, <code>set_note_group</code>, <code>delete_note</code>; <code>read_database</code>, <code>add_card</code>, <code>update_card</code>, <code>delete_card</code>, <code>create_task</code>, <code>list_members</code>. <code>[[Title]]</code> links in note text become links. Writing (update, delete, cards) needs the exact title or the id; reading accepts part of a title. Arguments are checked against each tool's schema. Use a token limited to one workspace (or add <code>?workspace=&lt;id&gt;</code>):</p>
+<p><code>POST /api/mcp</code> is an MCP server (Streamable HTTP) that lets an assistant like Claude use a workspace as its memory. Tools: <code>search_notes</code>, <code>read_note</code>, <code>list_notes</code>, <code>recent_notes</code>, <code>related_notes</code>, <code>app_guide</code>, <code>graph_groups</code> (read); <code>create_note</code> (owners), <code>update_note</code>, <code>set_note_group</code>, <code>delete_note</code>; <code>read_database</code>, <code>add_card</code>, <code>update_card</code>, <code>delete_card</code>, <code>create_task</code>, <code>list_members</code>; <code>read_calendar</code> (read), <code>move_note</code> (owner of the note or a workspace owner), <code>list_trash</code> (read), <code>restore_note</code>. <code>[[Title]]</code> links in note text become links. Writing (update, delete, cards) needs the exact title or the id; reading accepts part of a title. Arguments are checked against each tool's schema. Use a token limited to one workspace (or add <code>?workspace=&lt;id&gt;</code>):</p>
 <pre>claude mcp add --transport http workspace-brain ${'$'}SERVER/api/mcp --header "Authorization: Bearer atr_…"</pre>
 </body></html>`;
 }

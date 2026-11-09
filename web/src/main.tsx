@@ -16,6 +16,7 @@ import { PublicPage } from './pages/PublicPage';
 import { api, ApiError, type User } from './lib/api';
 import { invalidatePages, keys, queryClient, useMe, useWorkspaces } from './lib/queries';
 import { loadNative, nativeInfo } from './lib/native';
+import { installAndroidDownloads } from './lib/save';
 import { cacheStorage, onApplied, setOfflineUser } from './lib/offline';
 import { toast } from './components/ui';
 import { ServerPicker } from './app/ServerPicker';
@@ -113,6 +114,7 @@ async function start() {
   // In the Windows and Android apps, find out which server we're talking to first.
   await loadNative();
   const native = nativeInfo();
+  installAndroidDownloads();
   const root = createRoot(document.getElementById('root')!);
   if (native && !native.server) {
     root.render(<ServerPicker />);

@@ -160,7 +160,7 @@ file name anywhere a file goes; those aren't downloaded, just linked.
 - In the first page, add a callout listing every file the import needs
   (`> [!NOTE] Import this with: a.pdf, b.jpg`).
 - A missing file doesn't stop the import: the app imports everything else, lists it under **Notes about
-  this import**, and leaves a note "*file … not included*" in a document where it would have gone. In a
+  this import**, and leaves a note "*📎 … (not included in the import)*" in a document where it would have gone. In a
   property or a cover a missing file is simply left out.
 - Files larger than the server's upload limit (25 MB unless the administrator changed it) are left out.
 
@@ -308,7 +308,7 @@ and *End* are added); a **gallery** looks best with a files property of pictures
 | A page landed at the top instead of inside another | Its `parent` key doesn't match any page's `key`, or the parent comes later in the list. |
 | `[[key]]` shows as plain text | The key doesn't exist in the file (check spelling). |
 | A card's value is empty | The card uses a property name that isn't in `properties` (names must match exactly), or a date isn't `YYYY-MM-DD`. |
-| "*file … not included*" in a page | That file wasn't in the .zip or wasn't selected with the .json — check the exact name and import again (or upload it into the page by hand). |
+| "*📎 … (not included in the import)*" in a page | That file wasn't in the .zip or wasn't selected with the .json — check the exact name and import again (or upload it into the page by hand). |
 | A relation is empty | `"to"` must be the other database's `key`, and the values must be that database's card **titles**. |
 
 ## Checklist before you answer

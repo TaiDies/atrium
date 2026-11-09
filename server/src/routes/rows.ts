@@ -13,6 +13,7 @@ import { docToMarkdown } from '../readable.js';
 import { type FieldDef, findField, namedCells, normaliseCells } from '../rowCells.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { emit } from '../webhooks.js';
+import { applyView, FILTER_OPS, type Filter, type Sort } from '../viewFilter.js';
 
 // Database cards through the API: making, changing and deleting them, their properties, and the text
 // of each card's own page. Values are checked against the properties (see rowCells.ts).
@@ -129,11 +130,42 @@ export async function rowRoutes(app: FastifyInstance) {
   /** The cards, with their values (by property id, or by name with ?format=named). */
   app.get('/pages/:id/rows', async (req) => {
     const { id } = parse(idParams, req.params);
-    const q = parse(z.object({ format: z.enum(['ids', 'named']).default('ids'), limit: z.coerce.number().int().min(1).max(1000).default(200), cursor: z.coerce.number().int().min(0).default(0) }), req.query);
+    const q = parse(
+      z.object({
+        format: z.enum(['ids', 'named']).default('ids'),
+        limit: z.coerce.number().int().min(1).max(1000).default(200),
+        cursor: z.coerce.number().int().min(0).default(0),
+        /** A view (id or name): its filters and sorting apply. */
+        view: z.string().max(200).optional(),
+        /** JSON list of {property, op, value}, applied after the view's own filters. */
+        filters: z.string().max(20_000).optional(),
+        filterMode: z.enum(['and', 'or']).default('and'),
+        /** JSON list of {property, dir}. */
+        sort: z.string().max(5_000).optional(),
+      }),
+      req.query,
+    );
     await databaseFor(req.user.id, id, 'view');
+    const extraFilters = jsonList(q.filters, 'filters');
+    const extraSorts = jsonList(q.sort, 'sort');
     return readDoc(id, null, (doc) => {
       const fields = fieldsOf(doc) as FieldDef[];
-      const all = doc.getArray<Y.Map<unknown>>('rows').toArray().filter((r) => r instanceof Y.Map);
+      let all = doc.getArray<Y.Map<unknown>>('rows').toArray().filter((r) => r instanceof Y.Map);
+      if (q.view || extraFilters.length || extraSorts.length) {
+        let shown = all.map((y) => {
+          const c = y.get('cells');
+          return { y, createdAt: y.get('createdAt'), updatedAt: y.get('updatedAt'), createdBy: y.get('createdBy'), updatedBy: y.get('updatedBy'), cells: (c instanceof Y.Map ? c.toJSON() : {}) as Record<string, unknown> };
+        });
+        if (q.view) {
+          const v = findView(doc, q.view);
+          if (!v) throw new HttpError(404, `There's no view “${q.view}”`);
+          shown = applyView(fields, shown, { filters: (v.filters as Filter[]) ?? [], sorts: (v.sorts as Sort[]) ?? [], filterMode: v.filterMode === 'or' ? 'or' : 'and' }, req.user.id);
+        }
+        if (extraFilters.length || extraSorts.length) {
+          shown = applyView(fields, shown, { filters: filtersIn(fields, extraFilters), sorts: sortsIn(fields, extraSorts), filterMode: q.filterMode }, req.user.id);
+        }
+        all = shown.map((r) => r.y);
+      }
       const page = all.slice(q.cursor, q.cursor + q.limit).map((r) => rowJson(r, fields, q.format === 'named'));
       return { fields: fields.map((f) => ({ id: f.id, name: f.name, type: f.type, options: f.options?.map((o) => ({ id: o.id, name: o.name })) })), rows: page, nextCursor: q.cursor + q.limit < all.length ? q.cursor + q.limit : null };
     });
@@ -324,6 +356,192 @@ export async function rowRoutes(app: FastifyInstance) {
     return { fields: result };
   });
 
+}
+
+// ----- views -----
+
+const VIEW_TYPES = ['grid', 'board', 'calendar', 'timeline', 'chart', 'form', 'list', 'gallery', 'feed'] as const;
+const filterIn = z.object({ property: z.string().max(200), op: z.enum(FILTER_OPS as [string, ...string[]]), value: z.unknown().optional() });
+const sortIn = z.object({ property: z.string().max(200), dir: z.enum(['asc', 'desc']).default('asc') });
+
+function jsonList(raw: string | undefined, what: string): unknown[] {
+  if (raw === undefined) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v;
+  } catch {
+    // fall through
+  }
+  throw new HttpError(400, `${what} must be a JSON list`);
+}
+
+function propertyId(fields: FieldDef[], key: string | null | undefined): string | null {
+  if (key === null || key === undefined) return null;
+  const f = findField(fields, key);
+  if (!f) throw new HttpError(400, `There's no property “${key}”`);
+  return f.id;
+}
+
+/** API filters ({property, op, value}, options by name) as the app stores them (by id). */
+export function filtersIn(fields: FieldDef[], list: unknown[]): (Filter & { id: string })[] {
+  return list.map((raw) => {
+    const f = parse(filterIn, raw);
+    const field = findField(fields, f.property);
+    if (!field) throw new HttpError(400, `There's no property “${f.property}”`);
+    let value = f.value;
+    if (field.options && typeof value === 'string' && ['select', 'status', 'multi_select'].includes(field.type)) {
+      const v = value;
+      const o = field.options.find((x) => x.id === v) ?? field.options.find((x) => x.name.trim().toLowerCase() === v.trim().toLowerCase());
+      if (!o) throw new HttpError(400, `“${field.name}”: there's no option “${v}”`);
+      value = o.id;
+    }
+    return { id: newId(), fieldId: field.id, op: f.op as Filter['op'], ...(value !== undefined ? { value } : {}) };
+  });
+}
+
+function sortsIn(fields: FieldDef[], list: unknown[]): Sort[] {
+  return list.map((raw) => {
+    const s = parse(sortIn, raw);
+    return { fieldId: propertyId(fields, s.property)!, dir: s.dir };
+  });
+}
+
+function viewMaps(doc: Y.Doc) {
+  return doc.getArray<Y.Map<unknown>>('views').toArray().filter((v) => v instanceof Y.Map);
+}
+
+function findView(doc: Y.Doc, key: string) {
+  const all = viewMaps(doc);
+  const m = all.find((v) => v.get('id') === key) ?? all.find((v) => String(v.get('name') ?? '').trim().toLowerCase() === key.trim().toLowerCase());
+  return m ? (m.toJSON() as { id: string; filters?: unknown; sorts?: unknown; filterMode?: unknown }) : null;
+}
+
+const viewBody = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  type: z.enum(VIEW_TYPES).optional(),
+  groupBy: z.string().max(200).nullable().optional(),
+  subGroupBy: z.string().max(200).nullable().optional(),
+  dateField: z.string().max(200).nullable().optional(),
+  endField: z.string().max(200).nullable().optional(),
+  coverField: z.string().max(200).nullable().optional(),
+  filters: z.array(z.unknown()).max(50).optional(),
+  filterMode: z.enum(['and', 'or']).optional(),
+  sorts: z.array(z.unknown()).max(20).optional(),
+  hidden: z.array(z.string().max(200)).max(200).optional(),
+});
+
+/** The stored settings a view body asks for (property names turned into ids). */
+function viewValues(fields: FieldDef[], body: z.infer<typeof viewBody>) {
+  const out: Record<string, unknown> = {};
+  if (body.name !== undefined) out.name = body.name;
+  if (body.type !== undefined) out.type = body.type;
+  for (const k of ['groupBy', 'subGroupBy', 'dateField', 'endField', 'coverField'] as const) if (body[k] !== undefined) out[k] = propertyId(fields, body[k]);
+  if (body.filters !== undefined) out.filters = filtersIn(fields, body.filters);
+  if (body.filterMode !== undefined) out.filterMode = body.filterMode;
+  if (body.sorts !== undefined) out.sorts = sortsIn(fields, body.sorts);
+  if (body.hidden !== undefined) out.hidden = body.hidden.map((h) => propertyId(fields, h));
+  return out;
+}
+
+/** A view as the API shows it: its stored settings, with property names next to the ids. */
+function viewJson(v: Y.Map<unknown>, fields: FieldDef[]) {
+  const j = v.toJSON() as Record<string, unknown>;
+  const name = (id: unknown) => fields.find((f) => f.id === id)?.name ?? null;
+  return {
+    ...j,
+    filters: ((j.filters as Filter[] | undefined) ?? []).map((f) => ({ ...f, property: name(f.fieldId) })),
+    sorts: ((j.sorts as Sort[] | undefined) ?? []).map((s) => ({ ...s, property: name(s.fieldId) })),
+  };
+}
+
+/** A database's views (tabs): list, add, change and delete them. */
+export async function viewRoutes(app: FastifyInstance) {
+  app.addHook('preHandler', requireUser);
+
+  app.get('/pages/:id/views', async (req) => {
+    const { id } = parse(idParams, req.params);
+    await databaseFor(req.user.id, id, 'view');
+    return readDoc(id, null, (doc) => {
+      const fields = fieldsOf(doc) as FieldDef[];
+      return { views: viewMaps(doc).map((v) => viewJson(v, fields)) };
+    });
+  });
+
+  app.post('/pages/:id/views', async (req, reply) => {
+    const { id } = parse(idParams, req.params);
+    const body = parse(viewBody.extend({ name: z.string().trim().min(1).max(200), type: z.enum(VIEW_TYPES) }), req.body);
+    await databaseFor(req.user.id, id, 'edit');
+    const view = await editDoc(
+      id,
+      null,
+      (doc) => {
+        if (locked(doc)) throw lockedError();
+        const fields = fieldsOf(doc) as FieldDef[];
+        const values: Record<string, unknown> = { id: newId(), groupBy: null, dateField: null, sorts: [], filters: [], hidden: [], ...viewValues(fields, body) };
+        // Boards group by a select or status property; calendars and timelines need a date.
+        if (values.type === 'board' && !values.groupBy) {
+          const g = fields.find((f) => f.type === 'select' || f.type === 'status');
+          if (!g) throw new HttpError(400, 'A board needs a select or status property to group by (groupBy)');
+          values.groupBy = g.id;
+        }
+        if ((values.type === 'calendar' || values.type === 'timeline') && !values.dateField) {
+          const d = fields.find((f) => f.type === 'date');
+          if (!d) throw new HttpError(400, `A ${values.type} view needs a date property (dateField)`);
+          values.dateField = d.id;
+        }
+        const m = new Y.Map<unknown>();
+        for (const [k, v] of Object.entries(values)) m.set(k, v);
+        doc.getArray<Y.Map<unknown>>('views').push([m]);
+        return viewJson(m, fields);
+      },
+      { editor: req.user.id },
+    );
+    return reply.code(201).send({ view });
+  });
+
+  app.patch('/pages/:id/views/:viewId', async (req) => {
+    const { id, viewId } = parse(z.object({ id: z.uuid(), viewId: z.string().max(200) }), req.params);
+    const body = parse(viewBody, req.body ?? {});
+    await databaseFor(req.user.id, id, 'edit');
+    const view = await editDoc(
+      id,
+      null,
+      (doc) => {
+        if (locked(doc)) throw lockedError();
+        const fields = fieldsOf(doc) as FieldDef[];
+        const key = findView(doc, viewId)?.id;
+        const m = viewMaps(doc).find((v) => v.get('id') === key);
+        if (!m) return null;
+        for (const [k, v] of Object.entries(viewValues(fields, body))) m.set(k, v);
+        return viewJson(m, fields);
+      },
+      { editor: req.user.id },
+    );
+    if (!view) throw new HttpError(404, 'View not found');
+    return { view };
+  });
+
+  app.delete('/pages/:id/views/:viewId', async (req) => {
+    const { id, viewId } = parse(z.object({ id: z.uuid(), viewId: z.string().max(200) }), req.params);
+    await databaseFor(req.user.id, id, 'edit');
+    const done = await editDoc(
+      id,
+      null,
+      (doc) => {
+        if (locked(doc)) throw lockedError();
+        const key = findView(doc, viewId)?.id;
+        const arr = doc.getArray<Y.Map<unknown>>('views');
+        const i = arr.toArray().findIndex((v) => v instanceof Y.Map && v.get('id') === key);
+        if (i < 0) return false;
+        if (viewMaps(doc).length <= 1) throw new HttpError(400, 'A database needs at least one view');
+        arr.delete(i, 1);
+        return true;
+      },
+      { editor: req.user.id },
+    );
+    if (!done) throw new HttpError(404, 'View not found');
+    return { ok: true };
+  });
 }
 
 /**

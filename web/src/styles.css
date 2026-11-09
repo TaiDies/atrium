@@ -434,10 +434,10 @@ body:has(.excalidraw) .ai-fab {
 }
 
 /* Blocks without text (tasks, files, images, embeds…) inside a selection: shown selected like text. */
-.bn-editor .af-selected-block {
+.bn-editor .atrium-selected-block {
   position: relative;
 }
-.bn-editor .af-selected-block::after {
+.bn-editor .atrium-selected-block::after {
   content: '';
   position: absolute;
   inset: -2px;
@@ -447,7 +447,7 @@ body:has(.excalidraw) .ai-fab {
   pointer-events: none;
   z-index: 1;
 }
-.bn-editor .af-selected-text {
+.bn-editor .atrium-selected-text {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
@@ -471,27 +471,32 @@ body:has(.excalidraw) .ai-fab {
     min-height: 38px;
   }
   /* Menus as bottom sheets: rows sized for touch. */
-  .af-menu-item {
+  .atrium-menu-item {
     height: 46px;
     font-size: 15px;
     padding-inline: 14px;
   }
-  .af-sheet {
+  .atrium-sheet {
     animation: atrium-sheet-up 180ms ease-out;
   }
   /* The bottom bar and the editing toolbar keep floating buttons clear. */
-  body:has(.af-phone-nav) .ai-fab,
-  body:has(.af-phone-toolbar) .ai-fab {
+  body:has(.atrium-phone-nav) .ai-fab,
+  body:has(.atrium-phone-toolbar) .ai-fab {
     bottom: 76px;
   }
-  body:has(.af-phone-nav) [data-fab] {
+  body:has(.atrium-phone-nav) [data-fab] {
     bottom: 76px;
   }
-  body:has(.af-phone-nav):has([data-fab]) .ai-fab {
+  body:has(.atrium-phone-nav):has([data-fab]) .ai-fab {
     bottom: 148px;
     right: 24px;
   }
-  body:has(.af-phone-toolbar) .bn-editor {
+  /* The open assistant sits above the bottom bar too, not over it. */
+  body:has(.atrium-phone-nav) .ai-panel {
+    bottom: 72px;
+    height: min(560px, calc(100dvh - 150px));
+  }
+  body:has(.atrium-phone-toolbar) .bn-editor {
     padding-bottom: 72px;
   }
 }
@@ -506,8 +511,8 @@ body:has(.excalidraw) .ai-fab {
   }
 }
 @media (max-width: 767px) {
-  body:has(.af-phone-nav) .af-toasts,
-  body:has(.af-phone-toolbar) .af-toasts {
+  body:has(.atrium-phone-nav) .atrium-toasts,
+  body:has(.atrium-phone-toolbar) .atrium-toasts {
     bottom: 76px;
   }
 }
@@ -533,7 +538,7 @@ body:has(.excalidraw) .ai-fab {
 /* Tools drawn by measured positions stay left to right. */
 [dir='rtl'] .excalidraw,
 [dir='rtl'] .fortune-sheet-container,
-[dir='rtl'] .af-ltr {
+[dir='rtl'] .atrium-ltr {
   direction: ltr;
 }
 /* Arabic reads better a touch larger, with a font that has Arabic letters. */

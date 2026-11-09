@@ -30,7 +30,8 @@ import { useNavigate } from 'react-router';
 import { useApp } from '../app/context';
 import { CleanupDialog } from './CleanupDialog';
 import { type Anchor, confirmDialog, IconButton, Menu, MenuDivider, MenuItem, toast, toastError } from '../components/ui';
-import { downloadUrl, uploadFile } from '../lib/api';
+import { uploadFile } from '../lib/api';
+import { saveUrl } from '../lib/save';
 import { getLocal, setLocal } from '../lib/storage';
 import { timeAgo } from '../lib/time';
 import { deleteFile, type FileKind, isOffice, kindOf, newNote, newOfficeFile, type OfficeKind, refreshFiles, renameFile, usePreview, useWorkspaceFiles, type WorkspaceFile } from './api';
@@ -375,7 +376,7 @@ function useFileMenu(file: WorkspaceFile, onOpen: () => void, onSettings: () => 
       <MenuItem icon={<ExternalLink size={15} />} label="Open" onClick={onOpen} />
       <MenuItem icon={<Pencil size={15} />} label="Rename" onClick={rename} />
       <MenuItem icon={<Settings2 size={15} />} label="Settings & location" onClick={onSettings} />
-      <MenuItem icon={<Download size={15} />} label="Download" onClick={() => (location.href = downloadUrl(file.url))} />
+      <MenuItem icon={<Download size={15} />} label="Download" onClick={() => void saveUrl(file.url, file.name)} />
       {canDelete && (
         <>
           <MenuDivider />

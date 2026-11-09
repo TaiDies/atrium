@@ -2,6 +2,7 @@ import type { FilePosition } from '../lib/filePosition';
 import { useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { ApiError } from '../lib/api';
+import { saveBlob } from '../lib/save';
 import type { CollabSession } from '../lib/collab';
 
 // Shared by the document, spreadsheet and presentation editors. Each file's live content is a Yjs
@@ -67,15 +68,9 @@ export async function saveContent(fileId: string, data: Blob, name?: string) {
   return (await res.json()) as { name: string; size: number };
 }
 
+/** Saves a file to the device (through the Android app when running in it). */
 export function downloadBlob(blob: Blob, name: string) {
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = href;
-  a.download = name;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 30_000);
+  void saveBlob(blob, name);
 }
 
 export function blobToDataURL(blob: Blob): Promise<string> {

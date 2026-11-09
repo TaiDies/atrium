@@ -1,7 +1,16 @@
 package io.github.taidies.atrium
 
 import android.app.PictureInPictureParams
+import android.content.ContentValues
+import android.content.Context
 import android.content.res.Configuration
+import android.net.Uri
+import android.os.Environment
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.provider.MediaStore
+import android.util.Base64
+import android.webkit.WebViewClient
 import android.graphics.Color
 import android.os.Build
 import android.util.Rational
@@ -41,6 +50,11 @@ class MainActivity : TauriActivity() {
   private var back: OnBackPressedCallback? = null
   /** In a meeting call (the page says so): leaving the app shrinks it into a picture-in-picture pop-up. */
   private var inCall = false
+
+  /** Files being saved from the page (see Bars.saveBegin). */
+  private class Save(val out: java.io.OutputStream, val uri: Uri?, val file: java.io.File?)
+  private val saves = java.util.concurrent.ConcurrentHashMap<String, Save>()
+  private var printing: WebView? = null
 
   private fun pipParams(): PictureInPictureParams? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
@@ -116,6 +130,94 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun leave() {
       runOnUiThread { leave() }
+    }
+
+    // ----- saving files (exports, attachments) to Downloads, handed over by the page in pieces -----
+
+    /** Starts a file; returns its id, or "" if it can't be made. */
+    @JavascriptInterface
+    fun saveBegin(name: String, mime: String): String {
+      return try {
+        val id = java.util.UUID.randomUUID().toString()
+        val safe = name.replace(Regex("[\\\\/:*?\"<>|]+"), "-").take(150).ifBlank { "download" }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, safe)
+            put(MediaStore.Downloads.MIME_TYPE, mime.ifBlank { "application/octet-stream" })
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+          }
+          val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return ""
+          val out = contentResolver.openOutputStream(uri) ?: return ""
+          saves[id] = Save(out, uri, null)
+        } else {
+          // Android 9 and older: the app's own Downloads folder, which needs no storage permission.
+          val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return ""
+          dir.mkdirs()
+          val file = java.io.File(dir, safe)
+          saves[id] = Save(java.io.FileOutputStream(file), null, file)
+        }
+        id
+      } catch (_: Exception) {
+        ""
+      }
+    }
+
+    @JavascriptInterface
+    fun saveChunk(id: String, base64: String): Boolean {
+      val s = saves[id] ?: return false
+      return try {
+        s.out.write(Base64.decode(base64, Base64.DEFAULT))
+        true
+      } catch (_: Exception) {
+        false
+      }
+    }
+
+    /** Finishes a file; returns "" when it's saved, or what went wrong. */
+    @JavascriptInterface
+    fun saveEnd(id: String): String {
+      val s = saves.remove(id) ?: return "The download was interrupted"
+      return try {
+        s.out.close()
+        if (s.uri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          contentResolver.update(s.uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+        }
+        ""
+      } catch (e: Exception) {
+        e.message ?: "Could not save the file"
+      }
+    }
+
+    @JavascriptInterface
+    fun saveAbort(id: String) {
+      val s = saves.remove(id) ?: return
+      try {
+        s.out.close()
+      } catch (_: Exception) {
+      }
+      if (s.uri != null) contentResolver.delete(s.uri, null, null)
+      s.file?.delete()
+    }
+
+    /** Prints a complete HTML page with Android's print service (where "Save as PDF" is one of the printers). */
+    @JavascriptInterface
+    fun printHtml(html: String, title: String) {
+      runOnUiThread {
+        val view = WebView(this@MainActivity)
+        var started = false
+        view.webViewClient = object : WebViewClient() {
+          override fun onPageFinished(v: WebView, url: String?) {
+            if (started) return
+            started = true
+            val manager = getSystemService(Context.PRINT_SERVICE) as PrintManager
+            val name = title.ifBlank { "Document" }
+            manager.print(name, v.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+          }
+        }
+        printing = view // kept until the next print, so it isn't collected while printing
+        view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+      }
     }
 
     @JavascriptInterface

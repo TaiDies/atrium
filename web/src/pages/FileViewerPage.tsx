@@ -35,6 +35,7 @@ import { getLocal, setLocal } from '../lib/storage';
 import { useTheme } from '../lib/theme';
 import { type Anchor, Menu, MenuItem, Popover, toastError } from '../components/ui';
 import { api, downloadUrl } from '../lib/api';
+import { saveUrl } from '../lib/save';
 import { type CollabSession, useCollab } from '../lib/collab';
 import { useMe } from '../lib/queries';
 import { type FilePosition, type SavedPosition, usePositionSaver } from '../lib/filePosition';
@@ -718,7 +719,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
         </button>
         <Menu anchor={downloadMenu} onClose={() => setDownloadMenu(null)} align="end">
           <MenuItem icon={<PenLine size={15} />} label="With my notes" onClick={downloadWithNotes} />
-          <MenuItem icon={<Download size={15} />} label="Original file" onClick={() => (location.href = downloadUrl(file.url))} />
+          <MenuItem icon={<Download size={15} />} label="Original file" onClick={() => void saveUrl(file.url, file.name)} />
         </Menu>
       </HeaderPortal>
       )}

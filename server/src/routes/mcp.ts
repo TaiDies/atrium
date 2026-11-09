@@ -530,6 +530,95 @@ const TOOLS: Tool[] = [
       return `${args.kind === 'event' ? 'Event' : 'Task'} "${str(args.title)}" added on ${str(args.date)} (id ${res.event.id}).`;
     },
   },
+  {
+    name: 'read_calendar',
+    annotations: { readOnlyHint: true },
+    description:
+      'What is on the workspace calendar between two dates: events and tasks, database cards with a date, and dated to-dos in notes. Only what this person can see. Repeating events are listed once, with their rule.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'YYYY-MM-DD (default: today)' },
+        to: { type: 'string', description: 'YYYY-MM-DD (default: 7 days after from; at most 92 days)' },
+      },
+    },
+    async run(ctx, args) {
+      const day = /^\d{4}-\d{2}-\d{2}$/;
+      const from = str(args.from) || new Date().toISOString().slice(0, 10);
+      if (!day.test(from)) throw new Error('"from" must be a date as YYYY-MM-DD.');
+      const plus = (d: string, n: number) => new Date(Date.parse(`${d}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+      const to = str(args.to) || plus(from, 7);
+      if (!day.test(to)) throw new Error('"to" must be a date as YYYY-MM-DD.');
+      if (to < from) throw new Error('"to" comes before "from".');
+      if (to > plus(from, 92)) throw new Error('Ask for at most 92 days at a time.');
+      const cal = (await api(ctx, 'GET', `/api/workspaces/${ctx.workspaceId}/calendar?from=${from}&to=${to}`)) as {
+        events: { id: string; title: string; startDate: string; endDate: string | null; startTime: string | null; endTime: string | null; status: string | null; repeat: unknown }[];
+        cards: { pageId: string; rowId: string; title: string; date: string; endDate: string | null; status: string | null; pageTitle: string; fieldName: string }[];
+        blocks: { pageId: string; date: string; text: string; done: boolean | null; pageTitle: string; rowTitle: string | null }[];
+      };
+      const lines: string[] = [];
+      for (const e of cal.events) {
+        const when = `${e.startDate}${e.startTime ? ` ${e.startTime.slice(0, 5)}` : ''}${e.endDate && e.endDate !== e.startDate ? ` – ${e.endDate}` : ''}`;
+        const kind = e.status ? `task, ${e.status === 'done' ? 'done' : 'to do'}` : 'event';
+        lines.push(`- ${when}: ${e.title || 'Untitled'} (${kind}${e.repeat ? ', repeats' : ''}; id ${e.id})`);
+      }
+      for (const c of cal.cards) lines.push(`- ${c.date}${c.endDate && c.endDate !== c.date ? ` – ${c.endDate}` : ''}: ${c.title || 'Untitled'} — card in [[${c.pageTitle || 'Untitled'}]] (${c.fieldName}${c.status ? `, ${c.status}` : ''})`);
+      for (const b of cal.blocks) lines.push(`- ${b.date}: ${b.done === null ? '' : b.done ? '[x] ' : '[ ] '}${b.text} — in [[${b.rowTitle ?? b.pageTitle ?? 'Untitled'}]]`);
+      if (!lines.length) return `Nothing on the calendar from ${from} to ${to}.`;
+      return `Calendar from ${from} to ${to}:\n${lines.sort().join('\n')}`;
+    },
+  },
+  {
+    name: 'move_note',
+    description:
+      'Move a note under another note, or to the top level. Moving changes who can see it (it takes on the new parent\'s sharing), so only the note\'s owner or a workspace owner can do it. Give the note by exact title or id, and the new parent the same way; leave the parent out to move it to the top level.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        title: { type: 'string', description: 'Exact title of the note to move' },
+        parentId: { type: 'string' },
+        parentTitle: { type: 'string', description: 'Exact title of the new parent' },
+      },
+    },
+    async run(ctx, args) {
+      const { note } = await findNote(ctx, args, { exact: true });
+      let parent: { id: string; title: string } | null = null;
+      if (str(args.parentId) || str(args.parentTitle)) {
+        parent = (await findNote(ctx, { id: args.parentId, title: args.parentTitle }, { exact: true })).note;
+        if (parent.id === note.id) throw new Error('A note can\'t be moved inside itself.');
+      }
+      await api(ctx, 'PATCH', `/api/pages/${note.id}`, { parentId: parent?.id ?? null });
+      return parent ? `Moved [[${note.title}]] under [[${parent.title}]].` : `Moved [[${note.title}]] to the top level.`;
+    },
+  },
+  {
+    name: 'list_trash',
+    annotations: { readOnlyHint: true },
+    description: 'The notes in the trash (newest first) that this person can see, with their ids, to restore one with restore_note.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(ctx) {
+      const res = (await api(ctx, 'GET', `/api/workspaces/${ctx.workspaceId}/trash`)) as { pages: { id: string; title: string; deletedAt: string }[] };
+      if (!res.pages.length) return 'The trash is empty.';
+      return res.pages.map((p) => `- ${p.title || 'Untitled'} (id ${p.id}, deleted ${String(p.deletedAt).slice(0, 10)})`).join('\n');
+    },
+  },
+  {
+    name: 'restore_note',
+    description: 'Bring a note (and the notes inside it) back from the trash. Give its id from list_trash, or its exact title.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } },
+    async run(ctx, args) {
+      const res = (await api(ctx, 'GET', `/api/workspaces/${ctx.workspaceId}/trash`)) as { pages: { id: string; title: string }[] };
+      const id = str(args.id).trim();
+      const title = str(args.title).trim().toLowerCase();
+      if (!id && !title) throw new Error('Give the id (from list_trash) or the exact title.');
+      const same = res.pages.filter((p) => (id ? p.id === id : (p.title || 'Untitled').toLowerCase() === title));
+      if (!same.length) throw new Error(`Nothing in the trash for ${id ? `id ${id}` : `"${str(args.title)}"`}. Use list_trash to see what's there.`);
+      if (same.length > 1) throw new Error(`${same.length} notes in the trash are called "${str(args.title)}". Pass the id of the one you mean (list_trash shows ids).`);
+      await api(ctx, 'POST', `/api/pages/${same[0].id}/restore`, {});
+      return `Restored [[${same[0].title || 'Untitled'}]] from the trash.`;
+    },
+  },
 ];
 
 // ---------- the protocol ----------

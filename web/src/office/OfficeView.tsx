@@ -3,7 +3,7 @@ import { Check, CloudOff, Download, Loader2, Save } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type Anchor, Menu, MenuDivider, MenuItem, toast, toastError } from '../components/ui';
-import { downloadUrl } from '../lib/api';
+import { saveUrl } from '../lib/save';
 import { useCollab } from '../lib/collab';
 import { queryClient, useMe } from '../lib/queries';
 import { refreshFiles } from '../notes/api';
@@ -98,7 +98,7 @@ export default function OfficeView({ file, kind, renderOriginal }: { file: Offic
           {state === 'ready' &&
             (editor.current?.formats ?? []).map((f) => <MenuItem key={f.ext} icon={<Download size={15} />} label={f.label} onClick={() => download(f.ext)} />)}
           {state === 'ready' && <MenuDivider />}
-          {file.size > 0 && <MenuItem icon={<Download size={15} />} label="Original file, as stored" onClick={() => (location.href = downloadUrl(file.url))} />}
+          {file.size > 0 && <MenuItem icon={<Download size={15} />} label="Original file, as stored" onClick={() => void saveUrl(file.url, file.name)} />}
           {state === 'ready' && (
             <MenuItem
               icon={<Save size={15} />}
