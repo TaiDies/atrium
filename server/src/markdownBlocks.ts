@@ -8,7 +8,7 @@ import * as Y from 'yjs';
 interface Line {
   indent: number;
   node: string;
-  attrs: Record<string, string>;
+  attrs: Record<string, string | boolean>;
   text: string;
 }
 
@@ -29,7 +29,7 @@ function parseLines(markdown: string): Line[] {
     const line = raw.trim();
     let m: RegExpExecArray | null;
     if ((m = /^(#{1,3})\s+(.*)$/.exec(line))) out.push({ indent: 0, node: 'heading', attrs: { level: String(m[1].length) }, text: m[2] });
-    else if ((m = /^[-*+]\s+\[([ xX])\]\s+(.*)$/.exec(line))) out.push({ indent, node: 'checkListItem', attrs: { checked: m[1] === ' ' ? 'false' : 'true' }, text: m[2] });
+    else if ((m = /^[-*+]\s+\[([ xX])\]\s+(.*)$/.exec(line))) out.push({ indent, node: 'checkListItem', attrs: { checked: m[1] !== ' ' }, text: m[2] });
     else if ((m = /^[-*+]\s+(.*)$/.exec(line))) out.push({ indent, node: 'bulletListItem', attrs: {}, text: m[1] });
     else if ((m = /^\d+[.)]\s+(.*)$/.exec(line))) out.push({ indent, node: 'numberedListItem', attrs: {}, text: m[1] });
     else if ((m = /^>\s?(.*)$/.exec(line))) out.push({ indent: 0, node: 'quote', attrs: {}, text: m[1] });
@@ -101,7 +101,8 @@ function container(line: Line, pages?: PageLinks): Y.XmlElement {
   const c = new Y.XmlElement('blockContainer');
   c.setAttribute('id', randomUUID());
   const block = new Y.XmlElement(line.node);
-  for (const [k, v] of Object.entries(line.attrs)) block.setAttribute(k, v);
+  // A real boolean for to-dos: the editor reads any non-empty text (even "false") as ticked.
+  for (const [k, v] of Object.entries(line.attrs)) block.setAttribute(k, v as string);
   if (line.node !== 'divider') {
     const text = new Y.XmlText();
     if (line.node === 'codeBlock') text.insert(0, line.text);

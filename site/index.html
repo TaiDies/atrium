@@ -17,6 +17,7 @@
       <nav class="nav">
         <a href="#features">Features</a>
         <a href="#download">Download</a>
+        <a href="#see">Tour</a>
         <a href="#cloud">Cloud</a>
         <a href="/docs">Docs</a>
         <a class="btn small" data-repo-link href="https://github.com/TaiDies/atrium"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6a4.7 4.7 0 0 1 1.3-3.2c-.1-.3-.6-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2a4.7 4.7 0 0 1 1.3 3.2c0 4.6-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>GitHub</a>
@@ -109,6 +110,28 @@
       </div>
     </section>
 
+    <section id="see">
+      <div class="wrap">
+        <div class="eyebrow">See it in action</div>
+        <h2>One workspace on every device</h2>
+        <p class="sub">A short tour of the Windows and Android apps, connected to the same server.</p>
+        <video class="demo" controls preload="metadata" poster="/media/win-home.jpg" width="1920" height="1080">
+          <source src="/media/atrium-demo.mp4" type="video/mp4" />
+        </video>
+        <div class="shots">
+          <figure><img src="/media/win-board.jpg" alt="A task board grouped by status in the Windows app" loading="lazy" width="1920" height="1080" /><figcaption>Boards, tables, timelines and calendars over the same data</figcaption></figure>
+          <figure><img src="/media/win-plan.jpg" alt="A launch plan document" loading="lazy" width="1920" height="1080" /><figcaption>Documents with to-dos, headings and live editing</figcaption></figure>
+          <figure><img src="/media/win-calendar.jpg" alt="The calendar with events and dated tasks" loading="lazy" width="1920" height="1080" /><figcaption>One calendar for events, tasks and dated cards</figcaption></figure>
+          <figure><img src="/media/win-graph.jpg" alt="The graph of linked pages" loading="lazy" width="1920" height="1080" /><figcaption>A graph of how your pages link together</figcaption></figure>
+        </div>
+        <div class="phones">
+          <img src="/media/android-today.jpg" alt="Today on Android" loading="lazy" width="1080" height="2400" />
+          <img src="/media/android-board.jpg" alt="A board on Android" loading="lazy" width="1080" height="2400" />
+          <img src="/media/android-chat.jpg" alt="Team chat on Android" loading="lazy" width="1080" height="2400" />
+        </div>
+      </div>
+    </section>
+
     <section id="cloud">
       <div class="wrap split">
         <div>
@@ -118,14 +141,21 @@
           <ul class="checks">
             <li><span><b>Self-hosting stays free</b> and fully featured, forever — open source under the AGPL.</span></li>
             <li><span><b>Move either way.</b> Export your workspace from the cloud to your own server, or the other way round.</span></li>
-            <li><span><b>Want to hear first?</b> Watch the GitHub repository for the announcement.</span></li>
+            <li><span><b>Want to hear first?</b> Leave your email and we'll write once, when it opens.</span></li>
           </ul>
         </div>
         <div class="card" style="text-align:center;padding:36px">
           <div class="ic" style="margin:0 auto 14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg></div>
           <h3>Atrium Cloud</h3>
-          <p>Hosted Atrium as a subscription — planned.</p>
-          <p style="margin-top:16px"><a class="btn small" data-repo-link href="https://github.com/TaiDies/atrium">Watch on GitHub</a></p>
+          <p>Hosted Atrium as a subscription — planned. Get an email when it opens.</p>
+          <form class="signup" id="signup" novalidate>
+            <label class="sr" for="signup-email">Email address</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required maxlength="254" />
+            <input class="hp" name="company" tabindex="-1" autocomplete="off" aria-hidden="true" />
+            <label class="consent"><input type="checkbox" name="consent" required /> <span>Email me about Atrium Cloud. Your address is only used for that, never shared, and you can ask to be removed at any time.</span></label>
+            <button class="btn primary small" type="submit">Notify me</button>
+            <p class="signup-msg" role="status" aria-live="polite"></p>
+          </form>
         </div>
       </div>
     </section>

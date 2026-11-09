@@ -1,5 +1,45 @@
 # Development and building the apps
 
+## Architecture
+
+```
+browser / apps ──HTTP /api───▶ ┌──────────────────────────────┐
+               ──WS /collab──▶ │ app (Node.js)                │──▶ PostgreSQL
+               ──WS /live────▶ │  Fastify REST API            │
+               ◀─static SPA─── │  Hocuspocus (Yjs sync)       │──▶ /data/uploads
+                               │  live channel (chat, calls)  │
+admin browser ──HTTP :3001───▶ │  admin panel (its own port)  │
+                               └──────────────────────────────┘
+```
+
+- `server/` – TypeScript, Fastify, Hocuspocus, `pg`. SQL migrations in `server/migrations` run on start.
+- `web/` – React, Vite, Tailwind, BlockNote, TanStack Query. Built into static files served by the app.
+- `apps/native/` – the Windows and Android apps (Tauri), which load the same web app and talk to your server.
+- `site/` – the website (see below).
+
+Page structure (titles, tree, icons) is stored in regular tables; page content is a Yjs document stored in
+`page_content`, alongside a plain-text copy used for search. `/collab` carries live editing, `/live` carries
+chat messages, notifications and meeting signalling.
+
+## Development
+
+```bash
+# 1. a database
+docker run -d --name atrium-dev-pg -p 5544:5432 -e POSTGRES_USER=atrium -e POSTGRES_PASSWORD=atrium -e POSTGRES_DB=atrium postgres:16-alpine
+
+# 2. the server (http://localhost:3100)
+cd server && npm install
+DATABASE_URL=postgres://atrium:atrium@localhost:5544/atrium PORT=3100 npm run dev
+
+# 3. the web app with hot reload (http://localhost:5173, proxies to the server)
+cd web && npm install && npm run dev
+```
+
+Tests, in `server/`: `npm test` (unit tests) and `npm run test:integration` (against a running dev server;
+CI starts one with `TRUST_PROXY=loopback AI_TIMEOUT_MS=3000`). The integration tests also fail when a new
+route is neither described in the API guide (`server/src/apiGuide.ts`) nor listed as app-only in
+`server/src/openapi.ts`.
+
 ## Desktop (Windows) and phone (Android) apps
 
 `apps/native` turns the web app into installable apps with [Tauri](https://tauri.app). On first launch
@@ -48,7 +88,7 @@ makes one smaller APK per type (phones use `arm64-v8a`).
 
 There is no release workflow: each release is built on a developer machine and uploaded by hand.
 
-1. Set the version everywhere with `node tools/set-version.mjs 1.11.4` (`server/package.json` is the source the
+1. Set the version everywhere with `node tools/set-version.mjs 1.11.7` (`server/package.json` is the source the
    server reads; CI checks they all match).
 2. Build with `TAURI_SIGNING_PRIVATE_KEY` set to the updater key (`npm run build:windows`, then
    `npm run build:android`).
@@ -65,4 +105,21 @@ The website is the static folder `site/` (its only build step copies INSTALL.md 
 fonts or scripts are loaded from other sites). On Vercel, set the project's **Root Directory** to `site`;
 it is live at https://atrium-five-xi.vercel.app.
 
-The architecture and how to run the server and web app for development are in the [README](../README.md).
+**Email signup for Atrium Cloud.** The form on the site posts to `site/api/subscribe.js`, a Vercel function
+that keeps each address as one private file (`signups/<address>.json`) in the project's Vercel Blob store
+(created with private access; Vercel adds `BLOB_READ_WRITE_TOKEN` to the project). Nothing is emailed yet.
+To hand the list to an email service later, download it as CSV:
+
+```bash
+curl -H "Authorization: Bearer $SIGNUP_EXPORT_TOKEN" https://atrium-five-xi.vercel.app/api/signups -o signups.csv
+```
+
+`SIGNUP_EXPORT_TOKEN` is an environment variable of the Vercel project (Settings → Environment
+Variables); without it the export is switched off. Removing someone means deleting their file in the
+Blob store (Storage → atrium-signups).
+
+## Screenshots and videos
+
+`docs/media/` holds the screenshots, GIFs and videos used in the README and on the website (the site uses
+JPEG copies in `site/media/`). They show a demo workspace ("Northlight Studio", made-up people) on a
+temporary server, captured from the Windows app at 1920×1080 and the Android app at 1080×2400.

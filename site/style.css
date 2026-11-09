@@ -214,3 +214,25 @@ mark { background: color-mix(in srgb, #ffd54a 55%, transparent); color: inherit;
   .pv-board { grid-template-columns: 1fr 1fr; }
   .pv-col:last-child { display: none; }
 }
+
+/* See it in action */
+.demo { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); background: #0f1424; margin-top: 8px; }
+.shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 22px; }
+.shots figure { margin: 0; }
+.shots img, .phones img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); display: block; }
+.shots figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+.phones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; max-width: 760px; margin: 26px auto 0; }
+@media (max-width: 720px) { .shots { grid-template-columns: 1fr; } .phones { gap: 10px; } }
+
+/* Atrium Cloud signup */
+.signup { display: grid; gap: 10px; margin-top: 16px; text-align: start; }
+.signup input[type=email] { height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
+.signup input[type=email]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.signup .consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+.signup .consent input { margin-top: 3px; }
+.signup button { justify-self: start; }
+.signup-msg { min-height: 1.2em; font-size: 14px; margin: 0; }
+.signup-msg.ok { color: #16a34a; }
+.signup-msg.err { color: #dc2626; }
+.signup .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
