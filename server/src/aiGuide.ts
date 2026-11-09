@@ -4,7 +4,7 @@
 
 export const APP_GUIDE = `# The app
 
-A workspace for notes, documents, databases, plans, files, chat and meetings, shared with other people in real time. Everything is organised into **workspaces**; each has members, pages and files. The sidebar has: workspace switcher, 🔔 notifications, Search (Ctrl/⌘+K), Home, Graph, Chat, Meetings, Today, Calendar, Files, Whiteboards, AI assistant, Settings & members, the page tree (Favorites, Pages), and Templates, Import, Trash and New page at the bottom.
+A workspace for notes, documents, databases, plans, files, chat and meetings, shared with other people in real time. Everything is organised into **workspaces**; each has members, pages and files. The sidebar has: workspace switcher, 🔔 notifications, Search (Ctrl/⌘+K), Home, Graph, Chat, Meetings, Today, Calendar, Files, Whiteboards, AI assistant, Settings & members, the page tree (Favorites, Pages), and Templates, Import, Trash and New page at the bottom (Import and New page only for workspace owners).
 
 ## Pages and documents
 - A **document** is a block editor. Type **/** for the block menu: headings, paragraphs, bullet/numbered lists, **to-do** (checkbox) lists, toggles, quotes, code, tables, dividers, images, video, audio, files, sub-pages, inline databases (Grid, Kanban, Calendar…), events/tasks (/event, /task), whiteboards (/whiteboard), dates (/date) and colours (/red, /yellow highlight…).
@@ -18,7 +18,7 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - Each page has an icon and an optional cover. Edits sync live; you see other people's cursors.
 - **Comments**: select text → comment button to start a thread; the speech-bubble button at the top of the page lists all threads (open/resolved). **@** a person to mention them — they get a notification. The page's creator and people in a thread are told about new comments.
 - **Templates** (sidebar): ready-made pages and databases, plus the workspace's own (page ••• → Save as template). A template can repeat, adding a new page every day/week/month/year.
-- **Publish to the web**: Share → Publish to the web makes a read-only link that works without an account (optionally with sub-pages; search engines only if allowed).
+- **Publish to the web**: Share → Publish to the web makes a read-only link that works without an account (optionally with sub-pages; search engines only find it with **Let search engines find it** ticked).
 
 ## Databases
 - One table of data shown in **views** (tabs): Grid, Board (kanban grouped by a select property), Calendar (by a date property), Timeline (start/end dates as bars), Chart (bar, line, pie, donut — count, sum or average), Form builder (a public link anyone can fill in; each answer becomes a row), List, Gallery (cards with cover images) and Feed (each row's document as a post). Add a view with the + next to the view tabs.
@@ -32,6 +32,8 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Linked view**: "/linked view" in a document shows one view of an existing database there.
 - **Card templates**: the arrow next to the database's **New** button lists templates (properties and page content a new card starts with); make and edit them there, and choose which one New uses.
 - **Repeating cards**: a card's ••• → Repeat — every N days/weeks/months/years, between dates; resets on each new date or as soon as it's done, back to a chosen status, optionally unticking its checklists.
+
+- **Ask when marked done**: a checkbox or status property can ask questions when a card is marked done (its menu → Ask when marked done → choose properties, each required or optional). Marking the card done — in the database, on its page or on **Today** — then shows a **Before you finish** box with those properties; undoing it clears the answers.
 
 ## Calendar, tasks and Today
 - **Calendar** (Month, Week, Day, Agenda) shows every event and task, every dated card from every database, and every block with a date in it. Click a day (or drag in Week view) to add one; drag to reschedule; drag an event's edge to change its length; tick tasks off in place; filter by kind or database.
@@ -51,12 +53,14 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 
 ## People and sharing
 - **Settings & members**: invite people by email as member or owner. Invitations wait under their 🔔 until they accept. Only **owners** add pages (and import or duplicate them); members edit the pages they can access and can add files, events and whiteboards.
-- **Share** on a page sets who can edit, view, or not see it (with per-person overrides); sub-pages inherit unless they have their own settings.
+- **Share** on a page sets who can see it: **Can edit**, **Can view** or **No access**, for everyone and per person; sub-pages inherit unless they have their own settings. Moving a page under another page or into a teamspace changes who sees it, so only the page owner or a workspace owner can do it.
+- **Guests** (people invited to one page) see members by name only, never their email addresses.
 
 ## Other
 - **Search** (Ctrl/⌘+K, or Ctrl/⌘+P for recently opened pages) finds titles, text inside documents and boards, and text inside uploaded files, with filters (pages/databases/files, last edited, made by me). Ctrl/⌘+/ shows all shortcuts.
-- Page ••• menu: Page history (restore earlier versions), Lock page, Full width, Small text, Verify (wiki pages), Archive (hidden from the sidebar, kept in search; Trash → Archive), Keep offline, Move to a teamspace. Backlinks show under the title.
-- **Guests**: Share → Guests invites someone by email to one page only. **Follow** a page (••• → Follow; automatic for pages you make, edit or comment on) to get its changes under 🔔 → Updates. Home shows who's online. Settings → Account → Daily email sends a morning summary (needs email set up by the admin).
+- Page menu (••• next to the page in the sidebar, or **More** in the page header): Page history (restore earlier versions; kept in full unless the administrator set HISTORY_DAYS, and then the newest 10 versions of every page are always kept), Lock page, Full width, Small text, **Verify for 30 days / Verify for 90 days / Verify with no end** and **Remove verification** (wiki pages), Archive (hidden from the sidebar, kept in search; Trash → Archive), Keep offline, and for owners on top-level pages, when a teamspace exists, **Move to <teamspace>** or **Move to the whole workspace**. Backlinks show under the title.
+- **Files**: anyone who can see a file can download it; renaming it is for the person who uploaded it, a workspace owner, or someone who can edit a page it's on; deleting it is for the uploader or an owner.
+- **Guests**: Share → Guests invites someone by email to one page only. **Follow** a page (••• → Follow; automatic for pages you make, edit or comment on) to get its changes under 🔔 → Updates. Home shows who's online. **Settings → My account** has the daily email (a morning summary; needs email set up by the admin), usage, **Sign out** and **Sign out everywhere** (ends every session and stops your API tokens).
 - **Teamspaces**: owners group top-level pages into teamspaces with chosen members (sidebar ⇅ → New teamspace); only members and owners see them. The ⇅ button also switches to your own sidebar order. **Trash** keeps deleted pages until restored.
 - **Export…** on a page (with or without sub-pages), or **Export everything** in Settings → Workspace, makes a .zip that can be imported into another workspace or account; it also contains Markdown and CSV copies. **Import** is described in detail below.
 - **Connect Claude** (Settings → API & webhooks): gives Claude or another MCP assistant one workspace as its own memory — see *For developers* below.
@@ -67,6 +71,9 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Settings → API & webhooks**: personal **API tokens** for scripts and other apps (they act as you; the API guide is at /api/docs), and for workspace owners **webhooks** that POST signed JSON to an address when pages are created, updated or trashed, events change, tasks are completed or files are uploaded.
 - **Settings → Appearance**: 14 themes in light or dark, a custom accent colour, font, text size, page width and density. Appearance and language are saved with the account, so every device looks the same.
 - **Home** shows what matters now: today's tasks (and how many are overdue), meetings happening now or coming up, unread chats, what's new under the bell and recently edited pages; buttons to create pages, import and invite people are at the bottom.
+- **Admin panel** (server administrators, on its own port): tabs **Overview** (counts, and warnings when email isn't set up — invitations then can't be confirmed — or ALLOW_PRIVATE_URLS is on, and when page history is being thinned out), **Accounts**, **Roles**, **Workspaces**, **Limits**, **AI**, **Email**, **Updates**, **Sign-ups & security**.
+- **Signing in**: wrong passwords for an account only slow its sign-ins down for a few seconds (never lock the owner out); many guesses from one address are blocked for a while.
+- **Settings an administrator sets** (in .env): PUBLIC_URL (the address people use; live editing only accepts it), TRUST_PROXY (the reverse proxy whose visitor addresses to believe; none by default), IMPORT_PARALLEL (imports at once), HISTORY_DAYS (thin out old page history; off by default), AI_TIMEOUT_MS (how long an AI answer may take while you wait, 90 s), and ALLOW_PRIVATE_URLS.
 - **Admin panel → Updates** (server administrators): shows the running and newest version, **Update now**, **Update automatically**, and a **Server notifications receiver email** that's emailed when a new version is out (through the server's email settings).
 - **Admin panel → Roles** (server administrators): a role gives permissions — Use AI, Create workspaces, Invite people, Upload files, Start meetings, Create groups and teams, Publish pages to the web, API tokens and Connect Claude — and optionally more generous limits. Everyone has the built-in **Everyone** role; give other roles to people in **Accounts** (one person, or tick several and use **Roles for N**). A person may do whatever any of their roles allows; what isn't allowed is hidden in the app and refused by the server.
 - **AI limits** come in two kinds, each per day and per month: **requests** (each question, AI edit, autofill, set of flashcards or quiz is one) and **tokens** (what the AI models charge for: the question, what it reads and the answer). They're set under Admin panel → Limits for everyone, per role or per person. They only count the server's shared AI connection — with your own key it's your own bill.
@@ -83,7 +90,7 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - **Calendar ••• → Delete events and tasks not in any page** clears out events and tasks that only exist on the calendar.
 - **Calendar ••• → Subscribe in another calendar app** gives a private link (.ics) to add in Google Calendar (Other calendars → From URL), Outlook (Subscribe from web) or Apple Calendar; it shows events, tasks, dated cards and dated to-dos, read-only. **New link** turns the old one off. Online calendars can only fetch it if the server has a public address.
 - **Calendar ••• → Import a calendar file (.ics)** adds the events from another calendar's export (times, all-day spans, weekly/monthly repeats and reminders); ones already there are skipped.
-- **Settings → Account → Usage** shows storage, workspaces, people per workspace and AI requests and tokens used today and this month against the administrator's limits.
+- **Settings → My account → Usage** shows storage, workspaces, people per workspace and AI requests and tokens used today and this month against the administrator's limits.
 
 ## Importing (in detail)
 **Import** (sidebar bottom, or Home) → drop files or a .zip → it shows what it found → **Import**. Owners can import. Everything below can be mixed in one .zip; folders become nested pages.
@@ -111,17 +118,23 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
 - Calls connect people directly (WebRTC). Browsers need HTTPS for the camera and microphone (the desktop and phone apps don't); calls between different networks may need a TURN server (RTC_ICE_SERVERS setting).
 
 ## Notifications
-- 🔔 in the sidebar: invitations, reminders, the day's tasks, mentions, meeting invitations and starts, tasks given to you, comments and shares.
+- 🔔 in the sidebar, with tabs **All**, **Mentions** and **Updates**: invitations, reminders, the day's tasks, mentions, meeting invitations and starts, tasks given to you, comments and shares.
 - **Settings → Notifications** (per device) turns on **system notifications** in the Windows and Android apps and in browsers: on/off (asks for permission), chat messages (all, only mentions, none), meetings, tasks, everything else, sound, and quiet while the app is in front; **Send a test notification**. They arrive while the app is open or running in the background. Tapping one opens the chat or meeting.
 
 ## Graph (in detail)
 - **Graph** in the sidebar shows every page as a dot (bigger the more it's linked), with lines for links/@mentions, sub-pages and (dashed) database relations; toggle each kind at the top; search with "Find a page". It blooms open, and hovering a page fades the rest and sends sparks along its lines. Drag dots, scroll or pinch to zoom, **Fit** to see everything, click to open a page. A page's ••• → **Local graph** shows only what's 1–3 links from it.
 - **Groups** give the colours meaning: Groups button → name, colour, description ("what it means"), and an optional rule (title contains some text, or under:Page for the pages inside a page); right-click (or long-press) a dot to put that page in a group. The legend (bottom-left) shows each colour's meaning and how many pages it has; hover a group to light its pages up, click to keep it lit. Each kind of line can have its own colour.
 
+## AI setup
+- **AI → Settings** (the AI settings button): choose a provider — Anthropic (Claude), an OpenAI-compatible service (OpenAI, Groq, OpenRouter, a local Ollama…, with presets for common ones) or Google Gemini —, paste your key and pick a model. The administrator can instead give everyone a **shared connection** (Admin panel → AI), optionally still letting people use their own key. Using AI needs the **Use AI** permission in your role.
+
 ## For developers: API, webhooks and Claude
-- **API**: Settings → API & webhooks → New token (optionally only one workspace; expiry). Send it as "Authorization: Bearer atr_…". The full reference is at **/api/docs** (on the server). Main parts: workspaces and members; pages (create, rename, move, trash, restore, icon/cover); page content as Markdown (GET /api/pages/:id/markdown, PUT to replace or POST to append — [[Title]] links work); databases (fields, rows, cells); calendar events; files (upload, download); search; chat (/api/workspaces/:id/chats, /api/chats/:id/messages); meetings (/api/workspaces/:id/meetings, /api/meetings/:code, tasks); graph (/api/workspaces/:id/graph and its groups); notifications. **This guide** is available as Markdown at **GET /api/guide**, so other programs and AI assistants can read how the app works.
-- **Webhooks** (workspace owners): an address that gets a signed POST when pages are created/updated/trashed, events change, tasks are completed or files are uploaded; Send test shows the result.
-- **Connect Claude** (MCP, at /api/mcp): a token limited to one workspace gives Claude (Claude Code, Claude Desktop) or any MCP app that workspace as its memory. Its tools: search_notes, read_note, list_notes, recent_notes, create_note, update_note (append/replace, rename), related_notes, delete_note, set_note_group and graph_groups (colours with meaning in the graph), and app_guide (this guide).`;
+- **API**: Settings → API & webhooks → New token (optionally only one workspace; expiry). Send it as "Authorization: Bearer atr_…". The full reference, with who may use each endpoint, is at **/api/docs** on the server. Main parts: workspaces and members; pages (create — owners only —, rename, move, trash, restore, icon/cover); page content as Markdown (GET /api/pages/:id/markdown returns JSON with the Markdown, POST adds or replaces it; [[Title]] links only become links through Claude/MCP); database cards (POST /api/pages/:id/rows makes cards with values by property name, PATCH changes them, DELETE removes them; properties of every type can be added, renamed and reordered; a card's own page as Markdown); calendar events; files; search; chat; meetings; graph. Locked pages refuse changes (423). A few things are only possible in the app, never with a token: passwords and profile, AI keys, notifications and invitations, deleting workspaces and changing members, and tokens themselves. **This guide** is available as Markdown at **GET /api/guide**.
+- **Slow AI requests** (rewriting text, transcription, flashcards, quizzes, AI-filled properties) run in the background: the app starts them, shows a Stop button, and picks up the answer when it's ready, so a proxy's time limit can't cut them off.
+- **Webhooks** (workspace owners): an address that gets a signed POST when pages are created/updated/trashed, cards are created/changed/deleted, events change, tasks are completed or files are uploaded. Each carries who did it; Send test shows the result; the secret can be rotated.
+- **Connect Claude** (MCP, at /api/mcp): a token limited to one workspace gives Claude (Claude Code, Claude Desktop) or any MCP app that workspace as its memory. Its tools: search_notes, read_note, list_notes, recent_notes, create_note (owners), update_note (append/replace, rename), related_notes, delete_note, set_note_group and graph_groups (colours with meaning in the graph), read_database, add_card, update_card, delete_card, create_task, list_members, and app_guide (this guide). Writing to a note or database needs its exact title or id; reading accepts part of a title.`;
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'how', 'can', 'what', 'where', 'when', 'why', 'with', 'does', 'do', 'you', 'your', 'are', 'not', 'from', 'into', 'this', 'that', 'there', 'about', 'use', 'make', 'get', 'set', 'add', 'any', 'all', 'one', 'out', 'way']);
 
 /**
  * The guide for people and programs outside the app (GET /api/guide, the MCP tool app_guide): the whole
@@ -129,10 +142,26 @@ A workspace for notes, documents, databases, plans, files, chat and meetings, sh
  */
 export function guideFor(topic?: string | null) {
   if (!topic?.trim()) return APP_GUIDE;
-  const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  // Whole words that mean something (not "how", "the", "can"…), scored per section: a heading match
+  // counts most; the three best sections are returned.
+  const words = [...new Set(topic.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])].filter((w) => w.length > 2 && !STOPWORDS.has(w));
   const sections = APP_GUIDE.split(/\n(?=## )/);
-  const hits = sections.filter((s) => words.some((w) => s.toLowerCase().includes(w)));
-  return hits.length ? hits.join('\n\n') : `Nothing in the guide mentions "${topic}". The sections are: ${sections.map((s) => s.split('\n')[0].replace(/^#+\s*/, '')).join(', ')}.`;
+  const scored = sections
+    .map((s) => {
+      const heading = s.split('\n')[0].toLowerCase();
+      const text = s.toLowerCase();
+      let score = 0;
+      for (const w of words) {
+        const re = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+        const n = (text.match(re) ?? []).length;
+        if (n) score += n + (re.test(heading) ? 10 : 0);
+      }
+      return { s, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+  return scored.length ? scored.map((x) => x.s).join('\n\n') : `Nothing in the guide mentions "${topic}". The sections are: ${sections.map((s) => s.split('\n')[0].replace(/^#+\s*/, '')).join(', ')}.`;
 }
 
 export const BUILD_GUIDE = `# Answering
@@ -144,16 +173,17 @@ Always answer with one JSON object and nothing else:
   "databases": [],
   "tasks": []
 }
+Limits: up to 10 documents, 5 databases and 400 tasks in one answer; a database up to 30 properties, 50 options per property and 300 rows. Anything beyond is dropped. Members (not owners) can't add documents or databases, only tasks and text added to pages they can edit. Only use ids that appear in the page list.
 Leave the three lists empty unless the person wants something made or added. Whatever you put in them is shown for review and added only if they click Add; in "reply", say briefly what you made and anything to check. For "how do I…" questions, answer from the guide above with clear steps (name the exact menus and buttons). If something important is missing (a deadline, what to study), ask in "reply" and leave the lists empty. Never claim you have already changed anything.
 
 ## documents — new pages, sub-pages, or text added to an existing page
 { "ref": "plan", "title": "…", "icon": "one emoji", "parent": null, "appendTo": null, "markdown": "…" }
 - "ref": a short name you choose, so other items can point to this document.
 - "parent": where it goes — null (top level), the "ref" of a document listed earlier in this answer, or the id of an existing page (from the page list). It appears as a sub-page.
-- "appendTo": the id of an existing document to ADD this markdown to the end of, instead of making a new page (then "title", "icon" and "parent" are ignored). You can't change or delete what's already there.
+- "appendTo": the id of an editable existing document from the page list to ADD this markdown to the end of, instead of making a new page (then "title", "icon" and "parent" are ignored). An id that isn't in the list makes a new page instead. You can't change or delete what's already there.
 - Markdown: headings (#, ##, ###), paragraphs, **bold**, *italic*, lists, to-dos ("- [ ] item"), quotes, code blocks, tables, links.
 - Write @YYYY-MM-DD (e.g. @2026-11-03) to put a date in the text. A to-do with a date shows on the person's Today list on that day and on the calendar — use this for checklists of dated work.
-- A line with only {{database:REF}} puts that database (from "databases") right there; {{page:REF}} puts a link to that sub-page; {{tasks}} puts this document's linked tasks (see "tasks") there. Databases, sub-pages and linked tasks you don't place are added at the end automatically.
+- A line with only {{database:REF}} puts that database (from "databases") right there, and {{page:REF}} a link to that sub-page — only for databases and documents whose "parent" is this document; {{tasks}} puts this document's linked tasks (see "tasks") there. Databases, sub-pages and linked tasks you don't place are added at the end automatically.
 
 ## databases — boards, lists, tables, calendars, timelines, galleries
 { "ref": "sessions", "title": "…", "icon": "one emoji", "parent": null, "layout": "board",
@@ -161,7 +191,7 @@ Leave the three lists empty unless the person wants something made or added. Wha
   "rows": [ { "name": "Card name", "cells": { "Status": "To do", "Date": "2026-11-03" }, "notes": "markdown shown inside the card" } ] }
 - "layout": "board" (kanban grouped by the first select property), "list", "grid" (table), "calendar" (by the first date), "timeline" (needs two dates: start then end), or "gallery".
 - "parent": null, a document "ref" from this answer (the database then sits inside that document), or an existing page id.
-- "fields": don't include the name column — every row's "name" is its title. Types: "text", "number", "select", "multi_select" (cell is a list), "date" (YYYY-MM-DD), "checkbox" (true/false), "url". Give select options in order; use names like "To do" and "Done" so finished cards count as done.
+- "fields": don't include the name column — every row's "name" is its title. Types: "text", "number", "select", "multi_select" (cell is a list), "date" (YYYY-MM-DD), "checkbox" (true/false), "url". You can't make status, person, relation, formula, rollup or files properties, chart or feed views, or filtered views. Give select options in order and name the finished one exactly "Done" so finished cards count as done.
 - A card with a date AND a status shows on Today and the calendar; one with a "Done" status counts as finished.
 - Up to 300 rows. "notes" is optional.
 
@@ -173,7 +203,7 @@ Leave the three lists empty unless the person wants something made or added. Wha
 - "reminder": minutes before the start (0 = at the start), or null.
 - "repeat": null, or { "every": 1, "unit": "day" | "week" | "month" | "year", "until": "YYYY-MM-DD" or null } for repeating events (e.g. a weekly lecture).
 - "document": a document "ref" from this answer to link the task inside that document (shown as task blocks under {{tasks}} or at the end).
-- Dates must be today or later.
+- Dates must be real YYYY-MM-DD dates, today or later (a task with an invalid date is dropped); "endDate", if given, comes after "date". Give "time" whenever you give "minutes".
 
 ## Choosing what to make
 - A plan with a deadline (study plan, project plan, training plan): usually one document with the overview, method and tips, plus EITHER a board/list database of dated sessions with a Status (good for tracking progress) OR calendar tasks (good for timed sessions with reminders) — not the same sessions twice. Link them: put the database in the document, or link the tasks to it.

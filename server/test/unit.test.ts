@@ -31,6 +31,7 @@ import { SERVER_VERSION } from '../src/updates.ts';
 import { namedCells, normaliseCells } from '../src/rowCells.ts';
 import { checkArgs } from '../src/routes/mcp.ts';
 import { apiGuide } from '../src/apiGuide.ts';
+import { guideFor } from '../src/aiGuide.ts';
 import { handleError } from '../src/util.ts';
 import { z } from 'zod';
 import { esPatterns } from '../../web/src/i18n/es.ts';
@@ -557,5 +558,15 @@ describe('API guide and error messages', () => {
     }
     assert.equal(sent?.field, 'cells.Due');
     assert.match(sent?.error ?? '', /^cells\.Due: /);
+  });
+});
+
+describe('the app guide by topic', () => {
+  it('finds the right sections, at most three, and ignores filler words', () => {
+    const verify = guideFor('how do I verify a page');
+    assert.ok(verify.includes('Verify for 30 days'));
+    assert.ok((verify.match(/^## /gm) ?? []).length <= 3);
+    assert.match(guideFor('webhooks').split('\n')[0], /For developers/);
+    assert.match(guideFor('the and how'), /Nothing in the guide mentions/);
   });
 });
