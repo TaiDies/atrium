@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
@@ -5,7 +6,7 @@ import { Button, confirmDialog, Dialog, Spinner, toast, toastError } from '../co
 import { api } from '../lib/api';
 import { queryClient } from '../lib/queries';
 
-const absolute = (path: string) => new URL(path, location.origin).toString();
+const absolute = (path: string) => new URL(path, publicOrigin()).toString();
 const isLocal = () => /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/.test(location.hostname);
 
 /** "Subscribe in another calendar app": the person's secret .ics link for this workspace. */

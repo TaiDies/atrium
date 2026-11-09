@@ -133,29 +133,65 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
   return (await send(path, options)).data as T;
 }
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits, or stops early (with an AbortError) when `signal` fires. */
+const wait = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason ?? new DOMException('Stopped', 'AbortError'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => (clearTimeout(t), reject(signal.reason ?? new DOMException('Stopped', 'AbortError'))), { once: true });
+  });
+
+/** AI requests in progress, so signing out can stop them all. */
+const running = new Set<AbortController>();
+export function stopAiRequests() {
+  for (const c of running) c.abort();
+}
+
+/** Whether an error is a request someone stopped (not a failure to show). */
+export const isStopped = (err: unknown) => (err as { name?: string })?.name === 'AbortError';
 
 /**
  * For AI requests that can take minutes: the server starts the work and answers at once with a job,
  * then this asks how it's going until the answer is ready, so no request stays open long enough for
- * a reverse proxy to cut it. (A server without background jobs just answers directly.)
+ * a reverse proxy to cut it. (A server without background jobs just answers directly.) `signal` stops
+ * it (a Stop button, leaving the page): the server is told to stop the work too.
  */
-export async function aiApi<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { res, data } = await send(path, { ...options, headers: { ...options.headers, Prefer: 'respond-async' } });
-  if (res.status !== 202 || typeof data?.job !== 'string') return data as T;
-  const until = Date.now() + 15 * 60_000;
-  let gap = 1000;
-  while (Date.now() < until) {
-    await wait(gap);
-    gap = Math.min(gap * 1.5, 4000);
-    try {
-      const state = await api<{ done: boolean; result?: T }>(`/api/ai/jobs/${data.job}`);
-      if (state.done) return state.result as T;
-    } catch (err) {
-      if (!(err instanceof OfflineError)) throw err; // offline for a moment: keep asking
+export async function aiApi<T = unknown>(path: string, options: ApiOptions & { signal?: AbortSignal } = {}): Promise<T> {
+  const mine = new AbortController();
+  const stop = () => mine.abort(options.signal?.reason);
+  if (options.signal?.aborted) stop();
+  options.signal?.addEventListener('abort', stop, { once: true });
+  running.add(mine);
+  let job: string | null = null;
+  try {
+    const { res, data } = await send(path, { ...options, headers: { ...options.headers, Prefer: 'respond-async' } });
+    if (res.status !== 202 || typeof data?.job !== 'string') return data as T;
+    job = data.job as string;
+    const until = Date.now() + 15 * 60_000;
+    let gap = 1000;
+    while (Date.now() < until) {
+      await wait(gap, mine.signal);
+      gap = Math.min(gap * 1.5, 4000);
+      try {
+        const state = await api<{ done: boolean; result?: T }>(`/api/ai/jobs/${job}`);
+        if (state.done) {
+          job = null;
+          return state.result as T;
+        }
+      } catch (err) {
+        // Offline for a moment, or the server or a proxy had a hiccup: keep asking.
+        if (err instanceof OfflineError || (err instanceof ApiError && err.status >= 500)) continue;
+        job = null;
+        throw err;
+      }
     }
+    throw new ApiError(424, 'The AI took too long to answer. Try again.');
+  } finally {
+    running.delete(mine);
+    options.signal?.removeEventListener('abort', stop);
+    // Stopped while the server was still working: tell it to stop too.
+    if (job && mine.signal.aborted) void api(`/api/ai/jobs/${job}`, { method: 'DELETE' }).catch(() => {});
   }
-  throw new ApiError(424, 'The AI took too long to answer. Try again.');
 }
 
 export async function uploadFile(workspaceId: string, file: File): Promise<string> {

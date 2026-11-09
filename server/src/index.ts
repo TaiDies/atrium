@@ -1,4 +1,5 @@
 import { runRequest } from './scope.js';
+import { authenticate } from './auth.js';
 import { existsSync } from 'node:fs';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -68,7 +69,14 @@ app.addHook('onSend', async (_req, reply) => {
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: config.maxUploadBytes, files: 1 } });
 app.decorateRequest('user', null as any);
-app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: 50 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+// Raw bodies (Yjs updates, file contents) take each route's own limit, 2 MB unless the route says more.
+app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+// Routes that take big bodies sign the request in before reading it, so nobody can make the server
+// hold hundreds of megabytes without an account.
+app.addHook('preParsing', async (req, _reply, payload) => {
+  if ((req.routeOptions.bodyLimit ?? 0) > 2 * 1024 * 1024 && req.url.startsWith('/api/')) await authenticate(req);
+  return payload;
+});
 
 app.setErrorHandler(handleError);
 
@@ -149,6 +157,10 @@ startScheduler();
 startUpdateChecks();
 await app.listen({ port: config.port, host: config.host });
 const admin = config.admin.enabled ? await startAdminServer() : null;
+
+// One bad request or connection must never take the whole server down.
+process.on('unhandledRejection', (reason) => app.log.error({ err: reason }, 'Unhandled promise rejection'));
+process.on('uncaughtException', (err) => app.log.error({ err }, 'Uncaught exception'));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, async () => {

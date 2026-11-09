@@ -2,20 +2,22 @@ import { Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Spinner, toast, toastError } from '../components/ui';
 import { useAiAvailable } from '../editor/AiSelection';
-import { aiApi } from '../lib/api';
+import { aiApi, isStopped } from '../lib/api';
+import { useStoppable } from '../lib/useStoppable';
 import { useDb } from './context';
 import type { Field } from './model';
 
 // "AI autofill" properties: the AI writes each card's value from the property's prompt.
 
-async function fill(pageId: string, fieldId: string, rowIds: string[], overwrite: boolean) {
-  return aiApi<{ filled: number; remaining: number }>(`/api/pages/${pageId}/fields/${fieldId}/ai-fill`, { method: 'POST', body: { rowIds, overwrite } });
+async function fill(pageId: string, fieldId: string, rowIds: string[], overwrite: boolean, signal?: AbortSignal) {
+  return aiApi<{ filled: number; remaining: number }>(`/api/pages/${pageId}/fields/${fieldId}/ai-fill`, { method: 'POST', body: { rowIds, overwrite }, signal });
 }
 
 /** In an empty cell: fill just this card. */
 export function AiFillButton({ pageId, fieldId, rowId }: { pageId: string; fieldId: string; rowId: string }) {
   const ai = useAiAvailable();
   const [busy, setBusy] = useState(false);
+  const stoppable = useStoppable();
   if (!ai) return null;
   return (
     <button
@@ -23,9 +25,9 @@ export function AiFillButton({ pageId, fieldId, rowId }: { pageId: string; field
         e.stopPropagation();
         setBusy(true);
         try {
-          await fill(pageId, fieldId, [rowId], true);
+          await fill(pageId, fieldId, [rowId], true, stoppable.start());
         } catch (err) {
-          toastError(err);
+          if (!isStopped(err)) toastError(err);
         } finally {
           setBusy(false);
         }
@@ -44,6 +46,7 @@ export function AiFieldSettings({ field }: { field: Field }) {
   const ai = useAiAvailable();
   const [prompt, setPrompt] = useState(field.aiPrompt ?? '');
   const [busy, setBusy] = useState<'empty' | 'all' | null>(null);
+  const stoppable = useStoppable();
   useEffect(() => setPrompt(field.aiPrompt ?? ''), [field.aiPrompt]);
 
   const save = () => {
@@ -53,19 +56,21 @@ export function AiFieldSettings({ field }: { field: Field }) {
   const run = async (overwrite: boolean) => {
     save();
     setBusy(overwrite ? 'all' : 'empty');
+    const signal = stoppable.start();
     try {
       // Saved first, so the server reads the new prompt.
       await new Promise((r) => setTimeout(r, 400));
       let total = 0;
       for (let round = 0; round < 20; round++) {
-        const { filled, remaining } = await fill(pageId, field.id, [], overwrite && round === 0);
+        const { filled, remaining } = await fill(pageId, field.id, [], overwrite && round === 0, signal);
         total += filled;
         if (!remaining || !filled) break;
         if (overwrite) break;
       }
       toast(total ? `Filled ${total} card${total === 1 ? '' : 's'}` : 'Nothing to fill');
     } catch (err) {
-      toastError(err);
+      if (isStopped(err)) toast('Stopped');
+      else toastError(err);
     } finally {
       setBusy(null);
     }
@@ -99,6 +104,11 @@ export function AiFieldSettings({ field }: { field: Field }) {
           >
             {busy === 'all' && <Spinner className="size-3" />} Redo all
           </button>
+          {busy && (
+            <button onClick={() => stoppable.stop()} className="flex h-7 items-center rounded-md border border-line px-2 text-xs hover:bg-hover">
+              Stop
+            </button>
+          )}
         </div>
       ) : (
         <p className="text-faint">Set up an AI connection (AI → Settings) to fill it in.</p>

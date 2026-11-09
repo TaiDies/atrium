@@ -13,6 +13,7 @@ import { closeUserSessions } from './collab.js';
 import { config } from './config.js';
 import { one, query, tx } from './db.js';
 import { createAccount } from './routes/auth.js';
+import { endSessions } from './auth.js';
 import { getSettings, type Limits, setSetting } from './settings.js';
 import { LIMIT_KEYS, limitsFor, resolve, usageFor } from './limits.js';
 import { mailEnabled, sendMail, verifyMail } from './mail.js';
@@ -179,6 +180,12 @@ export async function startAdminServer() {
               text: 'ALLOW_PRIVATE_URLS is on: webhooks and AI service addresses may point at this server’s local network. That’s fine for a home or company server, but set ALLOW_PRIVATE_URLS=false on a shared or hosted server.',
             });
           }
+          if (config.historyDays) {
+            notices.push({
+              id: 'history-pruning',
+              text: `Page history older than ${config.historyDays} days is thinned out every day (the newest 10 versions of each page are always kept). Remove HISTORY_DAYS from the settings to keep all history.`,
+            });
+          }
           return { ...counts!, storage: Number(counts!.storage), appName: config.appName, notices };
         });
 
@@ -262,7 +269,12 @@ export async function startAdminServer() {
           if (body.name !== undefined) await query('update users set name = $2 where id = $1', [id, body.name]);
           if (body.email !== undefined) await query('update users set email = $2 where id = $1', [id, body.email]);
           if (body.verified !== undefined) await query(`update users set email_verified_at = ${body.verified ? 'coalesce(email_verified_at, now())' : 'null'} where id = $1`, [id]);
-          if (body.password !== undefined) await query('update users set password_hash = $2 where id = $1', [id, await bcrypt.hash(body.password, 10)]);
+          if (body.password !== undefined) {
+            await query('update users set password_hash = $2 where id = $1', [id, await bcrypt.hash(body.password, 10)]);
+            // A new password signs them out everywhere (and stops their API tokens), as when they change it themselves.
+            await endSessions(id);
+            closeUserSessions(id);
+          }
           if (body.disabled !== undefined) {
             await query(`update users set disabled_at = ${body.disabled ? 'coalesce(disabled_at, now())' : 'null'} where id = $1`, [id]);
             if (body.disabled) closeUserSessions(id);
@@ -403,7 +415,9 @@ export async function startAdminServer() {
         secured.put('/settings/ai', async (req) => {
           const body = parse(aiBody, req.body);
           const current = (await getSettings()).ai;
-          const keyEnc = body.key === undefined ? (current?.keyEnc ?? null) : body.key ? encryptKey(body.key) : null;
+          // The saved key is only kept for the same service at the same address.
+          const same = !!current && current.provider === body.provider && (current.baseUrl ?? '') === (body.baseUrl || '');
+          const keyEnc = body.key === undefined ? (same ? (current?.keyEnc ?? null) : null) : body.key ? encryptKey(body.key) : null;
           if (!keyEnc && body.provider !== 'openai') throw new HttpError(400, 'Enter the API key');
           await setSetting('ai', { provider: body.provider, model: body.model, baseUrl: body.baseUrl || null, keyEnc, allowOwn: body.allowOwn });
           return { ok: true };
@@ -417,7 +431,7 @@ export async function startAdminServer() {
         secured.post('/ai/models', async (req) => {
           const body = parse(aiBody.pick({ provider: true, baseUrl: true, key: true }), req.body);
           const saved = (await getSettings()).ai;
-          const key = body.key || (saved?.provider === body.provider ? decryptKey(saved.keyEnc) : null);
+          const key = body.key || (saved?.provider === body.provider && (saved.baseUrl ?? '') === (body.baseUrl || '') ? decryptKey(saved.keyEnc) : null);
           return { models: await listModels({ provider: body.provider, model: '', baseUrl: body.baseUrl || null, key }) };
         });
 

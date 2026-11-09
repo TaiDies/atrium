@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import * as Y from 'yjs';
 import { z } from 'zod';
-import { accessMap, atLeast, hiddenEvents, requireMember, requirePage } from '../access.js';
+import { accessMap, atLeast, hiddenEvents, requireMember, requirePage, requireUnlocked } from '../access.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, editDoc, eventBlock, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -54,6 +54,14 @@ async function eventOr404(id: string) {
   const row = await one<EventRow>(`select ${EVENT_COLUMNS} from events e where e.id = $1`, [id]);
   if (!row) throw new HttpError(404, 'Event not found');
   return row;
+}
+
+/** An event this person may see: in one of their workspaces and not on a page hidden from them. */
+async function visibleEvent(userId: string, id: string) {
+  const event = await eventOr404(id);
+  await requireMember(userId, event.workspaceId);
+  if ((await hiddenEvents(userId, event.workspaceId, [id])).has(id)) throw new HttpError(404, 'Event not found');
+  return event;
 }
 
 function checkSpan(start: string, end: string | null | undefined) {
@@ -214,8 +222,7 @@ export async function calendarRoutes(app: FastifyInstance) {
 
   app.get('/events/:id', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     const access = await accessMap(req.user.id, event.workspaceId);
     if ((await hiddenEvents(req.user.id, event.workspaceId, [id], access)).has(id)) throw new HttpError(404, 'Event not found');
     const locations = await locationsFor('event_refs', 'event_id', [id], access);
@@ -225,8 +232,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   // Everyone in the workspace can change events, like a shared calendar.
   app.patch('/events/:id', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     const body = parse(z.object(eventFields).partial(), req.body);
     checkSpan(body.startDate ?? event.startDate, body.endDate === undefined ? event.endDate : body.endDate);
     if (body.paths !== undefined) checkPaths(body.paths);
@@ -276,15 +282,13 @@ export async function calendarRoutes(app: FastifyInstance) {
   // Tasks with paths: what to choose from today (with each path's progress), and choosing.
   app.get('/events/:id/paths', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     return pathsView(req.user.id, id);
   });
 
   app.post('/events/:id/paths/choose', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     const { trail } = parse(z.object({ trail: z.array(z.string().max(64)).max(6).nullable() }), req.body);
     const view = await choosePath(req.user.id, id, trail);
     emit(event.workspaceId, 'event.updated', await eventOr404(id));
@@ -294,8 +298,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   // Taking back the last day a task with paths was ticked off for (it moved on to the next day).
   app.post('/events/:id/paths/undo', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     const view = await undoLastDay(req.user.id, id, req.user.id);
     emit(event.workspaceId, 'event.updated', await eventOr404(id));
     return view;
@@ -315,8 +318,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   // Attach the event to a page or card (moving it from wherever it is unless keepExisting), or unlink it.
   app.post('/events/:id/place', async (req) => {
     const { id } = parse(idParams, req.params);
-    const event = await eventOr404(id);
-    await requireMember(req.user.id, event.workspaceId);
+    const event = await visibleEvent(req.user.id, id);
     const body = parse(placeBody, req.body);
     const access = await accessMap(req.user.id, event.workspaceId);
     await placeBlock({
@@ -367,6 +369,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   app.patch('/pages/:id/rows/:rowId/cells', async (req) => {
     const { id, rowId } = parse(rowParams, req.params);
     await databasePage(req.user.id, id, 'edit');
+    await requireUnlocked(id);
     const { cells } = parse(z.object({ cells: z.record(z.string().max(64), z.unknown()) }), req.body);
     const ok = await editDoc(id, null, (doc) => {
       const row = doc.getArray<Y.Map<unknown>>('rows').toArray().find((r) => r instanceof Y.Map && r.get('id') === rowId);

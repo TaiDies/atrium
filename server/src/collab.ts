@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { Server as HttpServer } from 'node:http';
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
+import { trackSocket, type TrackedSocket } from './sockets.js';
 import { Database } from '@hocuspocus/extension-database';
 import { Hocuspocus } from '@hocuspocus/server';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
@@ -13,6 +15,7 @@ import { noticeEdit, trackConnection, untrackConnection } from './routes/social.
 
 interface CollabContext {
   user?: SessionUser;
+  socket?: TrackedSocket;
 }
 
 export const DATABASE_TYPES = ['grid', 'board', 'calendar', 'list', 'gallery', 'feed', 'timeline', 'chart', 'form'] as const;
@@ -91,6 +94,7 @@ export const hocuspocus = new Hocuspocus<CollabContext>({
         [boardMatch[1], context.user.id],
       );
       if (!board) throw new Error('Forbidden');
+      context.socket?.workspaces.add(board.workspace_id);
       if (board.role === 'guest') await guestAccess(context.user.id, board.workspace_id, 'board_refs', 'board_id', boardMatch[1], connectionConfig);
       return;
     }
@@ -102,6 +106,7 @@ export const hocuspocus = new Hocuspocus<CollabContext>({
         [fileMatch[1], context.user.id],
       );
       if (!file) throw new Error('Forbidden');
+      context.socket?.workspaces.add(file.workspace_id);
       if (file.role === 'guest') await guestAccess(context.user.id, file.workspace_id, 'file_refs', 'file_id', fileMatch[1], connectionConfig);
       return;
     }
@@ -114,6 +119,7 @@ export const hocuspocus = new Hocuspocus<CollabContext>({
       [parsed.pageId, context.user.id],
     );
     if (!page) throw new Error('Forbidden');
+    context.socket?.workspaces.add(page.workspace_id);
     const access = (await accessMap(context.user.id, page.workspace_id)).get(parsed.pageId) ?? 'none';
     if (access === 'none') throw new Error('Forbidden');
     // Viewers receive live changes but anything they send is ignored.
@@ -499,12 +505,8 @@ export function closePage(pageId: string) {
   hocuspocus.closeConnections(pageId);
 }
 
-/** Each person's open live connections, so they can be cut off (e.g. when the admin disables them). */
-const socketsByUser = new Map<string, Set<WebSocket>>();
-
-export function closeUserSessions(userId: string) {
-  for (const ws of socketsByUser.get(userId) ?? []) ws.close(4401, 'Signed out');
-}
+// Each person's open connections are kept in sockets.ts, so they can be cut off (signed out, switched off, removed).
+export { closeUserSessions } from './sockets.js';
 
 function toUint8(data: RawData): Uint8Array {
   if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
@@ -515,8 +517,22 @@ function toUint8(data: RawData): Uint8Array {
 export function attachCollab(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 
-  server.on('upgrade', async (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+  server.on('upgrade', (req, socket, head) => {
+    // Anything that goes wrong with one connection closes that connection, never the server.
+    upgrade(req, socket, head).catch((err) => {
+      console.error('A live-editing connection failed', err);
+      socket.destroy();
+    });
+  });
+
+  async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      socket.destroy(); // a request target that isn't a path, such as "//%"
+      return;
+    }
     if (url.pathname === '/live') return; // the live channel (live.ts) answers that one
     if (url.pathname !== '/collab') {
       socket.destroy();
@@ -543,20 +559,25 @@ export function attachCollab(server: HttpServer) {
         if (typeof value === 'string') headers.set(key, value);
         else if (Array.isArray(value)) headers.set(key, value.join(', '));
       }
-      const connection = hocuspocus.handleConnection(ws, new Request(`http://localhost${req.url}`, { headers }), { user });
-      const mine = socketsByUser.get(user.id) ?? new Set();
-      mine.add(ws);
-      socketsByUser.set(user.id, mine);
+      const { entry, untrack } = trackSocket(user.id, ws, 'collab');
+      // onAuthenticate notes each workspace whose documents this connection opens (see closeWorkspaceSockets).
+      const connection = hocuspocus.handleConnection(ws, new Request(`http://localhost${req.url}`, { headers }), { user, socket: entry });
       const ping = setInterval(() => ws.ping(), 15_000);
-      ws.on('message', (data) => connection.handleMessage(toUint8(data)));
+      ws.on('message', (data) => {
+        try {
+          connection.handleMessage(toUint8(data));
+        } catch (err) {
+          console.error('A live-editing message failed', err);
+          ws.terminate();
+        }
+      });
       ws.on('pong', () => connection.touch());
       ws.on('close', (code, reason) => {
         clearInterval(ping);
-        mine.delete(ws);
-        if (!mine.size) socketsByUser.delete(user.id);
+        untrack();
         connection.handleClose({ code, reason: reason.toString() });
       });
       ws.on('error', () => ws.terminate());
     });
-  });
+  }
 }

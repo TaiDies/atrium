@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { checkBaseUrl, type Connection, tookTooLong, UPSTREAM } from './ai.js';
-import { aiTimeout } from './aiJobs.js';
+import { aiSignal } from './aiJobs.js';
 import { config } from './config.js';
 import { FormData as UndiciFormData } from 'undici';
 import { outboundFetch } from './netGuard.js';
@@ -28,7 +28,7 @@ const LONG_TIMEOUT_MS = 10 * 60_000;
 
 /** Sends a request to the transcription service, turning a timeout into a clear message. */
 async function send(url: string, init: RequestInit) {
-  const signal = AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS));
+  const signal = aiSignal(LONG_TIMEOUT_MS);
   try {
     const res = await outboundFetch(url, { ...init, signal, redirect: 'error' }, { private: 'allow', what: 'Transcription service address' });
     const json = (await res.json().catch((err) => (signal.aborted ? Promise.reject(err) : null))) as Record<string, any> | null;

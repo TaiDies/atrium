@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import { isOnline, sendOrQueue } from '../lib/offline';
 import { confirmWithChecks, toast, toastError } from '../components/ui';
 import { api, type PageSummary } from '../lib/api';
@@ -76,7 +77,7 @@ export async function duplicatePage(workspaceId: string, pageId: string) {
 
 export async function copyPageLink(workspaceId: string, pageId: string) {
   try {
-    await navigator.clipboard.writeText(`${location.origin}/w/${workspaceId}/p/${pageId}`);
+    await navigator.clipboard.writeText(`${publicOrigin()}/w/${workspaceId}/p/${pageId}`);
     toast('Link copied');
   } catch {
     toast('Could not copy the link', 'error');

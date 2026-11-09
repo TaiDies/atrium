@@ -19,7 +19,8 @@ import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Spinner, toast, toastError } from '../components/ui';
-import { aiApi, api } from '../lib/api';
+import { aiApi, api, isStopped } from '../lib/api';
+import { useStoppable } from '../lib/useStoppable';
 import { queryClient } from '../lib/queries';
 import { getDirectory } from '../lib/directory';
 import { selectionHasBlocks } from './blockSelection';
@@ -318,6 +319,7 @@ function describeChange(before: TaskInfo | undefined, change: Record<string, unk
 function AiDialog({ editor, workspaceId, captured, onClose }: { editor: any; workspaceId: string; captured: Captured; onClose: () => void }) {
   const [instruction, setInstruction] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const stoppable = useStoppable();
   const [result, setResult] = useState<string | null>(null);
   const [changes, setChanges] = useState<Record<string, unknown>[]>([]);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
@@ -326,6 +328,7 @@ function AiDialog({ editor, workspaceId, captured, onClose }: { editor: any; wor
   const run = async (what: string) => {
     if (!what.trim() || busy) return;
     setBusy(what);
+    const signal = stoppable.start();
     try {
       let context = '';
       try {
@@ -348,11 +351,12 @@ function AiDialog({ editor, workspaceId, captured, onClose }: { editor: any; wor
           fileIds: captured.files.map((f) => f.id),
           today: todayIso(),
         },
+        signal,
       });
       setResult(answer.text);
       setChanges(answer.events ?? []);
     } catch (err) {
-      toastError(err);
+      if (!isStopped(err)) toastError(err);
     } finally {
       setBusy(null);
     }
@@ -467,9 +471,16 @@ function AiDialog({ editor, workspaceId, captured, onClose }: { editor: any; wor
                   </button>
                 ))}
               </div>
-              {busy && !quick.some((q) => q.instruction === busy) && (
+              {busy && (
                 <p className="mt-3 flex items-center gap-2 text-sm text-muted">
-                  <Spinner className="size-4" /> Working on it…
+                  {!quick.some((q) => q.instruction === busy) && (
+                    <>
+                      <Spinner className="size-4" /> Working on it…
+                    </>
+                  )}
+                  <button type="button" onClick={() => stoppable.stop()} className="ml-auto rounded-md border border-line px-2 py-0.5 text-xs hover:bg-hover">
+                    Stop
+                  </button>
                 </p>
               )}
             </>

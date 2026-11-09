@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import clsx from 'clsx';
 import { ArrowDown, ArrowUp, Copy, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -9,7 +10,7 @@ import { FIELD_TYPES, FORM_FIELD_TYPES, type FieldType, type FormSettings, type 
 const DEFAULT_FORM: FormSettings = { published: false, title: 'Form', description: '', submitText: 'Submit', items: [] };
 
 export function formUrl(pageId: string, viewId: string) {
-  return `${location.origin}/form/${pageId}/${viewId}`;
+  return `${publicOrigin()}/form/${pageId}/${viewId}`;
 }
 
 /** Build a form from the database's properties; every submission becomes a new row. */

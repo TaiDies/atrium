@@ -11,17 +11,22 @@ import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs
 import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
 import { historyNotice } from '../src/historyNotice.ts';
 import { shouldRenewTicket } from '../../web/src/lib/ticketRenewal.ts';
-import { fallbackMessage, healthOk, isUnreachable } from '../../web/src/lib/reachability.ts';
+import { fallbackMessage, healthOk, isNetworkFailure, isUnreachable, outboxVerdict } from '../../web/src/lib/reachability.ts';
 import { asyncCapable, jobState, aiTimeout, HELD_TIMEOUT_MS } from '../src/aiJobs.ts';
 import { HttpError } from '../src/util.ts';
 import { fetch as undiciFetch } from 'undici';
-import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
+import { checkOutboundUrl, guardedAgent, isMetadata, isPrivate } from '../src/netGuard.ts';
+import { deliveryError } from '../src/webhooks.ts';
+import { linkedTitles, writeMarkdown } from '../src/markdownBlocks.ts';
+import { pageMeta } from '../src/htmlMeta.ts';
+import * as Y from 'yjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWriteStream } from 'node:fs';
 import { Zip, ZipDeflate, zipSync } from 'fflate';
-import { limiter, loginDelayMs } from '../src/rateLimit.ts';
+import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
+import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
@@ -338,5 +343,126 @@ describe('background AI requests', () => {
   });
   it('keeps the held timeout under the 100 seconds proxies allow', () => {
     assert.ok(HELD_TIMEOUT_MS < 100_000);
+  });
+});
+
+describe('outbound addresses in every form', () => {
+  const blocked = [
+    'http://127.0.0.1/', 'http://2130706433/', 'http://0x7f.1/', 'http://017700000001/', 'http://0177.0.0.1/', 'http://127.1/',
+    'http://[::1]/', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:7f00:1]/', 'http://[::127.0.0.1]/', 'http://[::7f00:1]/',
+    'http://[64:ff9b::7f00:1]/', 'http://[2002:7f00:1::]/', 'http://[fec0::1]/', 'http://[fc00::1]/', 'http://[fd12::1]/',
+    'http://[fe80::1]/', 'http://[::]/', 'http://0.0.0.0/', 'http://10.1.2.3/', 'http://192.168.0.1/', 'http://172.20.0.1/', 'http://100.64.0.1/',
+    'http://[::ffff:10.0.0.1]/', 'http://[::ffff:192.168.1.1]/',
+  ];
+  it('refuses private and loopback addresses written any way', async () => {
+    for (const u of blocked) {
+      await assert.rejects(checkOutboundUrl(u, { private: 'block', what: 'Test' }), (e: HttpError) => e.status === 400, u);
+    }
+  });
+  it('refuses cloud metadata even when private addresses are allowed', async () => {
+    for (const u of ['http://169.254.169.254/', 'http://[::ffff:169.254.169.254]/', 'http://[::ffff:a9fe:a9fe]/', 'http://[fd00:ec2::254]/', 'http://2852039166/']) {
+      await assert.rejects(checkOutboundUrl(u, { private: 'allow', what: 'Test' }), (e: HttpError) => e.status === 400, u);
+    }
+  });
+  it('classifies addresses directly', () => {
+    assert.equal(isPrivate('::ffff:7f00:1'), true);
+    assert.equal(isPrivate('2002:0a00:0001::'), true);
+    assert.equal(isPrivate('8.8.8.8'), false);
+    assert.equal(isPrivate('2606:4700:4700::1111'), false);
+    assert.equal(isMetadata('::ffff:a9fe:a9fe'), true);
+    assert.equal(isMetadata('8.8.8.8'), false);
+  });
+  it('the guarded connection refuses IP literals that skip the lookup', async () => {
+    const server = createServer((_q, r) => r.end('ok'));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      for (const host of ['127.0.0.1', '[::ffff:127.0.0.1]', '[::ffff:7f00:1]']) {
+        await assert.rejects(
+          undiciFetch(`http://${host}:${port}/`, { dispatcher: guardedAgent(false) }),
+          (e: { cause?: { code?: string } }) => e.cause?.code === 'EBLOCKEDADDRESS',
+          host,
+        );
+      }
+      const ok = await undiciFetch(`http://127.0.0.1:${port}/`, { dispatcher: guardedAgent(true) });
+      assert.equal(await ok.text(), 'ok', 'allowed when private addresses are allowed');
+    } finally {
+      server.close();
+    }
+  });
+  it('webhook errors never echo what an internal host said', () => {
+    assert.equal(deliveryError(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 10.0.0.5:6379 secret banner' } })), 'The address refused the connection');
+    assert.equal(deliveryError(new Error('internal stack trace')), 'Could not connect to the address');
+  });
+});
+
+describe('odd input stays fast', () => {
+  const fast = (label: string, fn: () => void) => {
+    const t0 = performance.now();
+    fn();
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `${label} took ${Math.round(ms)} ms`);
+  };
+  it('Markdown with a million "[" and no "]"', () => {
+    const md = '['.repeat(1_000_000);
+    fast('linkedTitles', () => linkedTitles(md));
+    fast('linkedTitles with one "]]" at the end', () => linkedTitles(`${md}]]`));
+    fast('writing it into a page', () => writeMarkdown(new Y.Doc(), md, true));
+    fast('a long line of "[a](" pieces', () => writeMarkdown(new Y.Doc(), '[a]('.repeat(250_000), true));
+    fast('many "**" without a close', () => writeMarkdown(new Y.Doc(), `${'**a'.repeat(6000)}\n`.repeat(20), true));
+  });
+  it('still reads links and formatting', () => {
+    assert.deepEqual(linkedTitles('See [[Plan]] and [[Notes|my notes]], not `[[code]]`'), ['Plan', 'Notes']);
+  });
+  it('link previews of hostile HTML', () => {
+    const page = '<meta property="og:title"'.repeat(40_000) + '<title' + ' x'.repeat(200_000);
+    fast('many unfinished meta tags', () => pageMeta(page));
+    fast('a million "<"', () => pageMeta('<'.repeat(1_000_000)));
+    fast('one enormous tag', () => pageMeta(`<meta ${'a="b" '.repeat(150_000)}>`));
+  });
+  it('still reads a normal page', () => {
+    const m = pageMeta(`<html><head><title>Plain &amp; simple</title><meta property="og:description" content="About it"><meta name='og:image' content='/i.png'><link rel="shortcut icon" href="/f.ico"><meta property="og:site_name" content="Site"></head><body><meta property="og:title" content="late"></body>`);
+    assert.deepEqual(m, { title: 'Plain & simple', description: 'About it', image: '/i.png', icon: '/f.ico', site: 'Site' });
+  });
+});
+
+describe('settings and limits from 1.11.3', () => {
+  it('trusts no proxy unless TRUST_PROXY says so', () => {
+    assert.equal(trustProxySetting(undefined), false);
+    assert.equal(trustProxySetting(''), false);
+    assert.equal(trustProxySetting('loopback'), 'loopback');
+    assert.equal(trustProxySetting('true'), true);
+  });
+  it('keeps all page history unless HISTORY_DAYS is a whole number', () => {
+    assert.equal(historyDaysSetting(undefined), 0);
+    assert.equal(historyDaysSetting('0'), 0);
+    assert.equal(historyDaysSetting(' 90 '), 90);
+    for (const bad of ['1.5', '-3', 'ninety', '90d']) assert.throws(() => historyDaysSetting(bad), /whole number/, bad);
+  });
+  it('counts IPv6 addresses per /64', () => {
+    assert.equal(limitKey('2001:db8:1:2:aaaa::1'), limitKey('2001:db8:1:2:bbbb:cccc:dddd:eeee'));
+    assert.notEqual(limitKey('2001:db8:1:2::1'), limitKey('2001:db8:1:3::1'));
+    assert.equal(limitKey('::ffff:203.0.113.7'), '203.0.113.7');
+    assert.equal(limitKey('203.0.113.7'), '203.0.113.7');
+    assert.equal(limitKey('someone@example.com'), 'someone@example.com');
+    const l = limiter(2, 60_000);
+    l.hit('2001:db8:9:9::1');
+    l.hit('2001:db8:9:9::2');
+    assert.equal(l.blocked('2001:db8:9:9:ffff::3'), true, 'another address in the same /64 is blocked too');
+  });
+});
+
+describe('offline changes and network errors', () => {
+  it('keeps queued changes when signed out or when the server is busy', () => {
+    assert.equal(outboxVerdict(200), 'done');
+    assert.equal(outboxVerdict(204), 'done');
+    assert.equal(outboxVerdict(401), 'wait-for-sign-in');
+    for (const s of [408, 425, 429, 500, 502, 503, 504, 524]) assert.equal(outboxVerdict(s), 'retry-later', String(s));
+    for (const s of [400, 403, 404, 409, 423]) assert.equal(outboxVerdict(s), 'refused', String(s));
+  });
+  it('only a network failure counts as offline', () => {
+    assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
+    assert.equal(isNetworkFailure(new DOMException('Stopped', 'AbortError')), false);
+    assert.equal(isNetworkFailure(new Error('The app couldn’t send this request')), false);
   });
 });

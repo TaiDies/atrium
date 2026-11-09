@@ -11,6 +11,8 @@ type Listener = (msg: LiveMessage) => void;
 let socket: WebSocket | null = null;
 let retry = 0;
 let started = false;
+/** Signed out: no reconnecting until startLive is called again. */
+let stopped = false;
 const listeners = new Set<Listener>();
 const queue: string[] = [];
 const openWaiters = new Set<() => void>();
@@ -38,10 +40,11 @@ function connect() {
   };
   socket.onclose = () => {
     socket = null;
+    if (stopped) return;
     // Back again soon (slower each time, up to 15 s). Closed before it ever opened: in the apps that's
     // usually an expired ticket, so a fresh one is fetched first and the next try uses it.
     const delay = Math.min(15_000, 500 * 2 ** retry++);
-    const again = () => setTimeout(connect, delay);
+    const again = () => setTimeout(() => !stopped && !socket && connect(), delay);
     if (opened) again();
     else void renewTicket('refused').finally(again);
   };
@@ -81,7 +84,18 @@ function refresh(msg: LiveMessage) {
 export function startLive() {
   if (started) return;
   started = true;
+  stopped = false;
   connect();
+}
+
+/** Closes the live channel and stops it reconnecting (signing out, or before another account signs in). */
+export function stopLive() {
+  stopped = true;
+  started = false;
+  queue.length = 0;
+  const s = socket;
+  socket = null;
+  s?.close();
 }
 
 export function sendLive(msg: LiveMessage) {

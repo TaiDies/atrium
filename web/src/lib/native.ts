@@ -39,11 +39,17 @@ if (tauri && typeof window !== 'undefined') {
     const headers: Record<string, string> = { 'x-method': req.method, 'x-path': url.pathname + url.search };
     const type = req.headers.get('content-type');
     if (type) headers['x-content-type'] = type;
+    for (const name of ['prefer', 'accept']) {
+      const value = req.headers.get(name);
+      if (value) headers[name] = value;
+    }
+    // An unreachable server comes back as a reply (with x-offline); a failure here is the app itself
+    // refusing the request, which is an error to show, not a reason to go offline.
     let reply: unknown;
     try {
       reply = await tauri.invoke('api', body, { headers });
-    } catch {
-      throw new TypeError('Failed to fetch');
+    } catch (err) {
+      throw new Error(`The app couldn’t send this request${err ? `: ${String(err)}` : ''}`);
     }
     // A 4-byte length, the JSON {status, headers}, then the body. Android delivers it as a number array.
     const raw = reply instanceof ArrayBuffer ? new Uint8Array(reply) : new Uint8Array(reply as number[]);
@@ -57,6 +63,11 @@ if (tauri && typeof window !== 'undefined') {
 /** Whether this is the installed app (it answers /__app/info); false on the web. */
 export const isNativeApp = () => info !== null;
 export const nativeInfo = () => info;
+/**
+ * The address other people use to reach this server, for links that are copied or shared. In the apps
+ * the page itself lives at http://app.localhost, so links use the server the app is connected to.
+ */
+export const publicOrigin = () => (info?.server ?? location.origin).replace(/\/+$/, '');
 
 /** Asks the app for its server and session. Call on start-up and after signing in or out. */
 export async function loadNative(): Promise<NativeInfo | null> {
@@ -129,7 +140,7 @@ export function collabUrl(path = '/collab'): string {
 }
 
 /** Picks (or changes) the server the app talks to. The app checks it first and reloads. */
-export async function chooseServer(server: string): Promise<{ ok: boolean; error?: string; name?: string }> {
+export async function chooseServer(server: string): Promise<{ ok: boolean; error?: string; name?: string; warning?: string | null }> {
   const res = await fetch('/__app/server', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server }) });
   return res.json();
 }

@@ -53,7 +53,7 @@ jobs:
         working-directory: server
         run: |
           mkdir -p "$RUNNER_TEMP/data"
-          AI_TIMEOUT_MS=3000 MAIL_TRANSPORT=log PORT=3100 ADMIN_PORT=3101 WEB_DIR=../web/dist DATA_DIR="$RUNNER_TEMP/data" \
+          TRUST_PROXY=loopback AI_TIMEOUT_MS=3000 MAIL_TRANSPORT=log PORT=3100 ADMIN_PORT=3101 WEB_DIR=../web/dist DATA_DIR="$RUNNER_TEMP/data" \
             nohup npx tsx src/index.ts > "$RUNNER_TEMP/server.log" 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:3100/api/health && exit 0

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { accessMap, requireMember, visibleFiles } from '../access.js';
+import { accessMap, hiddenEvents, requireMember, visibleFiles } from '../access.js';
 import { aiAccess, type ChatTurn, complete, DEFAULT_MODELS, encryptKey, listModels, PROVIDERS } from '../ai.js';
-import { requireUser } from '../auth.js';
+import { requireSession, requireUser } from '../auth.js';
 import { useAi } from '../limits.js';
-import { asyncCapable, jobState, runInBackground } from '../aiJobs.js';
+import { asyncCapable, cancelJob, jobState, runInBackground } from '../aiJobs.js';
 import { transcribeFile } from '../transcribe.js';
 import { readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -292,12 +292,14 @@ export async function aiRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put('/ai/connection', async (req) => {
+  app.put('/ai/connection', { preHandler: requireSession }, async (req) => {
     const body = parse(settingsBody, req.body);
     const a = await aiAccess(req.user.id);
     if (!a.canUseOwn) throw new HttpError(403, 'The administrator provides the AI connection on this server');
-    const existing = await one<{ key_enc: string | null }>('select key_enc from ai_connections where user_id = $1', [req.user.id]);
-    const keyEnc = body.key === undefined ? (existing?.key_enc ?? null) : body.key ? encryptKey(body.key) : null;
+    const existing = await one<{ key_enc: string | null; provider: string; base_url: string | null }>('select key_enc, provider, base_url from ai_connections where user_id = $1', [req.user.id]);
+    // The saved key is only kept for the same service at the same address: it's never sent anywhere else.
+    const sameService = !!existing && existing.provider === body.provider && (existing.base_url ?? '') === (body.baseUrl || '');
+    const keyEnc = body.key === undefined ? (sameService ? (existing?.key_enc ?? null) : null) : body.key ? encryptKey(body.key) : null;
     if (!keyEnc && body.provider !== 'openai') throw new HttpError(400, 'Enter your API key');
     await query(
       `insert into ai_connections (user_id, provider, model, base_url, key_enc, use_own, updated_at) values ($1, $2, $3, $4, $5, $6, now())
@@ -308,18 +310,19 @@ export async function aiRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.delete('/ai/connection', async (req) => {
+  app.delete('/ai/connection', { preHandler: requireSession }, async (req) => {
     await query('delete from ai_connections where user_id = $1', [req.user.id]);
     return { ok: true };
   });
 
   /** Lists the models a key can use (with the saved key when none is typed). */
-  app.post('/ai/models', async (req) => {
+  app.post('/ai/models', { preHandler: requireSession }, async (req) => {
     const body = parse(settingsBody.pick({ provider: true, baseUrl: true, key: true }), req.body);
     let key = body.key || null;
     if (!key) {
       const a = await aiAccess(req.user.id);
-      if (a.active?.source === 'own' && a.own?.provider === body.provider) key = a.active.key;
+      // The saved key only for the very same service and address it was saved for.
+      if (a.active?.source === 'own' && a.own?.provider === body.provider && (a.own.baseUrl ?? '') === (body.baseUrl || '')) key = a.active.key;
     }
     return { models: await listModels({ provider: body.provider, model: '', baseUrl: body.baseUrl || null, key }) };
   });
@@ -342,6 +345,10 @@ export async function aiRoutes(app: FastifyInstance) {
       [id, userId],
     );
     if (!chat) throw new HttpError(404, 'Conversation not found');
+    // Also holds an API token limited to one workspace to that workspace's conversations.
+    await requireMember(userId, chat.workspace_id, undefined, true).catch(() => {
+      throw new HttpError(404, 'Conversation not found');
+    });
     return chat;
   }
 
@@ -361,6 +368,7 @@ export async function aiRoutes(app: FastifyInstance) {
 
   app.delete('/ai/chats/:id', async (req) => {
     const { id } = parse(idParams, req.params);
+    await chatOr404(req.user.id, id);
     await query('delete from ai_chats where id = $1 and user_id = $2', [id, req.user.id]);
     return { ok: true };
   });
@@ -437,11 +445,14 @@ export async function aiRoutes(app: FastifyInstance) {
 
       if (body.useCalendar) {
         const until = addDays(body.today, 180);
-        const events = await query<{ title: string; start: string; end: string | null; time: string | null; status: string | null }>(
-          `select title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status
+        const all = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string | null }>(
+          `select id, title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status
              from events where workspace_id = $1 and start_date between $2 and $3 order by start_date, start_time nulls first limit 500`,
           [id, body.today, until],
         );
+        // Not events on pages hidden from this person.
+        const hidden = await hiddenEvents(req.user.id, id, all.map((e) => e.id));
+        const events = all.filter((e) => !hidden.has(e.id));
         const lines = events.map((e) => `${e.start}${e.end && e.end !== e.start ? `–${e.end}` : ''}${e.time ? ` ${e.time}` : ''}: ${e.title || 'Untitled'}${e.status ? ` (task, ${e.status})` : ''}`);
         add('Calendar for the next 6 months', lines.length ? lines.join('\n') : 'Nothing planned yet.');
       }
@@ -616,6 +627,8 @@ Keep the language of the original text unless asked to translate.`;
       [fileId, id],
     );
     if (!file) throw new HttpError(404, 'File not found');
+    // Only a recording this person may see (not one on a page hidden from them).
+    if (!(await visibleFiles(req.user.id, id, [fileId])).has(fileId)) throw new HttpError(404, 'File not found');
     if (!/^(audio|video)\//.test(file.mime_type) && !/\.(mp3|m4a|wav|ogg|oga|webm|mp4|mov|flac|aac)$/i.test(file.filename)) {
       throw new HttpError(400, 'Only audio and video recordings can be transcribed');
     }
@@ -629,7 +642,14 @@ Keep the language of the original text unless asked to translate.`;
   /** How a background AI request is getting on (see aiJobs.ts). */
   app.get('/ai/jobs/:id', async (req) => {
     const { id } = parse(z.object({ id: z.uuid() }), req.params);
-    return jobState(id, req.user.id);
+    return jobState(id, req.user.id, req.tokenScope ?? null);
+  });
+
+  /** Stops a background AI request (the Stop button). */
+  app.delete('/ai/jobs/:id', async (req) => {
+    const { id } = parse(z.object({ id: z.uuid() }), req.params);
+    cancelJob(id, req.user.id, req.tokenScope ?? null);
+    return { ok: true };
   });
 
   app.post('/ai/chats/:id/applied', async (req) => {

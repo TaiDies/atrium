@@ -546,8 +546,11 @@ async function importFrom(userId: string, workspaceId: string, zipPath: string, 
         }
       }
     });
-    for (const d of docs) await updateDocIndex(d.pageId, d.rowId, d.doc, { log: false });
-    return { pages: manifest.pages.length, files: written.length, events: manifest.events.length, whiteboards: manifest.whiteboards.length, top };
+    // Saved: from here the files belong to the imported pages, whatever happens to the search index.
+    const fileCount = written.length;
+    written.length = 0;
+    for (const d of docs) await updateDocIndex(d.pageId, d.rowId, d.doc, { log: false }).catch((err) => console.error('Indexing an imported page failed', err));
+    return { pages: manifest.pages.length, files: fileCount, events: manifest.events.length, whiteboards: manifest.whiteboards.length, top };
   } catch (err) {
     for (const f of written) await unlink(path.join(config.uploadDir, f)).catch(() => {});
     throw err;

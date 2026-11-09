@@ -1,4 +1,5 @@
 import { ApiTab } from './ApiSettings';
+import { signOut as signOutHere } from '../lib/signOut';
 import { NotificationsTab } from './NotificationSettings';
 import { language, LANGUAGES, setLanguage } from '../i18n';
 import { useQuery } from '@tanstack/react-query';
@@ -111,11 +112,7 @@ function AccountTab() {
   };
 
   const signOut = async (everywhere = false) => {
-    await api('/api/auth/logout', { method: 'POST', body: everywhere ? { everywhere: true } : undefined }).catch(() => {});
-    await loadNative();
-    queryClient.clear();
-    queryClient.setQueryData(keys.me, null);
-    navigate('/login', { replace: true });
+    await signOutHere(everywhere, () => navigate('/login', { replace: true }));
   };
 
   return (
@@ -534,6 +531,7 @@ function MembersTab() {
   const isOwner = workspace.role === 'owner';
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('member');
+  const mail = useQuery({ queryKey: ['auth-options'], queryFn: () => fetch('/api/auth/options').then((r) => r.json() as Promise<{ emailCodes: boolean }>), staleTime: 60_000 });
   const [inviting, setInviting] = useState(false);
 
   const refresh = () => {
@@ -605,6 +603,11 @@ function MembersTab() {
             Invite
           </Button>
         </form>
+      )}
+      {isOwner && mail.data && !mail.data.emailCodes && (
+        <p className="-mt-4 mb-6 text-xs text-muted">
+          This server can’t send email, so an invitation can be claimed by whoever signs up first with that address. People invited as owners need the administrator to confirm their address before they can join.
+        </p>
       )}
 
       <div className="text-xs font-medium text-faint">

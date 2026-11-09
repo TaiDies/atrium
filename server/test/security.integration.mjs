@@ -351,6 +351,256 @@ let member;
   check("AI: someone else can't read a background request", other.status === 404, `got ${other.status}`);
 }
 
+// --- crashes from outside: bad request targets and bad live messages must not stop the server
+{
+  const net = await import('node:net');
+  const u = new URL(B);
+  await new Promise((resolve) => {
+    const sock = net.connect(Number(u.port || 80), u.hostname, () => {
+      sock.write('GET //% HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
+    });
+    sock.on('data', () => {});
+    sock.on('error', resolve);
+    sock.on('close', resolve);
+    setTimeout(() => (sock.destroy(), resolve()), 2000);
+  });
+  await sleep(300);
+  check('an upgrade to "//%" does not stop the server', (await fetch(`${B}/api/health`).catch(() => ({ ok: false }))).ok);
+  const own = new URL(B).origin;
+  const sent = await new Promise((resolve) => {
+    const ws = new WebSocket(`${WS_BASE}/live`, { headers: { cookie: owner.cookie, origin: own } });
+    ws.onopen = () => {
+      for (const m of ['null', '1', '[]', 'x', '"str"', '{"t":"join","code":null}']) ws.send(m);
+      setTimeout(() => (ws.close(), resolve(true)), 500);
+    };
+    ws.onerror = () => resolve(false);
+    setTimeout(() => resolve(false), 4000);
+  });
+  await sleep(300);
+  check('odd /live messages ("null", "1", "[]", "x") do not stop the server', sent && (await fetch(`${B}/api/health`).catch(() => ({ ok: false }))).ok);
+}
+
+// --- API tokens: session-only routes, workspace limits that hold for every method, locked pages
+{
+  const today = new Date().toISOString().slice(0, 10);
+  const wsA = (await req('/api/workspaces', { cookie: owner.cookie })).data.workspaces.find((w) => w.role === 'owner').id;
+  const wsB = (await req('/api/workspaces', { method: 'POST', cookie: owner.cookie, body: { name: 'Second' } })).data.workspace?.id;
+  check('a second workspace can be made', !!wsB, String(wsB));
+  const mk = async (ws, title) => (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', cookie: owner.cookie, body: { title, type: 'document' } })).data?.page?.id;
+  const pageB = await mk(wsB, 'B page');
+  const pageA = await mk(wsA, 'A page');
+  const form = new FormData();
+  form.append('file', new Blob(['hello'], { type: 'text/plain' }), 'b.txt');
+  const up = await fetch(`${B}/api/workspaces/${wsB}/files`, { method: 'POST', headers: { cookie: owner.cookie, 'x-forwarded-for': freshIp() }, body: form }).then((r) => r.json());
+  const fileB = up.url?.split('/').pop()?.split('?')[0];
+  const eventB = (await req(`/api/workspaces/${wsB}/events`, { method: 'POST', cookie: owner.cookie, body: { startDate: today, title: 'B event' } })).data?.event?.id;
+  const hookB = (await req(`/api/workspaces/${wsB}/webhooks`, { method: 'POST', cookie: owner.cookie, body: { url: 'https://example.com/hook', events: ['page.created'] } })).data?.id;
+  await req('/api/ai/connection', { method: 'PUT', cookie: owner.cookie, body: { provider: 'openai', model: 'stub', baseUrl: 'http://127.0.0.1:9/v1', useOwn: true } });
+  const chatB = (await req(`/api/workspaces/${wsB}/ai/ask`, { method: 'POST', cookie: owner.cookie, body: { message: 'hi', today } })).data?.chat?.id;
+  check('workspace B has a page, file, event, webhook and chat to aim at', !!(pageB && fileB && eventB && hookB && chatB), JSON.stringify({ pageB, fileB, eventB, hookB, chatB }));
+
+  const made = await req('/api/auth/tokens', { method: 'POST', cookie: owner.cookie, body: { name: 'scoped', workspaceId: wsA } });
+  const tok = made.data?.token;
+  check('a token limited to workspace A can be made', typeof tok === 'string', `${made.status} ${JSON.stringify(made.data)}`);
+  const T = async (path, method = 'GET', body, extra = {}) => {
+    const r = await fetch(B + path, { method, headers: { authorization: `Bearer ${tok}`, 'x-forwarded-for': freshIp(), ...(body ? { 'content-type': 'application/json' } : {}), ...extra }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json().catch(() => null) };
+  };
+  check('the token works in its own workspace (with a JSON body)', (await T(`/api/pages/${pageA}/markdown`, 'POST', { markdown: 'hello' })).status === 200);
+  const lowercase = await fetch(`${B}/api/pages/${pageA}`, { headers: { authorization: `bearer ${tok}`, 'x-forwarded-for': freshIp() } });
+  check('"bearer" in lower case works too', lowercase.status === 200, `got ${lowercase.status}`);
+  const outside = [
+    [`/api/pages/${pageB}`, 'GET'],
+    [`/api/pages/${pageB}`, 'PATCH', { title: 'x' }],
+    [`/api/pages/${pageB}/markdown`, 'GET'],
+    [`/api/pages/${pageB}/markdown`, 'POST', { markdown: 'x' }],
+    [`/api/pages/${pageB}`, 'DELETE'],
+    [`/api/files/${fileB}`, 'GET'],
+    [`/api/workspaces/${wsB}/files`, 'GET'],
+    [`/api/events/${eventB}`, 'PATCH', { title: 'x' }],
+    [`/api/events/${eventB}`, 'DELETE'],
+    [`/api/workspaces/${wsB}/events`, 'POST', { startDate: today, title: 'x' }],
+    [`/api/workspaces/${wsB}/webhooks`, 'GET'],
+    [`/api/webhooks/${hookB}`, 'PATCH', { active: false }],
+    [`/api/webhooks/${hookB}`, 'DELETE'],
+    [`/api/ai/chats/${chatB}`, 'GET'],
+    [`/api/ai/chats/${chatB}`, 'DELETE'],
+    [`/api/ai/chats/${chatB}/applied`, 'POST', { index: 0, pages: [], tasks: 0 }],
+    [`/api/workspaces/${wsB}/pages`, 'POST', { title: 'x', type: 'document' }],
+  ];
+  const leaks = [];
+  for (const [path, method, body] of outside) {
+    const r = await T(path, method, body);
+    if (r.status !== 404) leaks.push(`${method} ${path.replace(/[0-9a-f-]{36}/g, ':id')} → ${r.status}`);
+  }
+  check('a token limited to workspace A gets 404 for everything in workspace B', leaks.length === 0, leaks.join('; '));
+  const mcp = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_notes', arguments: { query: 'B page' } } };
+  const viaQuery = await T(`/api/mcp?workspace=${wsB}`, 'POST', mcp);
+  const viaHeader = await T('/api/mcp', 'POST', mcp, { 'x-workspace': wsB });
+  check('MCP with ?workspace=B or X-Workspace: B stays in workspace A', !JSON.stringify(viaQuery.data).includes('B page') && !JSON.stringify(viaHeader.data).includes('B page'), JSON.stringify(viaQuery.data).slice(0, 200));
+  check('the page in B was not changed or deleted', (await req(`/api/pages/${pageB}`, { cookie: owner.cookie })).data?.page?.title === 'B page');
+
+  const sessionOnly = [
+    ['/api/auth/password', 'POST', { current: 'x', password: 'y' }],
+    ['/api/auth/me', 'PATCH', { name: 'x' }],
+    ['/api/auth/me/prefs', 'PUT', {}],
+    ['/api/auth/me/digest', 'PUT', { digest: false }],
+    ['/api/auth/logout', 'POST', {}],
+    ['/api/auth/live-ticket', 'GET'],
+    ['/api/ai/connection', 'PUT', { provider: 'openai', model: 'x' }],
+    ['/api/ai/connection', 'DELETE'],
+    ['/api/ai/models', 'POST', { provider: 'openai' }],
+    ['/api/notifications?now=2026-01-01T10:00', 'GET'],
+    ['/api/invitations', 'GET'],
+    [`/api/workspaces/${wsA}`, 'DELETE'],
+    [`/api/workspaces/${wsA}/members/${owner.id}`, 'PATCH', { role: 'member' }],
+    [`/api/workspaces/${wsA}/members/${owner.id}`, 'DELETE'],
+  ];
+  const open = [];
+  for (const [path, method, body] of sessionOnly) {
+    const r = await T(path, method, body);
+    if (r.status !== 403) open.push(`${method} ${path.replace(/[0-9a-f-]{36}/g, ':id')} → ${r.status}`);
+  }
+  check('session-only routes refuse API tokens with 403', open.length === 0, open.join('; '));
+
+  // A proxy's Basic login is not a token guess: many of them don't block the address.
+  const ip = freshIp();
+  let blocked = false;
+  for (let i = 0; i < 55; i++) {
+    const b = await fetch(`${B}/api/auth/me`, { headers: { authorization: 'Basic dXNlcjpwYXNz', cookie: owner.cookie, 'x-forwarded-for': ip } });
+    if (b.status === 429) blocked = true;
+  }
+  check('Basic auth headers from a proxy never lock anyone out', !blocked);
+
+  // Locked pages refuse writes through the API.
+  await req(`/api/pages/${pageA}`, { method: 'PATCH', cookie: owner.cookie, body: { locked: true } });
+  const lockedWrite = await T(`/api/pages/${pageA}/markdown`, 'POST', { markdown: 'more' });
+  check('a locked page refuses Markdown writes (423)', lockedWrite.status === 423, `got ${lockedWrite.status}`);
+  await req(`/api/pages/${pageA}`, { method: 'PATCH', cookie: owner.cookie, body: { locked: false } });
+
+  // Tokens stop when their owner signs out everywhere.
+  await req('/api/auth/logout', { method: 'POST', cookie: owner.cookie, body: { everywhere: true } });
+  check('a token stops working after "sign out everywhere"', (await T(`/api/pages/${pageA}`)).status === 401);
+  const back = await req('/api/auth/login', { method: 'POST', body: { email: owner.email, password: owner.password } });
+  if (back.cookie) owner.cookie = back.cookie;
+}
+
+// --- big bodies from someone not signed in are refused before they're read
+{
+  const big = async (path, method) => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    const body = new ReadableStream({
+      pull(c) {
+        if (sent >= 100) return c.close();
+        sent++;
+        c.enqueue(chunk);
+      },
+    });
+    const t0 = Date.now();
+    const r = await fetch(B + path, { method, headers: { 'content-type': 'application/octet-stream', 'x-forwarded-for': freshIp() }, body, duplex: 'half' }).catch((e) => ({ status: `error ${e.message}` }));
+    return { status: r.status, ms: Date.now() - t0, sent };
+  };
+  const id = '00000000-0000-4000-8000-000000000001';
+  for (const [path, method] of [[`/api/files/${id}/content`, 'PUT'], [`/api/pages/${id}/content`, 'PUT'], [`/api/workspaces/${id}/convert`, 'POST']]) {
+    const r = await big(path, method);
+    check(`an anonymous 100 MB ${method} ${path.replace(id, ':id')} gets 401 without being read`, r.status === 401 && r.sent < 100, `got ${r.status} after ${r.ms} ms, ${r.sent} MB sent`);
+  }
+  check('the server is fine after them', (await fetch(`${B}/api/health`)).ok);
+}
+
+// --- access ends for open connections too: password change, leaving a workspace
+{
+  const own = new URL(B).origin;
+  const openLive = (cookie) =>
+    new Promise((resolve) => {
+      const ws = new WebSocket(`${WS_BASE}/live`, { headers: { cookie, origin: own } });
+      const closed = new Promise((r) => (ws.onclose = (e) => r(e.code)));
+      ws.onopen = () => resolve({ ws, closed });
+      ws.onerror = () => resolve(null);
+      setTimeout(() => resolve(null), 4000);
+    });
+  const within = (p, ms) => Promise.race([p, sleep(ms).then(() => 'still open')]);
+
+  const rev = await signup('revoked');
+  const s1 = await openLive(rev.cookie);
+  await req('/api/auth/password', { method: 'POST', cookie: rev.cookie, body: { currentPassword: rev.password, newPassword: 'a-new-password-9' } });
+  check('changing the password closes open live sockets', s1 && (await within(s1.closed, 3000)) === 4401, s1 ? String(await within(s1.closed, 10)) : 'never opened');
+
+  const leaver = await signup('leaver');
+  await verify(leaver);
+  await req(`/api/workspaces/${ws}/members`, { method: 'POST', body: { email: leaver.email, role: 'member' }, cookie: owner.cookie });
+  const inviteId = (await req('/api/invitations', { cookie: leaver.cookie })).data?.invitations?.[0]?.id;
+  await req(`/api/invitations/${inviteId}/accept`, { method: 'POST', cookie: leaver.cookie });
+  const s2 = await openLive(leaver.cookie);
+  const removed = await req(`/api/workspaces/${ws}/members/${leaver.id}`, { method: 'DELETE', cookie: owner.cookie });
+  check('removing a member closes their live socket', removed.status === 200 && s2 && (await within(s2.closed, 3000)) === 4403, `${removed.status}`);
+  check('…and they can no longer open the workspace', (await req(`/api/workspaces/${ws}/members`, { cookie: leaver.cookie })).status === 404);
+}
+
+// --- guests see boards on pages shared with them; hidden events can't be changed; editors can't re-share by moving
+{
+  const shared = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: `Guest view ${stamp}`, type: 'document' }, cookie: owner.cookie })).data.page;
+  const g = await signup('guest2');
+  await verify(g);
+  await req(`/api/pages/${shared.id}/guests`, { method: 'POST', body: { email: g.email, level: 'view' }, cookie: owner.cookie });
+  const inviteId = (await req('/api/invitations', { cookie: g.cookie })).data?.invitations?.[0]?.id;
+  await req(`/api/invitations/${inviteId}/accept`, { method: 'POST', cookie: g.cookie });
+  const onPage = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'Shown', place: { pageId: shared.id } }, cookie: owner.cookie })).data.whiteboard;
+  const elsewhere = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'Hidden' }, cookie: owner.cookie })).data.whiteboard;
+  await sleep(500);
+  const seen = await req(`/api/whiteboards/${onPage.id}/preview`, { cookie: g.cookie });
+  const unseen = await req(`/api/whiteboards/${elsewhere.id}/preview`, { cookie: g.cookie });
+  check('a guest can preview a board on a page shared with them', seen.status === 200, `got ${seen.status}`);
+  check('…but not a board elsewhere', unseen.status === 404, `got ${unseen.status}`);
+
+  const secret = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'Secret plans 2', type: 'document' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${secret.id}/permissions`, { method: 'PUT', body: { defaultAccess: 'none', members: [] }, cookie: owner.cookie });
+  const day = new Date().toISOString().slice(0, 10);
+  const hidden = (await req(`/api/workspaces/${ws}/events`, { method: 'POST', body: { title: 'Hidden event', startDate: day }, cookie: owner.cookie })).data.event;
+  await req(`/api/events/${hidden.id}/place`, { method: 'POST', body: { target: { pageId: secret.id, position: 'end' } }, cookie: owner.cookie });
+  const changes = [
+    [`/api/events/${hidden.id}`, 'PATCH', { title: 'peek' }],
+    [`/api/events/${hidden.id}/paths/choose`, 'POST', { index: 0 }],
+    [`/api/events/${hidden.id}/paths/undo`, 'POST', {}],
+    [`/api/events/${hidden.id}/place`, 'POST', { target: { pageId: shared.id, position: 'end' } }],
+  ];
+  const reached = [];
+  for (const [path, method, body] of changes) {
+    const r = await req(path, { method, body, cookie: member.cookie });
+    if (r.status !== 404) reached.push(`${method} ${path.split('/').slice(-1)[0]} → ${r.status}`);
+  }
+  check('a member cannot change an event on a page hidden from them', reached.length === 0, reached.join('; '));
+
+  const a = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'Move me', type: 'document' }, cookie: owner.cookie })).data.page;
+  const moved = await req(`/api/pages/${a.id}`, { method: 'PATCH', body: { parentId: secret.id }, cookie: member.cookie });
+  check('an editor cannot move a page under another one (it changes who sees it)', moved.status === 403 || moved.status === 404, `got ${moved.status}`);
+  const renamed = await req(`/api/pages/${a.id}`, { method: 'PATCH', body: { title: 'Renamed by an editor' }, cookie: member.cookie });
+  check('…but can still rename it', renamed.status === 200, `got ${renamed.status}`);
+}
+
+// --- a background AI request can be stopped
+{
+  const { createServer } = await import('node:http');
+  const hang = createServer(() => {}); // never answers
+  await new Promise((r) => hang.listen(0, '127.0.0.1', r));
+  const u = await signup('stopper');
+  const uws = (await req('/api/workspaces', { cookie: u.cookie })).data.workspaces[0].id;
+  await req('/api/ai/connection', { method: 'PUT', cookie: u.cookie, body: { provider: 'openai', model: 'stub', baseUrl: `http://127.0.0.1:${hang.address().port}/v1`, key: 'k', useOwn: true } });
+  const started = await fetch(`${B}/api/workspaces/${uws}/ai/transform`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: u.cookie, 'x-forwarded-for': freshIp(), prefer: 'respond-async' },
+    body: JSON.stringify({ text: 'hello', instruction: 'shorter' }),
+  }).then((r) => r.json());
+  await sleep(300);
+  const stop = await req(`/api/ai/jobs/${started.job}`, { method: 'DELETE', cookie: u.cookie });
+  const after = await req(`/api/ai/jobs/${started.job}`, { cookie: u.cookie });
+  check('stopping a background AI request works and it reports "Cancelled"', stop.status === 200 && after.status === 409 && after.data?.error === 'Cancelled', `${stop.status} ${after.status} ${after.data?.error}`);
+  check("someone else can't stop it", (await req(`/api/ai/jobs/${started.job}`, { method: 'DELETE', cookie: owner.cookie })).status === 404);
+  hang.closeAllConnections?.();
+  hang.close();
+}
+
 // --- public form flooding
 {
   let last;

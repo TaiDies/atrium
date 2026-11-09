@@ -1,3 +1,4 @@
+import { publicOrigin } from '../lib/native';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Globe, Link2, Lock } from 'lucide-react';
 import { useState } from 'react';
@@ -150,7 +151,7 @@ function PublishSection({ page }: { page: PageDetail }) {
   const [busy, setBusy] = useState(false);
   const canManage = page.access === 'manage';
   const data = state.data;
-  const url = data?.token ? `${location.origin}/share/${data.token}` : '';
+  const url = data?.token ? `${publicOrigin()}/share/${data.token}` : '';
 
   const save = async (next: { published: boolean; subpages: boolean; allowIndex: boolean }) => {
     setBusy(true);

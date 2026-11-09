@@ -104,13 +104,28 @@ fn save_settings(file: &PathBuf, s: &Settings, in_keychain: bool) {
     let mut on_disk = s.clone();
     on_disk.token = token_on_disk(on_disk.token, in_keychain);
     if let Ok(json) = serde_json::to_vec_pretty(&on_disk) {
-        let _ = fs::write(file, json);
+        // Written beside it and then renamed over it, so a crash halfway never leaves half a file.
+        let tmp = file.with_extension("json.tmp");
+        if fs::write(&tmp, json).is_ok() && fs::rename(&tmp, file).is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::token_on_disk;
+    use super::{candidates, token_on_disk};
+
+    #[test]
+    fn tries_https_first_for_addresses_outside_this_network() {
+        assert_eq!(candidates("study.example.com"), vec!["https://study.example.com", "http://study.example.com"]);
+        assert_eq!(candidates("192.168.1.20:3000"), vec!["http://192.168.1.20:3000"]);
+        assert_eq!(candidates("localhost:3000"), vec!["http://localhost:3000"]);
+        assert_eq!(candidates("nas.local"), vec!["http://nas.local"]);
+        assert_eq!(candidates("http://example.com/"), vec!["http://example.com"]);
+        assert_eq!(candidates("https://example.com"), vec!["https://example.com"]);
+        assert!(candidates("").is_empty());
+    }
 
     #[test]
     fn keeps_the_token_in_the_file_when_the_keychain_failed() {
@@ -186,6 +201,37 @@ fn platform() -> &'static str {
 }
 
 /// Makes "192.168.1.20:3000/" into "http://192.168.1.20:3000".
+/// Addresses typed without http:// or https://: a local one (an IP on this network, localhost, a name
+/// without dots or ending in .local/.lan/.home) is tried over http; anything else over https first,
+/// then http (and the app says the connection isn't encrypted).
+fn candidates(server: &str) -> Vec<String> {
+    let s = server.trim().trim_end_matches('/');
+    if s.is_empty() {
+        return vec![];
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return normalise(s).into_iter().collect();
+    }
+    let Some(http) = normalise(&format!("http://{s}")) else { return vec![] };
+    let host = Url::parse(&http).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    if is_local_host(&host) {
+        vec![http]
+    } else {
+        normalise(&format!("https://{s}")).into_iter().chain([http]).collect()
+    }
+}
+
+fn is_local_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v) => v.is_private() || v.is_loopback() || v.is_link_local(),
+            std::net::IpAddr::V6(v) => v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80,
+        };
+    }
+    h == "localhost" || !h.contains('.') || h.ends_with(".local") || h.ends_with(".lan") || h.ends_with(".home") || h.ends_with(".internal")
+}
+
 fn normalise(server: &str) -> Option<String> {
     let s = server.trim().trim_end_matches('/');
     let with_scheme = if s.starts_with("http://") || s.starts_with("https://") { s.to_string() } else { format!("http://{s}") };
@@ -221,7 +267,8 @@ fn session_from_cookie(value: &str) -> Option<String> {
 }
 
 /// Request headers passed on to the server.
-const FORWARDED: [&str; 6] = ["content-type", "accept", "range", "if-none-match", "if-modified-since", "accept-language"];
+/// Request headers passed on to the server ("prefer" asks for background AI jobs).
+const FORWARDED: [&str; 7] = ["content-type", "accept", "range", "if-none-match", "if-modified-since", "accept-language", "prefer"];
 
 /// Passes a request on to the chosen server.
 async fn proxy(state: &AppState, method: &str, path_and_query: &str, headers: &[(String, String)], body: Vec<u8>) -> Response<Vec<u8>> {
@@ -307,19 +354,31 @@ async fn handle(app: AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
         }
         (Method::POST, "/__app/server") => {
             let body: serde_json::Value = serde_json::from_slice(req.body()).unwrap_or_default();
-            let Some(server) = body.get("server").and_then(|v| v.as_str()).and_then(normalise) else {
+            let tries = body.get("server").and_then(|v| v.as_str()).map(candidates).unwrap_or_default();
+            if tries.is_empty() {
                 return json(serde_json::json!({ "ok": false, "error": "Enter the server's address, e.g. 192.168.1.20:3000" }));
-            };
-            match check_server(&state.client, &server).await {
-                Ok(name) => {
-                    state.update(|s| {
-                        s.server = Some(server.clone());
-                        s.token = None;
-                    });
-                    json(serde_json::json!({ "ok": true, "name": name }))
-                }
-                Err(error) => json(serde_json::json!({ "ok": false, "error": error })),
             }
+            let mut last_error = String::new();
+            for (i, server) in tries.iter().enumerate() {
+                match check_server(&state.client, server).await {
+                    Ok(name) => {
+                        state.update(|s| {
+                            s.server = Some(server.clone());
+                            s.token = None;
+                        });
+                        // https was tried first and didn't work: say the connection isn't encrypted.
+                        let warning = (i > 0 && server.starts_with("http://")).then(|| "This server only answered without encryption (http://). Anyone on the network between you could read what you send, including your password. Use it only on a network you trust, or set up HTTPS on the server.");
+                        return json(serde_json::json!({ "ok": true, "name": name, "server": server, "warning": warning }));
+                    }
+                    Err(error) => last_error = error,
+                }
+            }
+            json(serde_json::json!({ "ok": false, "error": last_error }))
+        }
+        // Signing out on this device even when the server can't be reached: the session is forgotten here.
+        (Method::DELETE, "/__app/session") => {
+            state.update(|s| s.token = None);
+            json(serde_json::json!({ "ok": true }))
         }
         (Method::DELETE, "/__app/server") => {
             state.update(|s| *s = Settings::default());
@@ -350,6 +409,12 @@ async fn api(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<tauri::
     let mut builder = Request::builder().method(method.as_str()).uri(path.as_str());
     if let Some(ct) = header("x-content-type") {
         builder = builder.header(header::CONTENT_TYPE, ct);
+    }
+    // Headers the server reads (background AI jobs ask with Prefer).
+    for name in ["prefer", "accept"] {
+        if let Some(v) = header(name) {
+            builder = builder.header(name, v);
+        }
     }
     let body = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
@@ -419,6 +484,7 @@ pub fn run() {
     builder
         // Notifications from the system (new messages, meeting invitations…), shown by the page.
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![api, check_update, install_update])
         .register_asynchronous_uri_scheme_protocol("app", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -447,11 +513,26 @@ pub fn run() {
                     in_keychain = true;
                 }
             }
-            let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(6)).build()?;
+            // A server that stops answering mid-reply fails after two minutes instead of hanging forever.
+            let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(6)).read_timeout(Duration::from_secs(120)).build()?;
             app.manage(AppState { settings: Mutex::new(settings), file, client, in_keychain: Mutex::new(in_keychain) });
 
             let url = WebviewUrl::CustomProtocol(Url::parse("app://localhost/").unwrap());
-            let builder = WebviewWindowBuilder::new(app, "main", url);
+            let handle = app.handle().clone();
+            let builder = WebviewWindowBuilder::new(app, "main", url).on_new_window(move |url, _features| {
+                // Links that open a new tab: the app's own pages open in this window, everything else
+                // in the system's browser (a webview has no tabs, and on phones no new windows).
+                let ours = url.scheme() == "app" || url.host_str() == Some("app.localhost") || url.host_str() == Some("tauri.localhost");
+                if ours {
+                    if let Some(w) = handle.get_webview_window("main") {
+                        let _ = w.navigate(url);
+                    }
+                } else if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
+                    use tauri_plugin_opener::OpenerExt;
+                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                }
+                tauri::webview::NewWindowResponse::Deny
+            });
             #[cfg(desktop)]
             let builder = builder.title("Atrium").inner_size(1280.0, 820.0).min_inner_size(380.0, 520.0);
             builder.build()?;

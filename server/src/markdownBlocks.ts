@@ -39,10 +39,16 @@ function parseLines(markdown: string): Line[] {
   return out;
 }
 
+/** Longest line whose inline formatting is read. */
+const MAX_INLINE = 20_000;
+
 /** Inline Markdown as text runs with formatting (marks as y-prosemirror stores them). */
 function inline(text: string, pages?: PageLinks): { insert: string; attributes?: Record<string, unknown> }[] {
   const runs: { insert: string; attributes?: Record<string, unknown> }[] = [];
-  const re = /(\*\*([^*]+)\*\*)|(~~([^~]+)~~)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^)\s]+)\))|(\*([^*]+)\*)|(_([^_]+)_)|(\[\[([^\]|]+)(?:\|([^\]]+))?\]\])/g;
+  // A very long line is kept as plain text: formatting is only looked for in lines of normal length,
+  // and every part of the pattern has a bounded length, so odd input (thousands of "[") stays fast.
+  if (text.length > MAX_INLINE) return text ? [{ insert: text }] : [];
+  const re = /(\*\*([^*\n]{1,2000})\*\*)|(~~([^~\n]{1,2000})~~)|(`([^`\n]{1,2000})`)|(\[([^\]\n]{1,500})\]\((https?:\/\/[^)\s]{1,2000})\))|(\*([^*\n]{1,2000})\*)|(_([^_\n]{1,2000})_)|(\[\[([^\]|\n]{1,300})(?:\|([^\]\n]{1,300}))?\]\])/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -72,7 +78,23 @@ export type PageLinks = Map<string, string>;
 export function linkedTitles(markdown: string): string[] {
   // Code (fenced blocks and `inline code`) is shown as written, so [[…]] inside it isn't a link.
   const prose = markdown.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]*`/g, '');
-  return [...new Set([...prose.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map((m) => m[1].trim()).filter(Boolean))];
+  // Found with indexOf (no pattern over the whole text): each "[[" looks ahead a short way for "]]".
+  const titles = new Set<string>();
+  let at = 0;
+  let close = -1; // the next "]]", found again only once passed (so one far-off "]]" isn't searched for again and again)
+  while (titles.size < 2000) {
+    const open = prose.indexOf('[[', at);
+    if (open < 0) break;
+    if (close < open + 2) close = prose.indexOf(']]', open + 2);
+    if (close < 0) break;
+    const inner = prose.slice(open + 2, close);
+    if (close - open <= 602 && !inner.includes('\n') && !inner.includes('[')) {
+      const title = inner.split('|')[0].trim();
+      if (title) titles.add(title);
+      at = close + 2;
+    } else at = open + 2;
+  }
+  return [...titles];
 }
 
 function container(line: Line, pages?: PageLinks): Y.XmlElement {

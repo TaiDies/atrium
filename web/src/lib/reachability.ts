@@ -37,3 +37,16 @@ export function fallbackMessage(status: number) {
   if (GATEWAY.has(status)) return 'Something between you and the server had a problem. Try again.';
   return `Request failed (${status})`;
 }
+
+/** Whether a failed fetch means the network (TypeError), not a cancelled request or the app's own error. */
+export const isNetworkFailure = (err: unknown) => err instanceof TypeError;
+
+/**
+ * What to do with a queued offline change after the server answered: sent (or refused for good and
+ * reported), kept until the next sign-in (401), or kept and tried again later (busy or limiting us).
+ */
+export function outboxVerdict(status: number): 'done' | 'refused' | 'wait-for-sign-in' | 'retry-later' {
+  if (status === 401) return 'wait-for-sign-in';
+  if (status >= 500 || status === 408 || status === 425 || status === 429) return 'retry-later';
+  return status >= 200 && status < 400 ? 'done' : 'refused';
+}

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { accessMap, requireMember } from '../access.js';
+import { accessMap, requireMember, requireRefAccess } from '../access.js';
 import { requireUser } from '../auth.js';
 import { boardBlock, readBoardDoc } from '../blocks.js';
 import { closeBoardDoc } from '../collab.js';
@@ -89,7 +89,7 @@ export async function whiteboardRoutes(app: FastifyInstance) {
   app.get('/whiteboards/:id/preview', async (req) => {
     const { id } = parse(idParams, req.params);
     const board = await boardOr404(id);
-    await requireMember(req.user.id, board.workspaceId);
+    await requireRefAccess(req.user.id, board.workspaceId, 'board', id);
     return readBoardDoc(id, (doc) => {
       const elements: unknown[] = [];
       doc.getMap<{ isDeleted?: boolean }>('elements').forEach((el) => {

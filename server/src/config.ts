@@ -41,6 +41,8 @@ export const config = {
   maxImportBytes: Number(process.env.MAX_IMPORT_MB ?? 1024) * 1024 * 1024,
   /** How many imports may run at once on the whole server (each person can run one at a time). */
   importParallel: Math.max(1, Number(process.env.IMPORT_PARALLEL ?? 2) || 2),
+  /** Page history older than this many days is thinned out; 0 (the default) keeps everything. */
+  historyDays: historyDaysSetting(process.env.HISTORY_DAYS),
   /**
    * Email (optional). With SMTP_HOST set, people can sign in and sign up with a code sent by email.
    * MAIL_TRANSPORT=log prints the emails to the server log instead (for trying it out).
@@ -70,9 +72,19 @@ export const config = {
   },
 };
 
-function trustProxySetting(value: string | undefined): boolean | string {
+/** HISTORY_DAYS: a whole number of days, 0 or unset to keep all history. Anything else stops the server with a clear message. */
+export function historyDaysSetting(value: string | undefined): number {
   const v = value?.trim();
-  if (!v) return 'loopback,linklocal,uniquelocal';
+  if (!v) return 0;
+  if (!/^\d{1,6}$/.test(v)) throw new Error(`HISTORY_DAYS must be a whole number of days (0 keeps all history), not "${v}"`);
+  return Number(v);
+}
+
+// No proxy is trusted unless TRUST_PROXY says so: with Docker's published port every visitor arrives
+// from the bridge's private address, and trusting that would let anyone fake X-Forwarded-For.
+export function trustProxySetting(value: string | undefined): boolean | string {
+  const v = value?.trim();
+  if (!v) return false;
   if (v === 'true') return true;
   if (v === 'false') return false;
   return v;

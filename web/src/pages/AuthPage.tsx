@@ -1,3 +1,4 @@
+import { stopLive } from '../lib/live';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowLeft, Mail } from 'lucide-react';
@@ -48,6 +49,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   }, [mode]);
 
   const finish = async (user: User) => {
+    // A live channel left from an earlier account closes before this one starts (AppLayout opens it again).
+    stopLive();
     // In the apps, pick up the new session for live editing.
     await loadNative();
     queryClient.clear();
@@ -130,6 +133,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
         <div className="shadow-pop rounded-xl bg-surface p-6">
           {step.kind === 'form' && (
             <form onSubmit={submitForm} className="space-y-3">
+              {signup && options.data && !codes && (
+                <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-muted">
+                  This server can’t send email, so it can’t check that an address is yours. Invitations sent to an address go to whoever signs up with it.
+                </p>
+              )}
               {codes && (
                 <div className="mb-1 grid grid-cols-2 rounded-lg border border-line p-0.5 text-sm">
                   {(['password', 'code'] as const).map((m) => (

@@ -5,31 +5,12 @@ import { requireUser } from '../auth.js';
 import { query } from '../db.js';
 import { checkOutboundUrl, outboundFetch } from '../netGuard.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { MAX_HTML, pageMeta } from '../htmlMeta.js';
 
 // Small helpers for blocks: link previews for bookmarks, and the synced blocks in a workspace.
 
 /** Previews never reach the local network, whatever the server allows elsewhere. */
 const safeUrl = (raw: string) => checkOutboundUrl(raw, { private: 'block', what: 'Link preview' });
-
-const decode = (s: string) =>
-  s
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .trim();
-
-function meta(html: string, names: string[]): string {
-  for (const name of names) {
-    const re = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*>`, 'i');
-    const tag = re.exec(html)?.[0];
-    const content = tag && /content=["']([^"']*)["']/i.exec(tag)?.[1];
-    if (content) return decode(content);
-  }
-  return '';
-}
 
 const cache = new Map<string, { at: number; value: unknown }>();
 
@@ -66,7 +47,7 @@ export async function extraRoutes(app: FastifyInstance) {
       const reader = res.body!.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
-      while (size < 512 * 1024) {
+      while (size < MAX_HTML) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
@@ -83,14 +64,14 @@ export async function extraRoutes(app: FastifyInstance) {
         return '';
       }
     };
-    const iconHref = /<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*>/i.exec(html)?.[0];
+    const found = pageMeta(html);
     const value = {
       url: url.toString(),
-      title: meta(html, ['og:title', 'twitter:title']) || decode(/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1] ?? '') || url.hostname,
-      description: meta(html, ['og:description', 'twitter:description', 'description']).slice(0, 300),
-      image: abs(meta(html, ['og:image', 'twitter:image'])),
-      icon: abs((iconHref && /href=["']([^"']+)["']/i.exec(iconHref)?.[1]) || '/favicon.ico'),
-      site: meta(html, ['og:site_name']) || url.hostname.replace(/^www\./, ''),
+      title: found.title || url.hostname,
+      description: found.description,
+      image: abs(found.image),
+      icon: abs(found.icon || '/favicon.ico'),
+      site: found.site || url.hostname.replace(/^www\./, ''),
     };
     cache.set(raw, { at: Date.now(), value });
     if (cache.size > 500) cache.delete(cache.keys().next().value!);

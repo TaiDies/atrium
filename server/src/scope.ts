@@ -10,10 +10,13 @@ export function runRequest(done: () => void) {
   store.run({ workspaceId: null }, done);
 }
 
-/** Called once the token is known. */
-export function setTokenScope(workspaceId: string | null) {
-  const current = store.getStore();
-  if (current) current.workspaceId = workspaceId;
+/**
+ * Runs the rest of the request (`done`) with the token's limit in force. Called once the token is
+ * known, after the body has been read: reading the body can leave the context opened in onRequest,
+ * so the limit is set again here rather than only noted in it.
+ */
+export function runWithScope(workspaceId: string | null, done: () => void) {
+  store.run({ workspaceId }, done);
 }
 
 /** The one workspace this request may touch, if its token is limited to one. */

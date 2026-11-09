@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { hiddenEvents } from '../access.js';
-import { requireUser } from '../auth.js';
+import { requireSession, requireUser } from '../auth.js';
 import { one, query, tx } from '../db.js';
 import { mailEnabled } from '../mail.js';
 import { notify } from '../notify.js';
@@ -54,7 +54,7 @@ export async function notificationRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
 
   /** Everything under the bell. `now` is the person's local date and time. */
-  app.get('/notifications', async (req) => {
+  app.get('/notifications', { preHandler: requireSession }, async (req) => {
     const { now } = parse(z.object({ now: localTime }), req.query);
     const today = now.slice(0, 10);
     const userId = req.user.id;
@@ -203,7 +203,7 @@ export async function notificationRoutes(app: FastifyInstance) {
   });
 
   /** Marks notifications as seen (invitations stay until they're answered). */
-  app.post('/notifications/read', async (req) => {
+  app.post('/notifications/read', { preHandler: requireSession }, async (req) => {
     const { keys } = parse(z.object({ keys: z.array(z.string().max(200)).max(500) }), req.body);
     const ids = keys.filter((k) => k.startsWith('n:')).map((k) => k.slice(2)).filter((id) => z.uuid().safeParse(id).success);
     if (ids.length) await query('update notifications set read_at = now() where user_id = $1 and id = any($2::uuid[]) and read_at is null', [req.user.id, ids]);
@@ -214,9 +214,9 @@ export async function notificationRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get('/invitations', async (req) => ({ invitations: await invitationsFor(req.user.email) }));
+  app.get('/invitations', { preHandler: requireSession }, async (req) => ({ invitations: await invitationsFor(req.user.email) }));
 
-  app.post('/invitations/:id/accept', async (req, reply) => {
+  app.post('/invitations/:id/accept', { preHandler: requireSession }, async (req, reply) => {
     const { id } = parse(idParams, req.params);
     // Anyone can make an account with any address, so an invitation only goes to someone who has shown
     // the address is theirs (with an emailed code). Servers without email can't check, and don't ask.
@@ -229,6 +229,14 @@ export async function notificationRoutes(app: FastifyInstance) {
       [id, req.user.email],
     );
     if (!invite) throw new HttpError(404, 'This invitation was withdrawn or already answered');
+    // Without email nobody can prove an address is theirs, so becoming an owner needs the
+    // administrator to have confirmed it (Admin panel → Accounts).
+    if (invite.role === 'owner' && !(await mailEnabled())) {
+      const verified = await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]);
+      if (!verified) {
+        throw new HttpError(403, 'This server can’t send email, so an invitation to join as an owner needs the administrator to confirm your email address first (Admin panel → Accounts → Email confirmed).');
+      }
+    }
     await tx(async (c) => {
       await query(
         `insert into workspace_members (workspace_id, user_id, role) values ($1, $2, $3) on conflict do nothing`,
@@ -251,7 +259,7 @@ export async function notificationRoutes(app: FastifyInstance) {
     return { workspaceId: invite.workspace_id };
   });
 
-  app.post('/invitations/:id/decline', async (req) => {
+  app.post('/invitations/:id/decline', { preHandler: requireSession }, async (req) => {
     const { id } = parse(idParams, req.params);
     const invite = await one<{ workspace_id: string; invited_by: string | null; name: string }>(
       `select i.workspace_id, i.invited_by, w.name from workspace_invites i join workspaces w on w.id = i.workspace_id where i.id = $1 and i.email = $2`,

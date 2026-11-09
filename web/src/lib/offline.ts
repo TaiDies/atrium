@@ -1,7 +1,7 @@
 import { onlineManager } from '@tanstack/react-query';
 import { createStore, del, get, set } from 'idb-keyval';
 import { useSyncExternalStore } from 'react';
-import { healthOk, isUnreachable } from './reachability';
+import { healthOk, isNetworkFailure, isUnreachable, outboxVerdict } from './reachability';
 
 // Working without a connection. Live documents (pages, cards, whiteboards, files) keep a copy on the
 // device and merge with everyone else's edits when the connection returns (see collab.ts). Changes
@@ -93,7 +93,9 @@ export async function trackedFetch(input: RequestInfo, init?: RequestInit): Prom
   let res: Response;
   try {
     res = await fetch(input, init);
-  } catch {
+  } catch (err) {
+    // Only a network failure (TypeError) means offline: a cancelled request or the app's own error doesn't.
+    if (!isNetworkFailure(err)) throw err;
     markOffline();
     throw new OfflineError();
   }
@@ -144,11 +146,30 @@ async function countPending() {
   emit();
 }
 
-export async function enqueue(change: Omit<QueuedChange, 'id' | 'user' | 'at'>) {
-  const items = await readOutbox();
-  items.push({ ...change, id: crypto.randomUUID(), user: currentUser, at: Date.now() });
-  await writeOutbox(items);
+/**
+ * Runs `fn` with the outbox to itself: one change at a time in this tab (a promise chain) and across
+ * tabs (a Web Lock, where the browser has them), so a change queued during a send is never lost to a
+ * write made from an older copy.
+ */
+let chain: Promise<unknown> = Promise.resolve();
+function withOutbox<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+  const run = () => (locks ? (locks.request(`atrium-outbox:${scope()}`, fn) as Promise<T>) : fn());
+  const next = chain.then(run, run);
+  chain = next.catch(() => {});
+  return next;
 }
+
+export async function enqueue(change: Omit<QueuedChange, 'id' | 'user' | 'at'>) {
+  await withOutbox(async () => {
+    const items = await readOutbox();
+    items.push({ ...change, id: crypto.randomUUID(), user: currentUser, at: Date.now() });
+    await writeOutbox(items);
+  });
+}
+
+/** Takes a sent change off the outbox (reading it fresh, so changes queued meanwhile stay). */
+const removeQueued = (id: string) => withOutbox(async () => writeOutbox((await readOutbox()).filter((i) => i.id !== id)));
 
 type Applied = (changes: QueuedChange[], failed: { change: QueuedChange; error: string }[]) => void;
 const appliedListeners = new Set<Applied>();
@@ -161,19 +182,35 @@ export function onApplied(fn: Applied) {
 }
 
 let flushing: Promise<void> | null = null;
+let retry: ReturnType<typeof setTimeout> | undefined;
 
-/** Sends queued changes in the order they were made. Stops at the first one that can't reach the server. */
+/** The server is busy or limiting us: try again in a while. */
+function retryLater(ms = 30_000) {
+  clearTimeout(retry);
+  retry = setTimeout(() => void flush(), ms);
+}
+
+/**
+ * Sends queued changes in the order they were made, until none are left. Stops (keeping the rest) when
+ * the server can't be reached, isn't signed in (401: they wait for the next sign-in), or asks us to
+ * slow down or is having trouble (408, 425, 429, 5xx: tried again later). A change the server refuses
+ * for good (e.g. the page was deleted) is dropped and reported.
+ */
 export function flush(): Promise<void> {
   if (flushing) return flushing;
   flushing = (async () => {
-    let items = await readOutbox();
-    const mine = items.filter((i) => i.user === currentUser);
-    if (!mine.length || !online) return;
-    syncing = true;
-    emit();
     const done: QueuedChange[] = [];
     const failed: { change: QueuedChange; error: string }[] = [];
-    for (const change of mine) {
+    let started = false;
+    for (;;) {
+      if (!online || !currentUser) break;
+      const change = (await readOutbox()).find((i) => i.user === currentUser);
+      if (!change) break;
+      if (!started) {
+        started = true;
+        syncing = true;
+        emit();
+      }
       let res: Response;
       try {
         res = await trackedFetch(change.path, {
@@ -185,18 +222,23 @@ export function flush(): Promise<void> {
       } catch {
         break; // offline again; the rest wait
       }
-      if (res.status >= 500) break; // the server is having trouble; try again later
-      if (!res.ok) {
-        // The server refused it (e.g. the page was deleted meanwhile): drop it and say so.
+      const verdict = outboxVerdict(res.status);
+      if (verdict === 'wait-for-sign-in') break; // kept for the next sign-in (setOfflineUser sends them)
+      if (verdict === 'retry-later') {
+        retryLater();
+        break;
+      }
+      if (verdict === 'refused') {
         const data = await res.json().catch(() => null);
         failed.push({ change, error: data?.error ?? `Request failed (${res.status})` });
       }
       done.push(change);
-      items = items.filter((i) => i.id !== change.id);
-      await writeOutbox(items);
+      await removeQueued(change.id);
     }
-    syncing = false;
-    emit();
+    if (started) {
+      syncing = false;
+      emit();
+    }
     if (done.length) appliedListeners.forEach((fn) => fn(done, failed));
   })().finally(() => {
     flushing = null;
@@ -271,4 +313,36 @@ export function setKeptOffline(userId: string, pageId: string, keep: boolean) {
   try {
     localStorage.setItem(offlineKey(userId), JSON.stringify(keep ? [...list, pageId] : list));
   } catch {}
+}
+
+/**
+ * Signing out on this device: everything kept here for that person goes — their copies of pages
+ * (y-indexeddb), waiting changes, the pages kept for offline use and the saved lists.
+ */
+export async function clearLocalData(userId: string | null | undefined) {
+  if (userId) {
+    try {
+      localStorage.removeItem(offlineKey(userId));
+    } catch {}
+    const prefix = `af:${scope()}:${userId}:`;
+    const dbs = await (indexedDB as IDBFactory & { databases?: () => Promise<{ name?: string }[]> }).databases?.().catch(() => []) ?? [];
+    await Promise.all(
+      dbs
+        .map((d) => d.name ?? '')
+        .filter((name) => name.startsWith(prefix))
+        .map(
+          (name) =>
+            new Promise<void>((done) => {
+              // A copy still open (a page closing) blocks the delete until it closes: wait a little for that.
+              const r = indexedDB.deleteDatabase(name);
+              r.onsuccess = r.onerror = () => done();
+              setTimeout(done, 5000);
+            }),
+        ),
+    );
+    await withOutbox(async () => writeOutbox((await readOutbox()).filter((i) => i.user !== userId))).catch(() => {});
+  }
+  await del(`${scope()}:query-cache`, store).catch(() => {});
+  pending = 0;
+  emit();
 }

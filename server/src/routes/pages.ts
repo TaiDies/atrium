@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as Y from 'yjs';
 import { updateDocIndex } from '../docIndex.js';
 import { notify } from '../notify.js';
-import { type Access, accessMap, requireMember, requirePage, visibleFiles } from '../access.js';
+import { type Access, accessMap, requireMember, requirePage, requireUnlocked, visibleFiles } from '../access.js';
 import { deleteFile, filesOnlyIn } from './notes.js';
 import { requireUser } from '../auth.js';
 import { editDoc } from '../blocks.js';
@@ -161,6 +161,10 @@ export async function pageRoutes(app: FastifyInstance) {
       }),
       req.body,
     );
+    // Moving a page under another one or into a teamspace changes who can see it: that's for the
+    // people who manage its sharing, not every editor.
+    const moving = (body.parentId !== undefined && body.parentId !== current.parent_id) || body.teamspaceId !== undefined;
+    if (moving && current.access !== 'manage') throw new HttpError(403, 'Only the page owner or a workspace owner can move it somewhere that changes who can see it');
     if (body.teamspaceId) {
       const ts = await one<{ workspace_id: string }>('select workspace_id from teamspaces where id = $1', [body.teamspaceId]);
       if (!ts || ts.workspace_id !== current.workspace_id) throw new HttpError(400, 'Unknown teamspace');
@@ -287,6 +291,7 @@ export async function pageRoutes(app: FastifyInstance) {
     const page = await requirePage(req.user.id, id, 'edit');
     if (page.deleted_at) throw new HttpError(400, 'This page is in the trash');
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Expected a Yjs update');
+    await requireUnlocked(id);
     await applyUpdate(id, new Uint8Array(req.body));
     return { ok: true };
   });
@@ -300,6 +305,7 @@ export async function pageRoutes(app: FastifyInstance) {
     const page = await requirePage(req.user.id, id, 'edit');
     if (page.deleted_at) throw new HttpError(400, 'This page is in the trash');
     if (page.type !== 'document') throw new HttpError(400, 'Text can only be added to documents');
+    await requireUnlocked(id);
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Expected a Yjs update');
     const source = new Y.Doc();
     Y.applyUpdate(source, new Uint8Array(req.body));
@@ -329,6 +335,7 @@ export async function pageRoutes(app: FastifyInstance) {
   app.put('/pages/:id/rows/:rowId/content', { bodyLimit: 50 * 1024 * 1024 }, async (req) => {
     const { id, rowId } = parse(z.object({ id: z.uuid(), rowId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) }), req.params);
     const page = await requirePage(req.user.id, id, 'edit');
+    await requireUnlocked(id);
     if (page.deleted_at) throw new HttpError(400, 'This page is in the trash');
     if (page.type === 'document') throw new HttpError(400, 'Only database pages have rows');
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Expected a Yjs update');
