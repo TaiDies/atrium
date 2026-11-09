@@ -333,8 +333,10 @@ export async function clearLocalData(userId: string | null | undefined) {
         .map(
           (name) =>
             new Promise<void>((done) => {
+              // A copy still open (a page closing) blocks the delete until it closes: wait a little for that.
               const r = indexedDB.deleteDatabase(name);
-              r.onsuccess = r.onerror = r.onblocked = () => done();
+              r.onsuccess = r.onerror = () => done();
+              setTimeout(done, 5000);
             }),
         ),
     );

@@ -112,8 +112,7 @@ function AccountTab() {
   };
 
   const signOut = async (everywhere = false) => {
-    await signOutHere(everywhere);
-    navigate('/login', { replace: true });
+    await signOutHere(everywhere, () => navigate('/login', { replace: true }));
   };
 
   return (

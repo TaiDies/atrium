@@ -162,8 +162,7 @@ function WorkspaceSwitcher() {
   const [creating, setCreating] = useState(false);
 
   const signOut = async () => {
-    await signOutHere();
-    navigate('/login', { replace: true });
+    await signOutHere(false, () => navigate('/login', { replace: true }));
   };
 
   return (
