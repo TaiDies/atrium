@@ -149,7 +149,7 @@
             <label class="sr" for="signup-email">Email address</label>
             <input id="signup-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required maxlength="254" />
             <input class="hp" name="company" tabindex="-1" autocomplete="off" aria-hidden="true" />
-            <label class="consent"><input type="checkbox" name="consent" required /> <span>Email me about Atrium Cloud. Your address is only used for that, never shared, and you can ask to be removed at any time.</span></label>
+            <label class="consent"><input type="checkbox" name="consent" required /> <span>Email me about Atrium Cloud. Your address is only used for that and never shared. To be removed at any time, email <a href="mailto:abodede.atrium@gmail.com">abodede.atrium@gmail.com</a>. <a href="#privacy">Privacy</a></span></label>
             <button class="btn primary small" type="submit">Notify me</button>
             <p class="signup-msg" role="status" aria-live="polite"></p>
           </form>
@@ -179,10 +179,25 @@
         </div>
       </div>
     </section>
+    <section id="privacy">
+      <div class="wrap narrow">
+        <div class="eyebrow">Privacy</div>
+        <h2>Your email address</h2>
+        <p>If you sign up for Atrium Cloud news, we keep your email address, when you signed up, your browser's
+        language and that you agreed to be emailed. We use it only to tell you about Atrium Cloud (when it
+        opens, and important news about it), never share or sell it, and keep it in a private store at
+        Vercel (United States) until you ask us to remove it or the list is no longer needed. To stop a
+        signup flood, your IP address is counted for a day as a one-way hash, never next to your email
+        address, and deleted after two days. This website sets no cookies and uses no analytics. To see,
+        correct or remove your address, email
+        <a href="mailto:abodede.atrium@gmail.com">abodede.atrium@gmail.com</a>; every email we send will
+        also have an unsubscribe link.</p>
+      </div>
+    </section>
   </main>
 
   <footer>
-    <div class="wrap"><span>© Atrium contributors · AGPL-3.0</span><span><a href="/docs">Documentation</a> · <a data-repo-link href="https://github.com/TaiDies/atrium">GitHub</a> · <a data-repo-link data-suffix="/releases" href="https://github.com/TaiDies/atrium/releases">Releases</a></span></div>
+    <div class="wrap"><span>© Atrium contributors · AGPL-3.0</span><span><a href="#privacy">Privacy</a> · <a href="mailto:abodede.atrium@gmail.com">Contact</a> · <a href="/docs">Documentation</a> · <a data-repo-link href="https://github.com/TaiDies/atrium">GitHub</a> · <a data-repo-link data-suffix="/releases" href="https://github.com/TaiDies/atrium/releases">Releases</a></span></div>
   </footer>
   <script src="/site.js"></script>
 </body>

@@ -235,3 +235,7 @@ mark { background: color-mix(in srgb, #ffd54a 55%, transparent); color: inherit;
 .signup-msg.err { color: #dc2626; }
 .signup .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Privacy note */
+.wrap.narrow { max-width: 760px; }
+#privacy p { color: var(--muted); line-height: 1.7; }
