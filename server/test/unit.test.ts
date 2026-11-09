@@ -15,7 +15,8 @@ import { fallbackMessage, healthOk, isUnreachable } from '../../web/src/lib/reac
 import { asyncCapable, jobState, aiTimeout, HELD_TIMEOUT_MS } from '../src/aiJobs.ts';
 import { HttpError } from '../src/util.ts';
 import { fetch as undiciFetch } from 'undici';
-import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
+import { checkOutboundUrl, guardedAgent, isMetadata, isPrivate } from '../src/netGuard.ts';
+import { deliveryError } from '../src/webhooks.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -338,5 +339,55 @@ describe('background AI requests', () => {
   });
   it('keeps the held timeout under the 100 seconds proxies allow', () => {
     assert.ok(HELD_TIMEOUT_MS < 100_000);
+  });
+});
+
+describe('outbound addresses in every form', () => {
+  const blocked = [
+    'http://127.0.0.1/', 'http://2130706433/', 'http://0x7f.1/', 'http://017700000001/', 'http://0177.0.0.1/', 'http://127.1/',
+    'http://[::1]/', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:7f00:1]/', 'http://[::127.0.0.1]/', 'http://[::7f00:1]/',
+    'http://[64:ff9b::7f00:1]/', 'http://[2002:7f00:1::]/', 'http://[fec0::1]/', 'http://[fc00::1]/', 'http://[fd12::1]/',
+    'http://[fe80::1]/', 'http://[::]/', 'http://0.0.0.0/', 'http://10.1.2.3/', 'http://192.168.0.1/', 'http://172.20.0.1/', 'http://100.64.0.1/',
+    'http://[::ffff:10.0.0.1]/', 'http://[::ffff:192.168.1.1]/',
+  ];
+  it('refuses private and loopback addresses written any way', async () => {
+    for (const u of blocked) {
+      await assert.rejects(checkOutboundUrl(u, { private: 'block', what: 'Test' }), (e: HttpError) => e.status === 400, u);
+    }
+  });
+  it('refuses cloud metadata even when private addresses are allowed', async () => {
+    for (const u of ['http://169.254.169.254/', 'http://[::ffff:169.254.169.254]/', 'http://[::ffff:a9fe:a9fe]/', 'http://[fd00:ec2::254]/', 'http://2852039166/']) {
+      await assert.rejects(checkOutboundUrl(u, { private: 'allow', what: 'Test' }), (e: HttpError) => e.status === 400, u);
+    }
+  });
+  it('classifies addresses directly', () => {
+    assert.equal(isPrivate('::ffff:7f00:1'), true);
+    assert.equal(isPrivate('2002:0a00:0001::'), true);
+    assert.equal(isPrivate('8.8.8.8'), false);
+    assert.equal(isPrivate('2606:4700:4700::1111'), false);
+    assert.equal(isMetadata('::ffff:a9fe:a9fe'), true);
+    assert.equal(isMetadata('8.8.8.8'), false);
+  });
+  it('the guarded connection refuses IP literals that skip the lookup', async () => {
+    const server = createServer((_q, r) => r.end('ok'));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      for (const host of ['127.0.0.1', '[::ffff:127.0.0.1]', '[::ffff:7f00:1]']) {
+        await assert.rejects(
+          undiciFetch(`http://${host}:${port}/`, { dispatcher: guardedAgent(false) }),
+          (e: { cause?: { code?: string } }) => e.cause?.code === 'EBLOCKEDADDRESS',
+          host,
+        );
+      }
+      const ok = await undiciFetch(`http://127.0.0.1:${port}/`, { dispatcher: guardedAgent(true) });
+      assert.equal(await ok.text(), 'ok', 'allowed when private addresses are allowed');
+    } finally {
+      server.close();
+    }
+  });
+  it('webhook errors never echo what an internal host said', () => {
+    assert.equal(deliveryError(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 10.0.0.5:6379 secret banner' } })), 'The address refused the connection');
+    assert.equal(deliveryError(new Error('internal stack trace')), 'Could not connect to the address');
   });
 });

@@ -5,7 +5,7 @@ import { config } from './config.js';
 import { one } from './db.js';
 import { getSettings } from './settings.js';
 import { HttpError } from './util.js';
-import { checkOutboundUrl, outboundFetch } from './netGuard.js';
+import { checkOutboundUrl, guardedFetch, outboundFetch } from './netGuard.js';
 import { aiTimeout } from './aiJobs.js';
 
 // The AI assistant's connection to a model. People can bring their own key; the admin can also set one
@@ -145,7 +145,8 @@ function failure(provider: string, status: number, detail: string): HttpError {
 
 async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Promise<Answer> {
   const limit = aiTimeout(LONG_TIMEOUT_MS);
-  const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: limit, maxRetries: 2 });
+  // Through the guarded connections, like every other address someone typed in (see netGuard.ts).
+  const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: limit, maxRetries: 2, fetch: guardedFetch(true) });
   const fallback = FALLBACK_MODELS.has(c.model);
   try {
     // Streamed so long plans don't hit the HTTP timeout; only the finished message is used.
@@ -239,7 +240,7 @@ export async function complete(c: Connection, system: string, turns: ChatTurn[],
 export async function listModels(c: Omit<Connection, 'source'>): Promise<string[]> {
   await checkBaseUrl(c.baseUrl);
   if (c.provider === 'anthropic') {
-    const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: 20_000 });
+    const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: 20_000, fetch: guardedFetch(true) });
     try {
       const ids: string[] = [];
       for await (const m of client.models.list()) ids.push(m.id);
