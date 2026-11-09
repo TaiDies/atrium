@@ -263,10 +263,15 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
    meeting.
 
 **Downloads and printing** (since 1.11.6): exports (Markdown, PDF, the .zip, office files as .docx, .pdf
-or .xlsx, statistics) and downloaded attachments are saved to the phone's **Downloads** folder; on
-Android 9 and older they go to the app's own folder instead (Android/data/io.github.taidies.atrium/files/Download).
+or .xlsx, statistics) and downloaded attachments are saved to the phone's **Downloads** folder.
 Printing opens Android's print screen, where **Save as PDF** is one of the printers. (1.11.5 and older
 couldn't do either in the app.)
+
+- **Android 9 and older** save to the app's own folder instead
+  (Android/data/io.github.taidies.atrium/files/Download), because those versions need a storage
+  permission to write to Downloads, which the app doesn't ask for.
+- **Not tested on a device yet:** exporting office files as .docx and .xlsx, and downloading attachments.
+  They use the same saving as the exports that were tested (Markdown, the .zip, and printing).
 
 ### Web and other devices
 
