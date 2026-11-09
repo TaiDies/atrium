@@ -17,6 +17,9 @@ import { HttpError } from '../src/util.ts';
 import { fetch as undiciFetch } from 'undici';
 import { checkOutboundUrl, guardedAgent, isMetadata, isPrivate } from '../src/netGuard.ts';
 import { deliveryError } from '../src/webhooks.ts';
+import { linkedTitles, writeMarkdown } from '../src/markdownBlocks.ts';
+import { pageMeta } from '../src/htmlMeta.ts';
+import * as Y from 'yjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -389,5 +392,35 @@ describe('outbound addresses in every form', () => {
   it('webhook errors never echo what an internal host said', () => {
     assert.equal(deliveryError(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 10.0.0.5:6379 secret banner' } })), 'The address refused the connection');
     assert.equal(deliveryError(new Error('internal stack trace')), 'Could not connect to the address');
+  });
+});
+
+describe('odd input stays fast', () => {
+  const fast = (label: string, fn: () => void) => {
+    const t0 = performance.now();
+    fn();
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `${label} took ${Math.round(ms)} ms`);
+  };
+  it('Markdown with a million "[" and no "]"', () => {
+    const md = '['.repeat(1_000_000);
+    fast('linkedTitles', () => linkedTitles(md));
+    fast('linkedTitles with one "]]" at the end', () => linkedTitles(`${md}]]`));
+    fast('writing it into a page', () => writeMarkdown(new Y.Doc(), md, true));
+    fast('a long line of "[a](" pieces', () => writeMarkdown(new Y.Doc(), '[a]('.repeat(250_000), true));
+    fast('many "**" without a close', () => writeMarkdown(new Y.Doc(), `${'**a'.repeat(6000)}\n`.repeat(20), true));
+  });
+  it('still reads links and formatting', () => {
+    assert.deepEqual(linkedTitles('See [[Plan]] and [[Notes|my notes]], not `[[code]]`'), ['Plan', 'Notes']);
+  });
+  it('link previews of hostile HTML', () => {
+    const page = '<meta property="og:title"'.repeat(40_000) + '<title' + ' x'.repeat(200_000);
+    fast('many unfinished meta tags', () => pageMeta(page));
+    fast('a million "<"', () => pageMeta('<'.repeat(1_000_000)));
+    fast('one enormous tag', () => pageMeta(`<meta ${'a="b" '.repeat(150_000)}>`));
+  });
+  it('still reads a normal page', () => {
+    const m = pageMeta(`<html><head><title>Plain &amp; simple</title><meta property="og:description" content="About it"><meta name='og:image' content='/i.png'><link rel="shortcut icon" href="/f.ico"><meta property="og:site_name" content="Site"></head><body><meta property="og:title" content="late"></body>`);
+    assert.deepEqual(m, { title: 'Plain & simple', description: 'About it', image: '/i.png', icon: '/f.ico', site: 'Site' });
   });
 });

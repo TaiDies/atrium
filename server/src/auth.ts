@@ -129,6 +129,7 @@ const badTokensByIp = limiter(50, 15 * 60_000);
  * Other Authorization headers (such as a proxy's Basic login) are ignored and don't count as guesses.
  */
 export async function authenticate(req: FastifyRequest) {
+  if (req.viaToken !== undefined) return; // already signed in (before the body was read)
   const bearer = req.headers.authorization;
   if (looksLikeApiToken(bearer)) {
     if (badTokensByIp.blocked(req.ip)) throw new HttpError(429, 'Too many invalid API tokens. Wait a few minutes and try again.');

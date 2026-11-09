@@ -485,6 +485,30 @@ let member;
   if (back.cookie) owner.cookie = back.cookie;
 }
 
+// --- big bodies from someone not signed in are refused before they're read
+{
+  const big = async (path, method) => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    const body = new ReadableStream({
+      pull(c) {
+        if (sent >= 100) return c.close();
+        sent++;
+        c.enqueue(chunk);
+      },
+    });
+    const t0 = Date.now();
+    const r = await fetch(B + path, { method, headers: { 'content-type': 'application/octet-stream', 'x-forwarded-for': freshIp() }, body, duplex: 'half' }).catch((e) => ({ status: `error ${e.message}` }));
+    return { status: r.status, ms: Date.now() - t0, sent };
+  };
+  const id = '00000000-0000-4000-8000-000000000001';
+  for (const [path, method] of [[`/api/files/${id}/content`, 'PUT'], [`/api/pages/${id}/content`, 'PUT'], [`/api/workspaces/${id}/convert`, 'POST']]) {
+    const r = await big(path, method);
+    check(`an anonymous 100 MB ${method} ${path.replace(id, ':id')} gets 401 without being read`, r.status === 401 && r.sent < 100, `got ${r.status} after ${r.ms} ms, ${r.sent} MB sent`);
+  }
+  check('the server is fine after them', (await fetch(`${B}/api/health`)).ok);
+}
+
 // --- public form flooding
 {
   let last;
