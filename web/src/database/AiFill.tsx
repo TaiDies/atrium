@@ -2,14 +2,14 @@ import { Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Spinner, toast, toastError } from '../components/ui';
 import { useAiAvailable } from '../editor/AiSelection';
-import { api } from '../lib/api';
+import { aiApi } from '../lib/api';
 import { useDb } from './context';
 import type { Field } from './model';
 
 // "AI autofill" properties: the AI writes each card's value from the property's prompt.
 
 async function fill(pageId: string, fieldId: string, rowIds: string[], overwrite: boolean) {
-  return api<{ filled: number; remaining: number }>(`/api/pages/${pageId}/fields/${fieldId}/ai-fill`, { method: 'POST', body: { rowIds, overwrite } });
+  return aiApi<{ filled: number; remaining: number }>(`/api/pages/${pageId}/fields/${fieldId}/ai-fill`, { method: 'POST', body: { rowIds, overwrite } });
 }
 
 /** In an empty cell: fill just this card. */

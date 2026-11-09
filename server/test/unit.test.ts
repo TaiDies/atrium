@@ -11,6 +11,9 @@ import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs
 import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
 import { historyNotice } from '../src/historyNotice.ts';
 import { shouldRenewTicket } from '../../web/src/lib/ticketRenewal.ts';
+import { fallbackMessage, healthOk, isUnreachable } from '../../web/src/lib/reachability.ts';
+import { asyncCapable, jobState, aiTimeout, HELD_TIMEOUT_MS } from '../src/aiJobs.ts';
+import { HttpError } from '../src/util.ts';
 import { fetch as undiciFetch } from 'undici';
 import { checkOutboundUrl, guardedAgent, isPrivate } from '../src/netGuard.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -258,5 +261,82 @@ describe('live ticket renewal', () => {
   it('renews straight away when a connection is refused, but not in a loop', () => {
     assert.equal(shouldRenewTicket('refused', 0, 20_000), true);
     assert.equal(shouldRenewTicket('refused', 0, 5_000), false);
+  });
+});
+
+describe('going offline only when the server is really unreachable', () => {
+  const html = (status: number, headers: Record<string, string> = {}) => new Response('<html>Bad gateway</html>', { status, headers: { 'content-type': 'text/html', ...headers } });
+  const up = async () => true;
+  const down = async () => false;
+  it('a 502 page from a proxy while the health check answers stays online', async () => {
+    assert.equal(await isUnreachable(html(502), up), false);
+    assert.equal(await isUnreachable(html(524), up), false, 'a proxy cutting a slow request');
+  });
+  it('a 502 page while the health check fails goes offline', async () => {
+    assert.equal(await isUnreachable(html(502), down), true);
+    assert.equal(await isUnreachable(html(503), down), true);
+  });
+  it("the apps' x-offline header goes offline without asking", async () => {
+    let asked = false;
+    assert.equal(await isUnreachable(new Response('{}', { status: 200, headers: { 'x-offline': '1' } }), async () => ((asked = true), true)), true);
+    assert.equal(asked, false);
+  });
+  it("the server's own JSON errors and ordinary statuses never ask the health check", async () => {
+    let asked = 0;
+    const count = async () => (asked++, false);
+    assert.equal(await isUnreachable(new Response(JSON.stringify({ error: 'x' }), { status: 502 }), count), false);
+    assert.equal(await isUnreachable(new Response(JSON.stringify({ error: 'AI' }), { status: 424 }), count), false);
+    assert.equal(await isUnreachable(html(500), count), false);
+    assert.equal(asked, 0);
+  });
+  it('the health check gives up quickly and treats errors as down', async () => {
+    const ok: typeof fetch = async () => new Response('{"status":"ok"}');
+    const offline: typeof fetch = async () => new Response('{}', { headers: { 'x-offline': '1' } });
+    const hangs: typeof fetch = (_u, init) => new Promise((_r, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
+    assert.equal(await healthOk(ok), true);
+    assert.equal(await healthOk(offline), false);
+    const t0 = Date.now();
+    assert.equal(await healthOk(hangs, 50), false);
+    assert.ok(Date.now() - t0 < 1000);
+  });
+  it('explains slow and gateway failures', () => {
+    assert.match(fallbackMessage(524), /too long/);
+    assert.match(fallbackMessage(502), /problem/);
+    assert.equal(fallbackMessage(418), 'Request failed (418)');
+  });
+});
+
+describe('background AI requests', () => {
+  const reply = () => {
+    const r = { statusCode: 200, body: undefined as unknown, code(c: number) { r.statusCode = c; return r; }, send(b: unknown) { r.body = b; return r; } };
+    return r;
+  };
+  const request = (prefer?: string) => ({ headers: prefer ? { prefer } : {}, user: { id: 'u1' } }) as any;
+  it('answers directly without "Prefer: respond-async"', async () => {
+    const out = await asyncCapable(async () => ({ text: 'hi' }))(request(), reply() as any);
+    assert.deepEqual(out, { text: 'hi' });
+  });
+  it('runs in the background with the longer timeout, and hands the answer to its owner only', async () => {
+    let timeout = 0;
+    const r = reply();
+    await asyncCapable(async () => ((timeout = aiTimeout(300_000)), { text: 'later' }))(request('respond-async'), r as any);
+    assert.equal(r.statusCode, 202);
+    const id = (r.body as { job: string }).job;
+    await new Promise((res) => setTimeout(res, 10));
+    assert.equal(timeout, 300_000);
+    assert.equal(aiTimeout(300_000), HELD_TIMEOUT_MS, 'outside a job: the short timeout');
+    assert.deepEqual(jobState(id, 'u1'), { done: true, result: { text: 'later' } });
+    assert.throws(() => jobState(id, 'someone else'), (e: HttpError) => e.status === 404);
+  });
+  it('keeps the status and message of a failed job', async () => {
+    const r = reply();
+    await asyncCapable(async () => {
+      throw new HttpError(424, 'The AI service had a problem answering.');
+    })(request('respond-async'), r as any);
+    await new Promise((res) => setTimeout(res, 10));
+    assert.throws(() => jobState((r.body as { job: string }).job, 'u1'), (e: HttpError) => e.status === 424 && /problem/.test(e.message));
+  });
+  it('keeps the held timeout under the 100 seconds proxies allow', () => {
+    assert.ok(HELD_TIMEOUT_MS < 100_000);
   });
 });

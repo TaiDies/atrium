@@ -292,6 +292,65 @@ let member;
   check('…and the running imports finish normally', done.every((s) => s === 400), done.join(','));
 }
 
+// --- AI service trouble: never a gateway status (a proxy would replace it and the app would show offline)
+{
+  // Run the server with AI_TIMEOUT_MS=3000 so the slow case doesn't take 90 seconds.
+  const { createServer } = await import('node:http');
+  let mode = 'error';
+  const stub = createServer((rq, rs) => {
+    if (mode === 'error') {
+      rs.writeHead(500, { 'content-type': 'application/json' });
+      rs.end(JSON.stringify({ error: { message: 'stub failure' } }));
+    }
+    // 'slow': never answers
+  });
+  await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+  const port = stub.address().port;
+  const ai = await signup('aiuser');
+  const aiWs = (await req('/api/workspaces', { cookie: ai.cookie })).data.workspaces[0].id;
+  const conn = (p) => req('/api/ai/connection', { method: 'PUT', cookie: ai.cookie, body: { provider: 'openai', model: 'stub', baseUrl: `http://127.0.0.1:${p}/v1`, key: 'stub-key', useOwn: true } });
+  const transform = (headers) =>
+    fetch(`${B}/api/workspaces/${aiWs}/ai/transform`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: ai.cookie, 'x-forwarded-for': freshIp(), ...headers },
+      body: JSON.stringify({ text: 'hello', instruction: 'shorter' }),
+    }).then(async (r) => ({ status: r.status, data: await r.json().catch(() => null) }));
+  const healthy = async () => (await fetch(`${B}/api/health`)).ok;
+  const fine = (r) => r.status === 424 && typeof r.data?.error === 'string' && r.data.error.length > 10;
+
+  const set = await conn(port);
+  check('AI: a test connection can be saved', set.status === 200, `got ${set.status} ${JSON.stringify(set.data)}`);
+  mode = 'error';
+  const failed = await transform();
+  check('AI: a provider answering 500 gives 424 and a readable message', fine(failed), `got ${failed.status} ${failed.data?.error}`);
+  check('AI: health stays OK after a provider error', await healthy());
+
+  mode = 'slow';
+  const t0 = Date.now();
+  const slow = await transform();
+  check('AI: a provider that never answers gives 424 "took too long"', fine(slow) && /too long/i.test(slow.data.error), `got ${slow.status} ${slow.data?.error} after ${Date.now() - t0} ms`);
+  check('AI: health stays OK after a timeout', await healthy());
+
+  stub.closeAllConnections?.();
+  await new Promise((r) => stub.close(r));
+  const refused = await transform();
+  check('AI: a provider refusing connections gives 424 and a readable message', fine(refused) && /reach/i.test(refused.data.error), `got ${refused.status} ${refused.data?.error}`);
+  check('AI: health stays OK after a refused connection', await healthy());
+
+  // In the background ("Prefer: respond-async"): 202 and a job, whose error comes back with the same status.
+  const started = await transform({ prefer: 'respond-async' });
+  let polled = null;
+  for (let i = 0; i < 20 && started.status === 202; i++) {
+    await sleep(500);
+    polled = await req(`/api/ai/jobs/${started.data.job}`, { cookie: ai.cookie });
+    if (polled.status !== 200 || polled.data?.done) break;
+  }
+  check('AI: background requests answer 202 with a job', started.status === 202 && typeof started.data?.job === 'string', `got ${started.status}`);
+  check('AI: a failed background request reports 424 and the message', polled?.status === 424 && /reach/i.test(polled.data?.error ?? ''), `got ${polled?.status} ${polled?.data?.error}`);
+  const other = await req(`/api/ai/jobs/${started.data?.job}`, { cookie: owner.cookie });
+  check("AI: someone else can't read a background request", other.status === 404, `got ${other.status}`);
+}
+
 // --- public form flooding
 {
   let last;

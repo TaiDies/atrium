@@ -265,6 +265,7 @@ Browsers need HTTPS for the camera and microphone (the Windows and Android apps 
 | `ADMIN_PANEL` | `true` | `false` turns the admin panel off |
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` |
 | `HISTORY_DAYS` | `90` | How long page history snapshots are kept (the newest 10 of each page are always kept) |
+| `AI_TIMEOUT_MS` | `90000` | How long one AI answer may take while a request waits for it. Keep it under your reverse proxy's limit (Cloudflare: 100 seconds); longer AI work runs in the background |
 | `ALLOW_PRIVATE_URLS` | `true` | Whether webhooks and AI addresses may point at the local network. **Set `false` on a shared or hosted server** |
 | `PUBLIC_URL` | — | The address people use (e.g. `https://atrium.example.com`), for links in emails and checking where live editing connects from |
 | `RTC_ICE_SERVERS` | public STUN | Meeting connection servers (see above) |

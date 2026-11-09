@@ -1,6 +1,7 @@
 import { onlineManager } from '@tanstack/react-query';
 import { createStore, del, get, set } from 'idb-keyval';
 import { useSyncExternalStore } from 'react';
+import { healthOk, isUnreachable } from './reachability';
 
 // Working without a connection. Live documents (pages, cards, whiteboards, files) keep a copy on the
 // device and merge with everyone else's edits when the connection returns (see collab.ts). Changes
@@ -96,21 +97,11 @@ export async function trackedFetch(input: RequestInfo, init?: RequestInit): Prom
     markOffline();
     throw new OfflineError();
   }
-  // The desktop and phone apps answer for an unreachable server with this header.
-  if (res.headers.get('x-offline')) {
+  // The desktop and phone apps' x-offline header, or a proxy answering for a server that's down
+  // (confirmed with the health check: a proxy also rewrites errors and cuts slow requests).
+  if (await isUnreachable(res, () => healthOk())) {
     markOffline();
     throw new OfflineError();
-  }
-  // A reverse proxy answering for a server that's down (the server's own errors always carry JSON).
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    const body = await res
-      .clone()
-      .json()
-      .catch(() => null);
-    if (!body || typeof body.error !== 'string') {
-      markOffline();
-      throw new OfflineError();
-    }
   }
   markOnline();
   return res;

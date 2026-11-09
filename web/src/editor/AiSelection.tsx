@@ -19,7 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Spinner, toast, toastError } from '../components/ui';
-import { api } from '../lib/api';
+import { aiApi, api } from '../lib/api';
 import { queryClient } from '../lib/queries';
 import { getDirectory } from '../lib/directory';
 import { selectionHasBlocks } from './blockSelection';
@@ -48,7 +48,7 @@ export async function transcribeInto(editor: any, workspaceId: string, blockId: 
   if (!fileId) return toastError(new Error('Only files uploaded here can be transcribed'));
   toast('Transcribing… this can take a minute for long recordings');
   try {
-    const { text } = await api<{ text: string }>(`/api/workspaces/${workspaceId}/ai/transcribe`, { method: 'POST', body: { fileId } });
+    const { text } = await aiApi<{ text: string }>(`/api/workspaces/${workspaceId}/ai/transcribe`, { method: 'POST', body: { fileId } });
     const block = editor.getBlock(blockId);
     if (!block) return;
     const paragraphs = text.split(/\n{2,}/).map((p: string) => p.trim()).filter(Boolean);
@@ -338,7 +338,7 @@ function AiDialog({ editor, workspaceId, captured, onClose }: { editor: any; wor
         await Promise.all(captured.eventIds.map((id) => api<{ event: TaskInfo }>(`/api/events/${id}`).then((r) => r.event).catch(() => null)))
       ).filter((e): e is TaskInfo => !!e);
       setTasks(events);
-      const answer = await api<{ text: string; events: Record<string, unknown>[] }>(`/api/workspaces/${workspaceId}/ai/transform`, {
+      const answer = await aiApi<{ text: string; events: Record<string, unknown>[] }>(`/api/workspaces/${workspaceId}/ai/transform`, {
         method: 'POST',
         body: {
           text: captured.text,

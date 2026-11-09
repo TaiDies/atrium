@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { checkBaseUrl, type Connection } from './ai.js';
+import { checkBaseUrl, type Connection, tookTooLong, UPSTREAM } from './ai.js';
+import { aiTimeout } from './aiJobs.js';
 import { config } from './config.js';
 import { FormData as UndiciFormData } from 'undici';
 import { outboundFetch } from './netGuard.js';
@@ -22,6 +23,23 @@ function speechModel(baseUrl: string) {
   return 'whisper-1';
 }
 
+/** Long recordings take a while: up to 10 minutes in the background, less while a request waits. */
+const LONG_TIMEOUT_MS = 10 * 60_000;
+
+/** Sends a request to the transcription service, turning a timeout into a clear message. */
+async function send(url: string, init: RequestInit) {
+  const signal = AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS));
+  try {
+    const res = await outboundFetch(url, { ...init, signal, redirect: 'error' }, { private: 'allow', what: 'Transcription service address' });
+    const json = (await res.json().catch((err) => (signal.aborted ? Promise.reject(err) : null))) as Record<string, any> | null;
+    return { res, json };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    if (signal.aborted) throw tookTooLong();
+    throw new HttpError(UPSTREAM, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
+  }
+}
+
 export async function transcribeFile(c: Connection, file: { id: string; filename: string; mime_type: string; size: string }): Promise<string> {
   await checkBaseUrl(c.baseUrl);
   if (c.provider === 'anthropic') {
@@ -34,7 +52,7 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
 
   if (c.provider === 'gemini') {
     const base = trimSlash(c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-    const res = await outboundFetch(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, {
+    const { res, json } = await send(`${base}/models/${encodeURIComponent(c.model)}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(c.key ? { 'x-goog-api-key': c.key } : {}) },
       body: JSON.stringify({
@@ -48,13 +66,10 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
           },
         ],
       }),
-      signal: AbortSignal.timeout(10 * 60_000),
-      redirect: 'error',
-    }, { private: 'allow', what: 'Transcription service address' });
-    const json = (await res.json().catch(() => null)) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } } | null;
-    if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : 502, `Google couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
-    const text = json?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-    if (!text.trim()) throw new HttpError(502, 'Google sent back no words');
+    });
+    if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : UPSTREAM, `Google couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
+    const text = json?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
+    if (!text.trim()) throw new HttpError(UPSTREAM, 'Google sent back no words');
     return text.trim();
   }
 
@@ -63,16 +78,13 @@ export async function transcribeFile(c: Connection, file: { id: string; filename
   form.append('file', new Blob([new Uint8Array(data)], { type: mime }), file.filename || 'recording');
   form.append('model', speechModel(base));
   form.append('response_format', 'json');
-  const res = await outboundFetch(`${base}/audio/transcriptions`, {
+  const { res, json } = await send(`${base}/audio/transcriptions`, {
     method: 'POST',
     headers: c.key ? { Authorization: `Bearer ${c.key}` } : {},
     body: form as unknown as BodyInit,
-    signal: AbortSignal.timeout(10 * 60_000),
-    redirect: 'error',
-  }, { private: 'allow', what: 'Transcription service address' });
-  const json = (await res.json().catch(() => null)) as { text?: string; error?: { message?: string } } | null;
+  });
   if (res.status === 404) throw new HttpError(400, 'This AI service has no speech-to-text. Use OpenAI, Groq or Gemini to transcribe.');
-  if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : 502, `The AI service couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
-  if (!json?.text?.trim()) throw new HttpError(502, 'The AI service sent back no words');
+  if (!res.ok) throw new HttpError(res.status === 401 || res.status === 403 ? 400 : UPSTREAM, `The AI service couldn't transcribe it${json?.error?.message ? `: ${json.error.message}` : ''}`);
+  if (!json?.text?.trim()) throw new HttpError(UPSTREAM, 'The AI service sent back no words');
   return json.text.trim();
 }

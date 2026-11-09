@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { accessMap, requireMember, requirePage } from '../access.js';
 import { aiAccess, complete } from '../ai.js';
+import { asyncCapable } from '../aiJobs.js';
 import { requireUser } from '../auth.js';
 import { databaseRows, readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -171,7 +172,7 @@ async function askAbout(userId: string, workspaceId: string, material: Material,
   try {
     return JSON.parse(answer.replace(/^```(?:json)?\n([\s\S]*?)\n```\s*$/, '$1'));
   } catch {
-    throw new HttpError(502, 'The AI gave an answer that could not be read. Try again.');
+    throw new HttpError(424, 'The AI gave an answer that could not be read. Try again.');
   }
 }
 
@@ -307,7 +308,7 @@ export async function flashcardRoutes(app: FastifyInstance) {
   const GENERATE = z.object({ material: MATERIAL.optional(), row: z.string().min(1).max(100).nullable().default(null) });
 
   // Cards the AI suggests (not saved: the person picks which to keep).
-  app.post('/pages/:id/flashcards/generate', async (req) => {
+  app.post('/pages/:id/flashcards/generate', asyncCapable(async (req) => {
     const { id } = parse(idParams, req.params);
     const body = parse(GENERATE.extend({ count: z.number().int().min(1).max(50).default(12) }), req.body ?? {});
     const { count } = body;
@@ -323,12 +324,12 @@ export async function flashcardRoutes(app: FastifyInstance) {
       .filter((r) => r.success)
       .map((r) => r.data!)
       .slice(0, count);
-    if (!cards.length) throw new HttpError(502, 'The AI made no cards. Try again.');
+    if (!cards.length) throw new HttpError(424, 'The AI made no cards. Try again.');
     return { cards };
-  });
+  }));
 
   // A multiple-choice quiz (made fresh each time).
-  app.post('/pages/:id/quiz', async (req) => {
+  app.post('/pages/:id/quiz', asyncCapable(async (req) => {
     const { id } = parse(idParams, req.params);
     const body = parse(GENERATE.extend({ count: z.number().int().min(1).max(30).default(8) }), req.body ?? {});
     const { count } = body;
@@ -345,7 +346,7 @@ export async function flashcardRoutes(app: FastifyInstance) {
       .filter((r) => r.success && r.data.answer < r.data.choices.length)
       .map((r) => r.data!)
       .slice(0, count);
-    if (!questions.length) throw new HttpError(502, 'The AI made no questions. Try again.');
+    if (!questions.length) throw new HttpError(424, 'The AI made no questions. Try again.');
     return { questions };
-  });
+  }));
 }

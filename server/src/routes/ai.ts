@@ -4,6 +4,7 @@ import { accessMap, requireMember, visibleFiles } from '../access.js';
 import { aiAccess, type ChatTurn, complete, DEFAULT_MODELS, encryptKey, listModels, PROVIDERS } from '../ai.js';
 import { requireUser } from '../auth.js';
 import { useAi } from '../limits.js';
+import { asyncCapable, jobState, runInBackground } from '../aiJobs.js';
 import { transcribeFile } from '../transcribe.js';
 import { readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -501,7 +502,7 @@ ${pageList || '(none yet)'}${listed.length > MAX_LISTED_PAGES ? `\n…and ${list
         await query('update ai_chats set messages = $2, updated_at = now() where id = $1', [chatId, JSON.stringify([...asked, last])]);
       };
       answering = true;
-      void complete(a.active, systemPrompt(body.today), turns, { json: true })
+      void runInBackground(() => complete(a.active!, systemPrompt(body.today), turns, { json: true }))
         .then((answer) => {
           const { reply, proposal } = parseAnswer(answer);
           // Tasks dated before today can't be scheduled.
@@ -521,7 +522,7 @@ ${pageList || '(none yet)'}${listed.length > MAX_LISTED_PAGES ? `\n…and ${list
    * Rewrites a piece of text as asked ("make it shorter", "fix the spelling", "translate to French"…),
    * for the AI button on selected text in pages and cards. Returns only the new text (Markdown).
    */
-  app.post('/workspaces/:id/ai/transform', { bodyLimit: 2 * 1024 * 1024 }, async (req) => {
+  app.post('/workspaces/:id/ai/transform', { bodyLimit: 2 * 1024 * 1024 }, asyncCapable(async (req) => {
     const { id } = parse(idParams, req.params);
     const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
     const taskShape = z.object({
@@ -603,10 +604,10 @@ Keep the language of the original text unless asked to translate.`;
       if (Object.keys(diff).length) changes.push({ id: before.id, ...diff });
     }
     return { text: typeof parsed.text === 'string' ? clean(parsed.text) : '', events: changes };
-  });
+  }));
 
   /** Turns an uploaded recording (audio or video) into text, for pasting into a page. */
-  app.post('/workspaces/:id/ai/transcribe', async (req) => {
+  app.post('/workspaces/:id/ai/transcribe', asyncCapable(async (req) => {
     const { id } = parse(idParams, req.params);
     const { fileId } = parse(z.object({ fileId: z.uuid() }), req.body);
     await requireMember(req.user.id, id, undefined, true);
@@ -622,9 +623,15 @@ Keep the language of the original text unless asked to translate.`;
     if (!a.active) throw new HttpError(400, 'Set up an AI connection first (AI → Settings)');
     await useAi(req.user.id);
     return { text: await transcribeFile(a.active, file) };
-  });
+  }));
 
   /** Records what was added to the workspace from an answer (the app creates the pages and tasks). */
+  /** How a background AI request is getting on (see aiJobs.ts). */
+  app.get('/ai/jobs/:id', async (req) => {
+    const { id } = parse(z.object({ id: z.uuid() }), req.params);
+    return jobState(id, req.user.id);
+  });
+
   app.post('/ai/chats/:id/applied', async (req) => {
     const { id } = parse(idParams, req.params);
     const body = parse(

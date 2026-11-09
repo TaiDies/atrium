@@ -6,6 +6,7 @@ import { one } from './db.js';
 import { getSettings } from './settings.js';
 import { HttpError } from './util.js';
 import { checkOutboundUrl, outboundFetch } from './netGuard.js';
+import { aiTimeout } from './aiJobs.js';
 
 // The AI assistant's connection to a model. People can bring their own key; the admin can also set one
 // for everybody, and then decides whether people may still use their own. Keys are stored encrypted
@@ -109,7 +110,24 @@ export interface ChatTurn {
 /** Models that accept Anthropic's server-side fallback (a declined request is retried on another model). */
 const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
-const TIMEOUT_MS = 5 * 60_000;
+/** How long one AI answer may take in the background; while a request waits for it, see aiJobs.ts. */
+const LONG_TIMEOUT_MS = 5 * 60_000;
+
+// Problems on the AI service's side answer 424 (Failed Dependency), never 502/503/504: reverse
+// proxies such as Cloudflare replace those with their own page, and the app reads that as the
+// server being down.
+export const UPSTREAM = 424;
+
+function whoIs(provider: string) {
+  return provider === 'anthropic' ? 'Anthropic' : provider === 'gemini' ? 'Google' : 'The AI service';
+}
+
+/** Said when the AI service didn't answer in time. */
+export function tookTooLong(who = 'The AI service'): HttpError {
+  return new HttpError(UPSTREAM, `${who} took too long to answer. Try again, or ask for something shorter.`);
+}
+
+const isTimeout = (err: unknown) => (err as { name?: string })?.name === 'TimeoutError' || (err as { name?: string })?.name === 'AbortError';
 
 function trimSlash(url: string) {
   return url.replace(/\/+$/, '');
@@ -117,16 +135,17 @@ function trimSlash(url: string) {
 
 /** A clear message for a failed request, by status code. */
 function failure(provider: string, status: number, detail: string): HttpError {
-  const who = provider === 'anthropic' ? 'Anthropic' : provider === 'gemini' ? 'Google' : 'The AI service';
+  const who = whoIs(provider);
   if (status === 401 || status === 403) return new HttpError(400, `${who} didn't accept the API key${detail ? `: ${detail}` : ''}`);
   if (status === 404) return new HttpError(400, `${who} doesn't know that model${detail ? `: ${detail}` : ''}. Check the model name in the AI settings.`);
   if (status === 429) return new HttpError(429, `${who} is rate-limiting this key or it's out of credit${detail ? `: ${detail}` : ''}`);
-  if (status >= 500) return new HttpError(502, `${who} had a problem answering. Try again in a moment.`);
+  if (status >= 500) return new HttpError(UPSTREAM, `${who} had a problem answering. Try again in a moment.`);
   return new HttpError(400, `${who} refused the request${detail ? `: ${detail}` : ''}`);
 }
 
 async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Promise<Answer> {
-  const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: TIMEOUT_MS, maxRetries: 2 });
+  const limit = aiTimeout(LONG_TIMEOUT_MS);
+  const client = new Anthropic({ apiKey: c.key ?? undefined, baseURL: c.baseUrl || undefined, timeout: limit, maxRetries: 2 });
   const fallback = FALLBACK_MODELS.has(c.model);
   try {
     // Streamed so long plans don't hit the HTTP timeout; only the finished message is used.
@@ -136,7 +155,7 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
       system,
       messages: turns,
       ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-    });
+    }, { signal: AbortSignal.timeout(limit) }); // retries included
     const message = await stream.finalMessage();
     if (message.stop_reason === 'refusal') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
     const text = message.content
@@ -148,21 +167,24 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
     return { text, tokens: (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) };
   } catch (err) {
     if (err instanceof HttpError) throw err;
-    if (err instanceof Anthropic.APIConnectionError) throw new HttpError(502, "Couldn't reach Anthropic. Check the server's internet connection.");
+    if (err instanceof Anthropic.APIConnectionTimeoutError || err instanceof Anthropic.APIUserAbortError || isTimeout(err)) throw tookTooLong('Anthropic');
+    if (err instanceof Anthropic.APIConnectionError) throw new HttpError(UPSTREAM, "Couldn't reach Anthropic. Check the server's internet connection.");
     if (err instanceof Anthropic.APIError) throw failure('anthropic', err.status ?? 500, (err.error as { error?: { message?: string } })?.error?.message ?? '');
     throw err;
   }
 }
 
-async function postJson(url: string, headers: Record<string, string>, body: unknown) {
+async function postJson(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal) {
   let res: Response;
+  let data: Record<string, any> | null;
   try {
-    res = await outboundFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' }, { private: 'allow', what: 'AI service address' });
+    res = await outboundFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' }, { private: 'allow', what: 'AI service address' });
+    data = (await res.json().catch((err) => (isTimeout(err) ? Promise.reject(err) : null))) as Record<string, any> | null;
   } catch (err) {
     if (err instanceof HttpError) throw err;
-    throw new HttpError(502, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
+    if (isTimeout(err) || signal.aborted) throw tookTooLong();
+    throw new HttpError(UPSTREAM, `Couldn't reach ${new URL(url).host}. Check the address and the server's internet connection.`);
   }
-  const data = (await res.json().catch(() => null)) as Record<string, any> | null;
   return { status: res.status, ok: res.ok, data };
 }
 
@@ -170,12 +192,14 @@ async function openai(c: Connection, system: string, turns: ChatTurn[], json: bo
   const base = trimSlash(c.baseUrl || 'https://api.openai.com/v1');
   const headers: Record<string, string> = c.key ? { Authorization: `Bearer ${c.key}` } : {};
   const body = { model: c.model, messages: [{ role: 'system', content: system }, ...turns] };
-  let r = await postJson(`${base}/chat/completions`, headers, json ? { ...body, response_format: { type: 'json_object' } } : body);
+  // One deadline for the whole answer, the retry without JSON mode included.
+  const signal = AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS));
+  let r = await postJson(`${base}/chat/completions`, headers, json ? { ...body, response_format: { type: 'json_object' } } : body, signal);
   // Some compatible servers don't support JSON mode; the prompt asks for JSON anyway.
-  if (!r.ok && r.status === 400 && json) r = await postJson(`${base}/chat/completions`, headers, body);
+  if (!r.ok && r.status === 400 && json) r = await postJson(`${base}/chat/completions`, headers, body, signal);
   if (!r.ok) throw failure('openai', r.status, r.data?.error?.message ?? '');
   const text = r.data?.choices?.[0]?.message?.content;
-  if (typeof text !== 'string') throw new HttpError(502, 'The AI service sent an empty answer');
+  if (typeof text !== 'string') throw new HttpError(UPSTREAM, 'The AI service sent an empty answer. Try again.');
   const u = r.data?.usage ?? {};
   return { text, tokens: Number(u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0)) || 0 };
 }
@@ -186,12 +210,12 @@ async function gemini(c: Connection, system: string, turns: ChatTurn[], json: bo
     systemInstruction: { parts: [{ text: system }] },
     contents: turns.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
     ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-  });
+  }, AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS)));
   if (!r.ok) throw failure('gemini', r.status, r.data?.error?.message ?? '');
   const candidate = r.data?.candidates?.[0];
   if (candidate?.finishReason === 'SAFETY') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
   const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('');
-  if (!text) throw new HttpError(502, 'Google sent an empty answer');
+  if (!text) throw new HttpError(UPSTREAM, 'Google sent an empty answer. Try again.');
   const u = r.data?.usageMetadata ?? {};
   return { text, tokens: Number(u.totalTokenCount ?? (u.promptTokenCount ?? 0) + (u.candidatesTokenCount ?? 0)) || 0 };
 }
@@ -221,7 +245,8 @@ export async function listModels(c: Omit<Connection, 'source'>): Promise<string[
       for await (const m of client.models.list()) ids.push(m.id);
       return ids;
     } catch (err) {
-      if (err instanceof Anthropic.APIConnectionError) throw new HttpError(502, "Couldn't reach Anthropic");
+      if (err instanceof Anthropic.APIConnectionTimeoutError) throw tookTooLong('Anthropic');
+      if (err instanceof Anthropic.APIConnectionError) throw new HttpError(UPSTREAM, "Couldn't reach Anthropic");
       if (err instanceof Anthropic.APIError) throw failure('anthropic', err.status ?? 500, '');
       throw err;
     }
@@ -235,8 +260,10 @@ export async function listModels(c: Omit<Connection, 'source'>): Promise<string[
       signal: AbortSignal.timeout(20_000),
       redirect: 'error',
     }, { private: 'allow', what: 'AI service address' });
-  } catch {
-    throw new HttpError(502, `Couldn't reach ${new URL(base).host}`);
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    if (isTimeout(err)) throw tookTooLong();
+    throw new HttpError(UPSTREAM, `Couldn't reach ${new URL(base).host}`);
   }
   const data = (await res.json().catch(() => null)) as Record<string, any> | null;
   if (!res.ok) throw failure(c.provider, res.status, data?.error?.message ?? '');

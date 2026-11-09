@@ -1,4 +1,5 @@
-import { trackedFetch } from './offline';
+import { OfflineError, trackedFetch } from './offline';
+import { fallbackMessage } from './reachability';
 
 export const APP_NAME = 'Atrium';
 
@@ -112,18 +113,49 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = unknown>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+type ApiOptions = { method?: string; body?: unknown; headers?: Record<string, string> };
+
+async function send(path: string, options: ApiOptions) {
   const hasBody = options.body !== undefined;
   // Tracks whether the server can be reached (offline.ts); throws OfflineError when it can't.
   const res = await trackedFetch(path, {
     method: options.method ?? 'GET',
-    headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { ...(hasBody ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
     body: hasBody ? JSON.stringify(options.body) : undefined,
     credentials: 'same-origin',
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data && typeof data === 'object' ? data : null);
-  return data as T;
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? fallbackMessage(res.status), data && typeof data === 'object' ? data : null);
+  return { res, data };
+}
+
+export async function api<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
+  return (await send(path, options)).data as T;
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * For AI requests that can take minutes: the server starts the work and answers at once with a job,
+ * then this asks how it's going until the answer is ready, so no request stays open long enough for
+ * a reverse proxy to cut it. (A server without background jobs just answers directly.)
+ */
+export async function aiApi<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
+  const { res, data } = await send(path, { ...options, headers: { ...options.headers, Prefer: 'respond-async' } });
+  if (res.status !== 202 || typeof data?.job !== 'string') return data as T;
+  const until = Date.now() + 15 * 60_000;
+  let gap = 1000;
+  while (Date.now() < until) {
+    await wait(gap);
+    gap = Math.min(gap * 1.5, 4000);
+    try {
+      const state = await api<{ done: boolean; result?: T }>(`/api/ai/jobs/${data.job}`);
+      if (state.done) return state.result as T;
+    } catch (err) {
+      if (!(err instanceof OfflineError)) throw err; // offline for a moment: keep asking
+    }
+  }
+  throw new ApiError(424, 'The AI took too long to answer. Try again.');
 }
 
 export async function uploadFile(workspaceId: string, file: File): Promise<string> {

@@ -8,6 +8,7 @@ import { DATABASE_TYPES } from '../collab.js';
 import { query } from '../db.js';
 import { cardTasks } from '../taskStatus.js';
 import { fillAiField } from '../aiFill.js';
+import { asyncCapable } from '../aiJobs.js';
 import { fieldsOf } from '../docIndex.js';
 import { HttpError, idParams, parse } from '../util.js';
 
@@ -48,12 +49,12 @@ export async function databaseRoutes(app: FastifyInstance) {
   });
 
   /** Has the AI fill an "AI autofill" property (for some cards, or every card that's empty). */
-  app.post('/pages/:id/fields/:fieldId/ai-fill', async (req) => {
+  app.post('/pages/:id/fields/:fieldId/ai-fill', asyncCapable(async (req) => {
     const { id, fieldId } = parse(z.object({ id: z.uuid(), fieldId: z.string().min(1).max(64) }), req.params);
     const body = parse(z.object({ rowIds: z.array(z.string().max(64)).max(500).default([]), overwrite: z.boolean().default(false) }), req.body ?? {});
     await requirePage(req.user.id, id, 'edit');
     return fillAiField(req.user.id, id, fieldId, body.rowIds, body.overwrite);
-  });
+  }));
 
   app.get('/pages/:id/rows/files', async (req) => {
     const { id } = parse(idParams, req.params);
