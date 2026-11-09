@@ -55,8 +55,7 @@ stitch together five self-hosted tools. Atrium is one app you run yourself:
   <img src="docs/media/android-chat.png" alt="Chat on Android" width="24%" />
 </p>
 
-**Video tour** (1 min 40 s, Windows and Android): [watch on the website](https://atrium-five-xi.vercel.app/#see) or
-[download it](docs/media/atrium-demo.mp4). More screenshots and GIFs are in [docs/media](docs/media).
+**Video tour** (1 min 40 s, Windows and Android): [download it](docs/media/atrium-demo.mp4). More screenshots and GIFs are in [docs/media](docs/media).
 All of them show a demo workspace with made-up people.
 
 <details>
