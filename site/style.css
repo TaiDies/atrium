@@ -216,7 +216,6 @@ mark { background: color-mix(in srgb, #ffd54a 55%, transparent); color: inherit;
 }
 
 /* See it in action */
-.demo { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); background: #0f1424; margin-top: 8px; }
 .shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 22px; }
 .shots figure { margin: 0; }
 .shots img, .phones img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); display: block; }

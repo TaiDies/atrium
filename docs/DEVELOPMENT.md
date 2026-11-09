@@ -121,5 +121,5 @@ Blob store (Storage → atrium-signups).
 ## Screenshots and videos
 
 `docs/media/` holds the screenshots, GIFs and videos used in the README and on the website (the site uses
-JPEG copies in `site/media/`). They show a demo workspace ("Northlight Studio", made-up people) on a
+JPEG copies of some screenshots in `site/media/`). They show a demo workspace ("Northlight Studio", made-up people) on a
 temporary server, captured from the Windows app at 1920×1080 and the Android app at 1080×2400.
