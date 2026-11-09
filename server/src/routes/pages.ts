@@ -161,6 +161,10 @@ export async function pageRoutes(app: FastifyInstance) {
       }),
       req.body,
     );
+    // Moving a page under another one or into a teamspace changes who can see it: that's for the
+    // people who manage its sharing, not every editor.
+    const moving = (body.parentId !== undefined && body.parentId !== current.parent_id) || body.teamspaceId !== undefined;
+    if (moving && current.access !== 'manage') throw new HttpError(403, 'Only the page owner or a workspace owner can move it somewhere that changes who can see it');
     if (body.teamspaceId) {
       const ts = await one<{ workspace_id: string }>('select workspace_id from teamspaces where id = $1', [body.teamspaceId]);
       if (!ts || ts.workspace_id !== current.workspace_id) throw new HttpError(400, 'Unknown teamspace');

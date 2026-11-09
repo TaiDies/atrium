@@ -83,7 +83,8 @@ export async function accessMap(userId: string, workspaceId: string, client?: Qu
     const cached = result.get(id);
     if (cached) return cached;
     const p = byId.get(id);
-    if (!p || depth > 100) return 'edit';
+    if (!p) return 'edit';
+    if (depth > 100) return 'none'; // a chain this deep is broken: show nothing rather than everything
     const outsider = !p.parent_id && p.teamspace_id && !teams.has(p.teamspace_id);
     // Guests: only what was shared with them, and the pages inside it.
     const value: Access =
@@ -115,6 +116,18 @@ export async function requirePage(userId: string, pageId: string, need: Access =
     throw new HttpError(403, need === 'manage' ? 'Only the page owner or a workspace owner can change sharing' : 'You can only view this page');
   }
   return { ...page, access };
+}
+
+/**
+ * Opening a file or whiteboard: members may; a guest only when it's used on a page shared with them
+ * (so pictures and boards on those pages show).
+ */
+export async function requireRefAccess(userId: string, workspaceId: string, kind: 'file' | 'board', id: string) {
+  const role = await requireMember(userId, workspaceId, undefined, true);
+  if (role !== 'guest') return;
+  const refs = await query<{ page_id: string }>(kind === 'file' ? 'select page_id from file_refs where file_id = $1' : 'select page_id from board_refs where board_id = $1', [id]);
+  const access = await accessMap(userId, workspaceId);
+  if (!refs.some((r) => (access.get(r.page_id) ?? 'none') !== 'none')) throw new HttpError(404, kind === 'file' ? 'File not found' : 'Whiteboard not found');
 }
 
 /** Stops a write to a page that's locked against accidental edits (423, like the app's read-only view). */

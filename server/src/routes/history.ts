@@ -1,3 +1,4 @@
+import { config } from '../config.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import * as Y from 'yjs';
@@ -26,12 +27,13 @@ export async function recordVersion(pageId: string, rowId: string | null, state:
   );
 }
 
-/** How long older snapshots are kept (the newest few of each page are always kept). */
-const HISTORY_DAYS = Math.max(1, Number(process.env.HISTORY_DAYS ?? 90) || 90);
+/** How long older snapshots are kept (the newest few of each page are always kept); 0 keeps everything. */
+const HISTORY_DAYS = config.historyDays;
 const ALWAYS_KEEP = 10;
 
 /** Removes snapshots older than HISTORY_DAYS, beyond the newest few of each page and card. */
 export async function pruneHistory(): Promise<number> {
+  if (!HISTORY_DAYS) return 0;
   const res = await query<{ id: string }>(
     `delete from page_versions where id in (
        select id from (
@@ -44,6 +46,7 @@ export async function pruneHistory(): Promise<number> {
 
 /** Prunes now and then once a day. The first time it removes anything, it says so plainly (once). */
 export function startHistoryPruning(log: (msg: string) => void, warn: (msg: string) => void = log) {
+  if (!HISTORY_DAYS) return; // off unless HISTORY_DAYS is set
   const run = async () => {
     const n = await pruneHistory().catch(() => 0);
     if (!n) return;

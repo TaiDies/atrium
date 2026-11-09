@@ -229,6 +229,14 @@ export async function notificationRoutes(app: FastifyInstance) {
       [id, req.user.email],
     );
     if (!invite) throw new HttpError(404, 'This invitation was withdrawn or already answered');
+    // Without email nobody can prove an address is theirs, so becoming an owner needs the
+    // administrator to have confirmed it (Admin panel → Accounts).
+    if (invite.role === 'owner' && !(await mailEnabled())) {
+      const verified = await one('select 1 from users where id = $1 and email_verified_at is not null', [req.user.id]);
+      if (!verified) {
+        throw new HttpError(403, 'This server can’t send email, so an invitation to join as an owner needs the administrator to confirm your email address first (Admin panel → Accounts → Email confirmed).');
+      }
+    }
     await tx(async (c) => {
       await query(
         `insert into workspace_members (workspace_id, user_id, role) values ($1, $2, $3) on conflict do nothing`,

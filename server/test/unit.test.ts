@@ -25,7 +25,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWriteStream } from 'node:fs';
 import { Zip, ZipDeflate, zipSync } from 'fflate';
-import { limiter, loginDelayMs } from '../src/rateLimit.ts';
+import { limiter, limitKey, loginDelayMs } from '../src/rateLimit.ts';
+import { historyDaysSetting, trustProxySetting } from '../src/config.ts';
 import { unzipToDisk } from '../src/unzipDisk.ts';
 
 describe('rate limits', () => {
@@ -422,5 +423,31 @@ describe('odd input stays fast', () => {
   it('still reads a normal page', () => {
     const m = pageMeta(`<html><head><title>Plain &amp; simple</title><meta property="og:description" content="About it"><meta name='og:image' content='/i.png'><link rel="shortcut icon" href="/f.ico"><meta property="og:site_name" content="Site"></head><body><meta property="og:title" content="late"></body>`);
     assert.deepEqual(m, { title: 'Plain & simple', description: 'About it', image: '/i.png', icon: '/f.ico', site: 'Site' });
+  });
+});
+
+describe('settings and limits from 1.11.3', () => {
+  it('trusts no proxy unless TRUST_PROXY says so', () => {
+    assert.equal(trustProxySetting(undefined), false);
+    assert.equal(trustProxySetting(''), false);
+    assert.equal(trustProxySetting('loopback'), 'loopback');
+    assert.equal(trustProxySetting('true'), true);
+  });
+  it('keeps all page history unless HISTORY_DAYS is a whole number', () => {
+    assert.equal(historyDaysSetting(undefined), 0);
+    assert.equal(historyDaysSetting('0'), 0);
+    assert.equal(historyDaysSetting(' 90 '), 90);
+    for (const bad of ['1.5', '-3', 'ninety', '90d']) assert.throws(() => historyDaysSetting(bad), /whole number/, bad);
+  });
+  it('counts IPv6 addresses per /64', () => {
+    assert.equal(limitKey('2001:db8:1:2:aaaa::1'), limitKey('2001:db8:1:2:bbbb:cccc:dddd:eeee'));
+    assert.notEqual(limitKey('2001:db8:1:2::1'), limitKey('2001:db8:1:3::1'));
+    assert.equal(limitKey('::ffff:203.0.113.7'), '203.0.113.7');
+    assert.equal(limitKey('203.0.113.7'), '203.0.113.7');
+    assert.equal(limitKey('someone@example.com'), 'someone@example.com');
+    const l = limiter(2, 60_000);
+    l.hit('2001:db8:9:9::1');
+    l.hit('2001:db8:9:9::2');
+    assert.equal(l.blocked('2001:db8:9:9:ffff::3'), true, 'another address in the same /64 is blocked too');
   });
 });

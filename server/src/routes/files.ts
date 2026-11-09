@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { queueFileText } from '../fileText.js';
-import { accessMap, requireMember } from '../access.js';
+import { accessMap, requireMember, requireRefAccess } from '../access.js';
 import { requireUser } from '../auth.js';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
@@ -101,7 +101,7 @@ export async function fileRoutes(app: FastifyInstance) {
       [id],
     );
     if (!row) throw new HttpError(404, 'File not found');
-    await requireMember(req.user.id, row.workspace_id);
+    await requireRefAccess(req.user.id, row.workspace_id, 'file', id);
 
     // Files can be saved over by the editors, so browsers check for a newer version each time.
     const etag = `"${row.size}-${row.updated_at.getTime()}"`;

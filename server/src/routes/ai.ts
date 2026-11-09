@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { accessMap, requireMember, visibleFiles } from '../access.js';
+import { accessMap, hiddenEvents, requireMember, visibleFiles } from '../access.js';
 import { aiAccess, type ChatTurn, complete, DEFAULT_MODELS, encryptKey, listModels, PROVIDERS } from '../ai.js';
 import { requireSession, requireUser } from '../auth.js';
 import { useAi } from '../limits.js';
@@ -445,11 +445,14 @@ export async function aiRoutes(app: FastifyInstance) {
 
       if (body.useCalendar) {
         const until = addDays(body.today, 180);
-        const events = await query<{ title: string; start: string; end: string | null; time: string | null; status: string | null }>(
-          `select title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status
+        const all = await query<{ id: string; title: string; start: string; end: string | null; time: string | null; status: string | null }>(
+          `select id, title, to_char(start_date, 'YYYY-MM-DD') as start, to_char(end_date, 'YYYY-MM-DD') as "end", start_time as time, status
              from events where workspace_id = $1 and start_date between $2 and $3 order by start_date, start_time nulls first limit 500`,
           [id, body.today, until],
         );
+        // Not events on pages hidden from this person.
+        const hidden = await hiddenEvents(req.user.id, id, all.map((e) => e.id));
+        const events = all.filter((e) => !hidden.has(e.id));
         const lines = events.map((e) => `${e.start}${e.end && e.end !== e.start ? `–${e.end}` : ''}${e.time ? ` ${e.time}` : ''}: ${e.title || 'Untitled'}${e.status ? ` (task, ${e.status})` : ''}`);
         add('Calendar for the next 6 months', lines.length ? lines.join('\n') : 'Nothing planned yet.');
       }
@@ -624,6 +627,8 @@ Keep the language of the original text unless asked to translate.`;
       [fileId, id],
     );
     if (!file) throw new HttpError(404, 'File not found');
+    // Only a recording this person may see (not one on a page hidden from them).
+    if (!(await visibleFiles(req.user.id, id, [fileId])).has(fileId)) throw new HttpError(404, 'File not found');
     if (!/^(audio|video)\//.test(file.mime_type) && !/\.(mp3|m4a|wav|ogg|oga|webm|mp4|mov|flac|aac)$/i.test(file.filename)) {
       throw new HttpError(400, 'Only audio and video recordings can be transcribed');
     }

@@ -538,6 +538,47 @@ let member;
   check('…and they can no longer open the workspace', (await req(`/api/workspaces/${ws}/members`, { cookie: leaver.cookie })).status === 404);
 }
 
+// --- guests see boards on pages shared with them; hidden events can't be changed; editors can't re-share by moving
+{
+  const shared = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: `Guest view ${stamp}`, type: 'document' }, cookie: owner.cookie })).data.page;
+  const g = await signup('guest2');
+  await verify(g);
+  await req(`/api/pages/${shared.id}/guests`, { method: 'POST', body: { email: g.email, level: 'view' }, cookie: owner.cookie });
+  const inviteId = (await req('/api/invitations', { cookie: g.cookie })).data?.invitations?.[0]?.id;
+  await req(`/api/invitations/${inviteId}/accept`, { method: 'POST', cookie: g.cookie });
+  const onPage = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'Shown', place: { pageId: shared.id } }, cookie: owner.cookie })).data.whiteboard;
+  const elsewhere = (await req(`/api/workspaces/${ws}/whiteboards`, { method: 'POST', body: { title: 'Hidden' }, cookie: owner.cookie })).data.whiteboard;
+  await sleep(500);
+  const seen = await req(`/api/whiteboards/${onPage.id}/preview`, { cookie: g.cookie });
+  const unseen = await req(`/api/whiteboards/${elsewhere.id}/preview`, { cookie: g.cookie });
+  check('a guest can preview a board on a page shared with them', seen.status === 200, `got ${seen.status}`);
+  check('…but not a board elsewhere', unseen.status === 404, `got ${unseen.status}`);
+
+  const secret = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'Secret plans 2', type: 'document' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${secret.id}/permissions`, { method: 'PUT', body: { defaultAccess: 'none', members: [] }, cookie: owner.cookie });
+  const day = new Date().toISOString().slice(0, 10);
+  const hidden = (await req(`/api/workspaces/${ws}/events`, { method: 'POST', body: { title: 'Hidden event', startDate: day }, cookie: owner.cookie })).data.event;
+  await req(`/api/events/${hidden.id}/place`, { method: 'POST', body: { target: { pageId: secret.id, position: 'end' } }, cookie: owner.cookie });
+  const changes = [
+    [`/api/events/${hidden.id}`, 'PATCH', { title: 'peek' }],
+    [`/api/events/${hidden.id}/paths/choose`, 'POST', { index: 0 }],
+    [`/api/events/${hidden.id}/paths/undo`, 'POST', {}],
+    [`/api/events/${hidden.id}/place`, 'POST', { target: { pageId: shared.id, position: 'end' } }],
+  ];
+  const reached = [];
+  for (const [path, method, body] of changes) {
+    const r = await req(path, { method, body, cookie: member.cookie });
+    if (r.status !== 404) reached.push(`${method} ${path.split('/').slice(-1)[0]} → ${r.status}`);
+  }
+  check('a member cannot change an event on a page hidden from them', reached.length === 0, reached.join('; '));
+
+  const a = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'Move me', type: 'document' }, cookie: owner.cookie })).data.page;
+  const moved = await req(`/api/pages/${a.id}`, { method: 'PATCH', body: { parentId: secret.id }, cookie: member.cookie });
+  check('an editor cannot move a page under another one (it changes who sees it)', moved.status === 403 || moved.status === 404, `got ${moved.status}`);
+  const renamed = await req(`/api/pages/${a.id}`, { method: 'PATCH', body: { title: 'Renamed by an editor' }, cookie: member.cookie });
+  check('…but can still rename it', renamed.status === 200, `got ${renamed.status}`);
+}
+
 // --- public form flooding
 {
   let last;
