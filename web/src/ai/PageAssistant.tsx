@@ -53,7 +53,7 @@ function Panel({ pageId, onClose }: { pageId?: string; onClose: () => void }) {
   if (chatId && chat.isError) pick(null);
 
   return (
-    <div className="fixed end-3 bottom-3 z-30 flex h-[min(560px,calc(100dvh-90px))] w-[min(400px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-line bg-bg shadow-2xl print:hidden">
+    <div className="ai-panel fixed end-3 bottom-3 z-30 flex h-[min(560px,calc(100dvh-90px))] w-[min(400px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-line bg-bg shadow-2xl print:hidden">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-3 py-2">
         <Sparkles size={15} className="text-accent" />
         <span className="flex-1 truncate text-sm font-semibold">{chat.data?.title || (pageId ? 'Ask AI about this page' : 'Ask AI')}</span>

@@ -262,10 +262,11 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
 4. Allow notifications (Settings → Notifications in the app) and camera/microphone when asked in a
    meeting.
 
-**Known limit — exporting and printing don't work in the Android app yet.** *Export as Markdown*,
-*Export as PDF* (which prints), *Export…* (the .zip), exporting office files as .docx, .pdf or .xlsx, and
-saving statistics as a spreadsheet do nothing there: no file is saved and no print dialog opens. Use
-Atrium in the phone's browser (Chrome) or on a computer for these until the app can save files itself.
+**Downloads and printing** (since 1.11.6): exports (Markdown, PDF, the .zip, office files as .docx, .pdf
+or .xlsx, statistics) and downloaded attachments are saved to the phone's **Downloads** folder; on
+Android 9 and older they go to the app's own folder instead (Android/data/io.github.taidies.atrium/files/Download).
+Printing opens Android's print screen, where **Save as PDF** is one of the printers. (1.11.5 and older
+couldn't do either in the app.)
 
 ### Web and other devices
 

@@ -27,6 +27,7 @@ import { CoverCropDialog, coverAspect, loadImage } from './CoverCrop';
 import { HistoryDialog, PageBadges, PageSettingsItems } from './PageExtras';
 import { FlashcardsDialog } from '../study/Flashcards';
 import { exportPagePdf } from '../lib/pdfExport';
+import { saveBlob } from '../lib/save';
 
 export function PageView() {
   const { pageId } = useParams();
@@ -259,12 +260,7 @@ function PageHeader({
     const editor = editorRef.current;
     if (!editor) return;
     const md = `# ${pageTitle(page)}\n\n${editor.blocksToMarkdownLossy(editor.document)}`;
-    const url = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${pageTitle(page).replace(/[\\/:*?"<>|]/g, '-')}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveBlob(new Blob([md], { type: 'text/markdown' }), `${pageTitle(page).replace(/[\\/:*?"<>|]/g, '-')}.md`);
   };
 
   return (

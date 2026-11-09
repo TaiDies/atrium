@@ -650,12 +650,87 @@ let member;
   const noGroup = await rpc('tools/call', { name: 'set_note_group', arguments: { title: 'Anything' } });
   check('MCP refuses a call missing a required argument', noGroup?.isError === true && /Missing "group"/.test(noGroup.content[0].text), JSON.stringify(noGroup));
   const tools = await rpc('tools/list', {});
-  check('MCP lists card tools with hints', ['read_database', 'add_card', 'update_card', 'delete_card', 'create_task', 'list_members'].every((n) => tools?.tools?.some((t) => t.name === n)) && tools.tools.find((t) => t.name === 'delete_card').annotations?.destructiveHint === true);
+  check('MCP lists card tools with hints', ['read_database', 'add_card', 'update_card', 'delete_card', 'create_task', 'list_members', 'read_calendar', 'move_note', 'list_trash', 'restore_note'].every((n) => tools?.tools?.some((t) => t.name === n)) && tools.tools.find((t) => t.name === 'delete_card').annotations?.destructiveHint === true);
   const db = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'MCP cards', type: 'grid' }, cookie: owner.cookie })).data.page;
   await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Topic', type: 'text' } });
   const added = await rpc('tools/call', { name: 'add_card', arguments: { title: 'MCP cards', values: { Topic: 'From Claude' } } });
   const read = await rpc('tools/call', { name: 'read_database', arguments: { title: 'MCP cards' } });
   check('MCP can add a card and read it back', !added?.isError && read?.content?.[0]?.text?.includes('From Claude'), JSON.stringify(added));
+}
+
+// --- database views through the API, and filtered card listings
+{
+  const db = (await req(`/api/workspaces/${ws}/pages`, { method: 'POST', body: { title: 'API views', type: 'grid' }, cookie: owner.cookie })).data.page;
+  await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Status', type: 'status' } });
+  await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Title', type: 'text' } });
+  await req(`/api/pages/${db.id}/fields`, { method: 'POST', cookie: owner.cookie, body: { name: 'Points', type: 'number' } });
+  await req(`/api/pages/${db.id}/rows/batch`, { method: 'POST', cookie: owner.cookie, body: { rows: [
+    { cells: { Title: 'alpha', Status: 'Done', Points: 1 } },
+    { cells: { Title: 'beta', Status: 'Not started', Points: 5 } },
+    { cells: { Title: 'gamma', Status: 'Done', Points: 3 } },
+  ] } });
+  const noDate = await req(`/api/pages/${db.id}/views`, { method: 'POST', cookie: owner.cookie, body: { name: 'Cal', type: 'calendar' } });
+  check('a calendar view needs a date property', noDate.status === 400 && /date/.test(noDate.data.error), `${noDate.status} ${noDate.data?.error}`);
+  const made = await req(`/api/pages/${db.id}/views`, { method: 'POST', cookie: owner.cookie, body: { name: 'Finished', type: 'board', filters: [{ property: 'Status', op: 'is', value: 'Done' }], sorts: [{ property: 'Points', dir: 'desc' }] } });
+  check('a view can be made with filters and sorting by name (201)', made.status === 201 && made.data.view.groupBy && made.data.view.filters[0].property === 'Status', `${made.status} ${JSON.stringify(made.data)}`);
+  const listed = await req(`/api/pages/${db.id}/views`, { cookie: owner.cookie });
+  check('views are listed', listed.status === 200 && listed.data.views.some((v) => v.name === 'Finished'), JSON.stringify(listed.data));
+  const viaView = await req(`/api/pages/${db.id}/rows?format=named&view=Finished`, { cookie: owner.cookie });
+  check("listing cards through a view applies its filters and sorting", viaView.data?.rows?.map((r) => r.cells.Title).join(',') === 'gamma,alpha', JSON.stringify(viaView.data?.rows?.map((r) => r.cells)));
+  const adhoc = await req(`/api/pages/${db.id}/rows?format=named&filters=${encodeURIComponent(JSON.stringify([{ property: 'Points', op: 'gt', value: 2 }]))}&sort=${encodeURIComponent(JSON.stringify([{ property: 'Title', dir: 'asc' }]))}`, { cookie: owner.cookie });
+  check('cards can be filtered and sorted in the request', adhoc.data?.rows?.map((r) => r.cells.Title).join(',') === 'beta,gamma', JSON.stringify(adhoc.data));
+  const badFilter = await req(`/api/pages/${db.id}/rows?filters=${encodeURIComponent(JSON.stringify([{ property: 'Colour', op: 'is', value: 'x' }]))}`, { cookie: owner.cookie });
+  const badJson = await req(`/api/pages/${db.id}/rows?filters=nope`, { cookie: owner.cookie });
+  check('unknown properties and bad filter JSON are refused', badFilter.status === 400 && /Colour/.test(badFilter.data.error) && badJson.status === 400, `${badFilter.status} ${badJson.status}`);
+  const changed = await req(`/api/pages/${db.id}/views/Finished`, { method: 'PATCH', cookie: owner.cookie, body: { name: 'Done cards', filters: [] } });
+  check('a view can be renamed and its filters changed', changed.status === 200 && changed.data.view.name === 'Done cards' && changed.data.view.filters.length === 0, `${changed.status}`);
+  const other = await req(`/api/pages/${db.id}/views`, { method: 'POST', cookie: owner.cookie, body: { name: 'Table', type: 'grid' } });
+  const del = await req(`/api/pages/${db.id}/views/${other.data.view.id}`, { method: 'DELETE', cookie: owner.cookie });
+  const views = (await req(`/api/pages/${db.id}/views`, { cookie: owner.cookie })).data.views;
+  for (const v of views.slice(1)) await req(`/api/pages/${db.id}/views/${v.id}`, { method: 'DELETE', cookie: owner.cookie });
+  const last = await req(`/api/pages/${db.id}/views/${views[0].id}`, { method: 'DELETE', cookie: owner.cookie });
+  check('a view can be deleted, but not the last one', del.status === 200 && last.status === 400, `${del.status} ${last.status}`);
+}
+
+// --- MCP: calendar, moving notes, the trash
+{
+  const tok = (await req('/api/auth/tokens', { method: 'POST', cookie: owner.cookie, body: { name: 'mcp2', workspaceId: ws } })).data?.token;
+  const call = async (name, args) => {
+    const r = await fetch(`${B}/api/mcp`, { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'x-forwarded-for': freshIp() }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    return (await r.json()).result;
+  };
+  const text = (r) => r?.content?.[0]?.text ?? '';
+  const parentT = `Move parent ${stamp}`;
+  const childT = `Move child ${stamp}`;
+  await call('create_note', { title: parentT, content: 'parent' });
+  await call('create_note', { title: childT, content: 'child' });
+  const moved = await call('move_note', { title: childT, parentTitle: parentT });
+  const pages = (await req(`/api/workspaces/${ws}/pages`, { cookie: owner.cookie })).data.pages;
+  const child = pages.find((p) => p.title === childT);
+  const parent = pages.find((p) => p.title === parentT);
+  check('MCP can move a note under another', !moved?.isError && child?.parentId === parent?.id, `${text(moved)} ${child?.parentId}`);
+  const top = await call('move_note', { title: childT });
+  const again = (await req(`/api/workspaces/${ws}/pages`, { cookie: owner.cookie })).data.pages.find((p) => p.title === childT);
+  check('MCP can move a note to the top level', !top?.isError && again?.parentId === null, text(top));
+  await call('delete_note', { title: childT });
+  const trash = await call('list_trash', {});
+  check('MCP lists the trash', text(trash).includes(childT), text(trash));
+  const restored = await call('restore_note', { title: childT });
+  const back = (await req(`/api/workspaces/${ws}/pages`, { cookie: owner.cookie })).data.pages.some((p) => p.title === childT);
+  check('MCP can restore a note from the trash', !restored?.isError && back, text(restored));
+  await call('create_task', { title: `Calendar check ${stamp}`, date: '2031-03-04', time: '09:30' });
+  const cal = await call('read_calendar', { from: '2031-03-01', to: '2031-03-07' });
+  const wide = await call('read_calendar', { from: '2031-01-01', to: '2031-12-31' });
+  check('MCP reads the calendar, and refuses huge ranges', text(cal).includes(`Calendar check ${stamp}`) && text(cal).includes('09:30') && wide?.isError === true, `${text(cal)} / ${text(wide)}`);
+}
+
+// --- openapi.json covers every route, and the guide describes every route (or it's listed as app-only)
+{
+  const r = await fetch(`${B}/api/openapi.json`);
+  const spec = await r.json();
+  check('openapi.json is served without signing in', r.status === 200 && spec.openapi === '3.1.0' && !!spec.paths['/api/pages/{id}/views'], `${r.status}`);
+  check('every route is in the API guide or listed as app-only (openapi.ts)', spec['x-missing-from-guide']?.length === 0, JSON.stringify(spec['x-missing-from-guide']));
+  check('every route in the API guide exists', spec['x-guide-without-route']?.length === 0, JSON.stringify(spec['x-guide-without-route']));
 }
 
 // --- public form flooding

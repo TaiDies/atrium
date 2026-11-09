@@ -43,18 +43,21 @@ import { socialRoutes } from './routes/social.js';
 import { publicPageRoutes, publishRoutes, shareIndexable } from './routes/publish.js';
 import { aiRoutes } from './routes/ai.js';
 import { databaseRoutes } from './routes/databases.js';
-import { rowRoutes } from './routes/rows.js';
+import { rowRoutes, viewRoutes } from './routes/rows.js';
 import { startAdminServer } from './admin.js';
 import { handleError } from './util.js';
 
 /** Bumped with each release; the apps show it and can warn about very old servers. */
 import { SERVER_VERSION, startUpdateChecks } from './updates.js';
+import { openapi, recordRoute } from './openapi.js';
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
   bodyLimit: 2 * 1024 * 1024,
   trustProxy: config.trustProxy,
 });
+// Every route, for /api/openapi.json.
+app.addHook('onRoute', recordRoute);
 // Each request runs in its own context, so an API token limited to one workspace holds for all of it.
 app.addHook('onRequest', (_req, _reply, done) => runRequest(done));
 // Headers that make the browser stricter with every reply: no guessing file types, no showing the app
@@ -84,6 +87,8 @@ app.setErrorHandler(handleError);
 app.get('/api/health', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
 // What the desktop and phone apps check when someone types in this server's address.
 app.get('/api/server/info', async () => ({ app: 'atrium', name: config.appName, version: SERVER_VERSION, api: 1 }));
+// The routes as an OpenAPI description (generated: see openapi.ts). Readable without signing in, like /api/docs.
+app.get('/api/openapi.json', async () => openapi(SERVER_VERSION, config.appName));
 await app.register(
   async (api) => {
     await api.register(authRoutes);
@@ -103,6 +108,7 @@ await app.register(
     await api.register(aiRoutes);
     await api.register(databaseRoutes);
     await api.register(rowRoutes);
+    await api.register(viewRoutes);
     await api.register(templateRoutes);
     await api.register(publishRoutes);
     await api.register(publicPageRoutes);

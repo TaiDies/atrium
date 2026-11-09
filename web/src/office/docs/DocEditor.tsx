@@ -63,6 +63,7 @@ import { uploadFile, type User } from '../../lib/api';
 import type { CollabSession } from '../../lib/collab';
 import { timeAgo } from '../../lib/time';
 import { convertBytes, type EditorHandle, extOf, type OfficeFile } from '../shared';
+import { printDocument, savesNatively } from '../../lib/save';
 import { DEFAULT_SETUP, documentToHtml, exportHtml, htmlToMarkdown, inlineImages, MARGIN_PRESETS, PAGE_SIZES, type PageSetup, pageSize } from './convert';
 import { Comment, FindReplace, Indent, PageBreak, searchKey, TableOfContents } from './extensions';
 
@@ -241,6 +242,7 @@ export const DocEditor = forwardRef<EditorHandle, Props>(function DocEditor({ fi
   }));
 
   const print = async () => {
+    if (savesNatively()) return printDocument(await html(false), file.name);
     const w = window.open('', '_blank');
     if (!w) return toastError(new Error('Allow pop-ups to print'));
     w.document.write(await html(false));

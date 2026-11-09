@@ -608,3 +608,24 @@ describe('visitor address behind proxies', () => {
     assert.equal(await ipSeen('172.16.0.0/12', { 'x-forwarded-for': '1.2.3.4' }), '1.2.3.4');
   });
 });
+
+describe('stylesheet', () => {
+  it('every app class the stylesheet styles is used by a component (renames once left phone rules dead)', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = join(import.meta.dirname, '../../web/src');
+    const css = readFileSync(join(root, 'styles.css'), 'utf8');
+    const code: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(dir, e.name));
+        else if (/\.(tsx?|html)$/.test(e.name)) code.push(readFileSync(join(dir, e.name), 'utf8'));
+      }
+    };
+    walk(root);
+    const all = code.join(' ');
+    const classes = [...new Set([...css.matchAll(/\.((?:af|atrium|ai)-[a-z0-9-]+)/g)].map((m) => m[1]))];
+    const unused = classes.filter((c) => !all.includes(c));
+    assert.deepEqual(unused, []);
+  });
+});
