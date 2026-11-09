@@ -1,6 +1,7 @@
-import type { Server as HttpServer } from 'node:http';
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { randomUUID } from 'node:crypto';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { parseCookieHeader, sessionToken, userFromToken, websocketOriginOk } from './auth.js';
 import { meetingAccess, type MeetingPerms } from './meetingAccess.js';
 
@@ -68,8 +69,20 @@ export function closeRoom(meetingId: string) {
 export function attachLive(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
-  server.on('upgrade', async (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+  server.on('upgrade', (req, socket, head) => {
+    upgrade(req, socket, head).catch((err) => {
+      console.error('A live connection failed', err);
+      socket.destroy();
+    });
+  });
+
+  async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      return; // collab.ts closes connections with a request target that isn't a path
+    }
     if (url.pathname !== '/live') return;
     const cookie = sessionToken(parseCookieHeader(req.headers.cookie));
     const ticket = url.searchParams.get('ticket') ?? undefined;
@@ -101,13 +114,17 @@ export function attachLive(server: HttpServer) {
         meetingId = null;
       };
 
-      ws.on('message', async (raw) => {
+      ws.on('message', (raw) => {
+        handle(raw).catch((err) => console.error('A live message failed', err));
+      });
+      const handle = async (raw: RawData) => {
         let msg: { t?: string; code?: string; to?: string; data?: unknown; media?: Partial<Peer['media']> };
         try {
           msg = JSON.parse(raw.toString());
         } catch {
           return;
         }
+        if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
         if (msg.t === 'join' && typeof msg.code === 'string') {
           leave();
           const access = await meetingAccess(user.id, msg.code, { joining: true }).catch((err: Error) => ({ error: err.message }) as const);
@@ -139,7 +156,7 @@ export function attachLive(server: HttpServer) {
         } else if (msg.t === 'leave') {
           leave();
         }
-      });
+      };
       ws.on('close', () => {
         clearInterval(ping);
         leave();
@@ -148,5 +165,5 @@ export function attachLive(server: HttpServer) {
       });
       ws.on('error', () => ws.terminate());
     });
-  });
+  }
 }

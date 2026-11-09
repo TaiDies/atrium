@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Server as HttpServer } from 'node:http';
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { Database } from '@hocuspocus/extension-database';
 import { Hocuspocus } from '@hocuspocus/server';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
@@ -515,8 +516,22 @@ function toUint8(data: RawData): Uint8Array {
 export function attachCollab(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 
-  server.on('upgrade', async (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+  server.on('upgrade', (req, socket, head) => {
+    // Anything that goes wrong with one connection closes that connection, never the server.
+    upgrade(req, socket, head).catch((err) => {
+      console.error('A live-editing connection failed', err);
+      socket.destroy();
+    });
+  });
+
+  async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      socket.destroy(); // a request target that isn't a path, such as "//%"
+      return;
+    }
     if (url.pathname === '/live') return; // the live channel (live.ts) answers that one
     if (url.pathname !== '/collab') {
       socket.destroy();
@@ -548,7 +563,14 @@ export function attachCollab(server: HttpServer) {
       mine.add(ws);
       socketsByUser.set(user.id, mine);
       const ping = setInterval(() => ws.ping(), 15_000);
-      ws.on('message', (data) => connection.handleMessage(toUint8(data)));
+      ws.on('message', (data) => {
+        try {
+          connection.handleMessage(toUint8(data));
+        } catch (err) {
+          console.error('A live-editing message failed', err);
+          ws.terminate();
+        }
+      });
       ws.on('pong', () => connection.touch());
       ws.on('close', (code, reason) => {
         clearInterval(ping);
@@ -558,5 +580,5 @@ export function attachCollab(server: HttpServer) {
       });
       ws.on('error', () => ws.terminate());
     });
-  });
+  }
 }

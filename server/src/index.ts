@@ -150,6 +150,10 @@ startUpdateChecks();
 await app.listen({ port: config.port, host: config.host });
 const admin = config.admin.enabled ? await startAdminServer() : null;
 
+// One bad request or connection must never take the whole server down.
+process.on('unhandledRejection', (reason) => app.log.error({ err: reason }, 'Unhandled promise rejection'));
+process.on('uncaughtException', (err) => app.log.error({ err }, 'Uncaught exception'));
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, async () => {
     app.log.info(`${signal} received, shutting down`);
