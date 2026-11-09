@@ -1,7 +1,8 @@
 {
   "name": "atrium-native",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.11.3",
+  "license": "AGPL-3.0-only",
   "description": "The Windows and Android apps: the web app, working offline, connected to a server of your choice.",
   "scripts": {
     "tauri": "tauri",

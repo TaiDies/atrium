@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   checks:
@@ -33,6 +34,12 @@ jobs:
           cache-dependency-path: |
             server/package-lock.json
             web/package-lock.json
+
+      - name: Versions match (tools/set-version.mjs)
+        run: node tools/set-version.mjs --check
+
+      - name: docker-compose.yml is valid
+        run: docker compose config -q
 
       - name: Install
         run: |
@@ -69,3 +76,20 @@ jobs:
       - name: Server log (on failure)
         if: failure()
         run: tail -n 200 "$RUNNER_TEMP/server.log" || true
+
+  docker:
+    # The image builds and the server in it starts (with the database from docker-compose.yml).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start
+        run: |
+          printf 'POSTGRES_PASSWORD=ci-only-password
+' > .env
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3000/api/server/info && exit 0
+            sleep 3
+          done
+          docker compose logs app
+          exit 1

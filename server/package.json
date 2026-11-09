@@ -1,6 +1,6 @@
 {
     "name": "atrium-server",
-    "version": "1.0.0",
+    "version": "1.11.3",
     "description": "API and real-time collaboration server",
     "scripts": {
         "dev": "tsx watch src/index.ts",
