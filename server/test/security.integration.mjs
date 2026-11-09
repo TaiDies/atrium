@@ -579,6 +579,28 @@ let member;
   check('…but can still rename it', renamed.status === 200, `got ${renamed.status}`);
 }
 
+// --- a background AI request can be stopped
+{
+  const { createServer } = await import('node:http');
+  const hang = createServer(() => {}); // never answers
+  await new Promise((r) => hang.listen(0, '127.0.0.1', r));
+  const u = await signup('stopper');
+  const uws = (await req('/api/workspaces', { cookie: u.cookie })).data.workspaces[0].id;
+  await req('/api/ai/connection', { method: 'PUT', cookie: u.cookie, body: { provider: 'openai', model: 'stub', baseUrl: `http://127.0.0.1:${hang.address().port}/v1`, key: 'k', useOwn: true } });
+  const started = await fetch(`${B}/api/workspaces/${uws}/ai/transform`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: u.cookie, 'x-forwarded-for': freshIp(), prefer: 'respond-async' },
+    body: JSON.stringify({ text: 'hello', instruction: 'shorter' }),
+  }).then((r) => r.json());
+  await sleep(300);
+  const stop = await req(`/api/ai/jobs/${started.job}`, { method: 'DELETE', cookie: u.cookie });
+  const after = await req(`/api/ai/jobs/${started.job}`, { cookie: u.cookie });
+  check('stopping a background AI request works and it reports "Cancelled"', stop.status === 200 && after.status === 409 && after.data?.error === 'Cancelled', `${stop.status} ${after.status} ${after.data?.error}`);
+  check("someone else can't stop it", (await req(`/api/ai/jobs/${started.job}`, { method: 'DELETE', cookie: owner.cookie })).status === 404);
+  hang.closeAllConnections?.();
+  hang.close();
+}
+
 // --- public form flooding
 {
   let last;

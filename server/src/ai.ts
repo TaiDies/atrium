@@ -6,7 +6,7 @@ import { one } from './db.js';
 import { getSettings } from './settings.js';
 import { HttpError } from './util.js';
 import { checkOutboundUrl, guardedFetch, outboundFetch } from './netGuard.js';
-import { aiTimeout } from './aiJobs.js';
+import { aiSignal, aiTimeout } from './aiJobs.js';
 
 // The AI assistant's connection to a model. People can bring their own key; the admin can also set one
 // for everybody, and then decides whether people may still use their own. Keys are stored encrypted
@@ -156,7 +156,7 @@ async function anthropic(c: Connection, system: string, turns: ChatTurn[]): Prom
       system,
       messages: turns,
       ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-    }, { signal: AbortSignal.timeout(limit) }); // retries included
+    }, { signal: aiSignal(LONG_TIMEOUT_MS) }); // retries included; also stops when its job is cancelled
     const message = await stream.finalMessage();
     if (message.stop_reason === 'refusal') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');
     const text = message.content
@@ -194,7 +194,7 @@ async function openai(c: Connection, system: string, turns: ChatTurn[], json: bo
   const headers: Record<string, string> = c.key ? { Authorization: `Bearer ${c.key}` } : {};
   const body = { model: c.model, messages: [{ role: 'system', content: system }, ...turns] };
   // One deadline for the whole answer, the retry without JSON mode included.
-  const signal = AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS));
+  const signal = aiSignal(LONG_TIMEOUT_MS);
   let r = await postJson(`${base}/chat/completions`, headers, json ? { ...body, response_format: { type: 'json_object' } } : body, signal);
   // Some compatible servers don't support JSON mode; the prompt asks for JSON anyway.
   if (!r.ok && r.status === 400 && json) r = await postJson(`${base}/chat/completions`, headers, body, signal);
@@ -211,7 +211,7 @@ async function gemini(c: Connection, system: string, turns: ChatTurn[], json: bo
     systemInstruction: { parts: [{ text: system }] },
     contents: turns.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
     ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-  }, AbortSignal.timeout(aiTimeout(LONG_TIMEOUT_MS)));
+  }, aiSignal(LONG_TIMEOUT_MS));
   if (!r.ok) throw failure('gemini', r.status, r.data?.error?.message ?? '');
   const candidate = r.data?.candidates?.[0];
   if (candidate?.finishReason === 'SAFETY') throw new HttpError(400, 'The model declined this request. Try rephrasing it.');

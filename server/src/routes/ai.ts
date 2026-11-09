@@ -4,7 +4,7 @@ import { accessMap, hiddenEvents, requireMember, visibleFiles } from '../access.
 import { aiAccess, type ChatTurn, complete, DEFAULT_MODELS, encryptKey, listModels, PROVIDERS } from '../ai.js';
 import { requireSession, requireUser } from '../auth.js';
 import { useAi } from '../limits.js';
-import { asyncCapable, jobState, runInBackground } from '../aiJobs.js';
+import { asyncCapable, cancelJob, jobState, runInBackground } from '../aiJobs.js';
 import { transcribeFile } from '../transcribe.js';
 import { readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
@@ -643,6 +643,13 @@ Keep the language of the original text unless asked to translate.`;
   app.get('/ai/jobs/:id', async (req) => {
     const { id } = parse(z.object({ id: z.uuid() }), req.params);
     return jobState(id, req.user.id, req.tokenScope ?? null);
+  });
+
+  /** Stops a background AI request (the Stop button). */
+  app.delete('/ai/jobs/:id', async (req) => {
+    const { id } = parse(z.object({ id: z.uuid() }), req.params);
+    cancelJob(id, req.user.id, req.tokenScope ?? null);
+    return { ok: true };
   });
 
   app.post('/ai/chats/:id/applied', async (req) => {

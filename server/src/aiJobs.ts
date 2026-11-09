@@ -14,6 +14,8 @@ export const HELD_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 90_000;
 
 interface Job {
   userId: string;
+  /** Stops the work when the person cancels (DELETE /api/ai/jobs/:id). */
+  controller: AbortController;
   /** The workspace an API token that started it was limited to: only that token's scope may read it. */
   scope: string | null;
   done: boolean;
@@ -23,19 +25,29 @@ interface Job {
 }
 
 const jobs = new Map<string, Job>();
-const background = new AsyncLocalStorage<true>();
+const background = new AsyncLocalStorage<{ signal?: AbortSignal }>();
 /** A finished job's answer is kept this long for the app to collect. */
 const KEEP_MS = 10 * 60_000;
 const MAX_RUNNING_PER_USER = 4;
 
 /** Whether the current code runs as a background job (no request waiting on it). */
-export const inBackground = () => background.getStore() === true;
+export const inBackground = () => background.getStore() !== undefined;
+
+/** Fires when the background job running this code is cancelled (undefined outside a job). */
+export const jobSignal = (): AbortSignal | undefined => background.getStore()?.signal;
+
+/** A timeout for one AI call, also ended when its job is cancelled. */
+export const aiSignal = (long: number): AbortSignal => {
+  const timeout = AbortSignal.timeout(aiTimeout(long));
+  const job = jobSignal();
+  return job ? AbortSignal.any([timeout, job]) : timeout;
+};
 
 /** How long an AI call may take here: `held` while a request waits, `long` in the background. */
 export const aiTimeout = (long: number) => (inBackground() ? long : HELD_TIMEOUT_MS);
 
 /** Runs `fn` as background work (for answers saved elsewhere, such as the assistant chat). */
-export const runInBackground = <T>(fn: () => Promise<T>) => background.run(true, fn);
+export const runInBackground = <T>(fn: () => Promise<T>, signal?: AbortSignal) => background.run({ signal }, fn);
 
 function sweep(now = Date.now()) {
   for (const [id, job] of jobs) if (job.finishedAt && now - job.finishedAt > KEEP_MS) jobs.delete(id);
@@ -63,12 +75,16 @@ export function asyncCapable<R extends FastifyRequest>(handler: (req: R) => Prom
     for (const j of jobs.values()) if (j.userId === userId && !j.done) running++;
     if (running >= MAX_RUNNING_PER_USER) throw new HttpError(429, 'Several AI requests are already running. Wait for one to finish.');
     const id = randomUUID();
-    const job: Job = { userId, scope: (req as { tokenScope?: string | null }).tokenScope ?? null, done: false };
+    const job: Job = { userId, controller: new AbortController(), scope: (req as { tokenScope?: string | null }).tokenScope ?? null, done: false };
     jobs.set(id, job);
-    void runInBackground(() => handler(req))
+    void runInBackground(() => handler(req), job.controller.signal)
       .then(
-        (result) => (job.result = result),
-        (err) => (job.error = errorOf(err)),
+        (result) => {
+          if (!job.controller.signal.aborted) job.result = result;
+        },
+        (err) => {
+          if (!job.controller.signal.aborted) job.error = errorOf(err);
+        },
       )
       .finally(() => {
         job.done = true;
@@ -76,6 +92,16 @@ export function asyncCapable<R extends FastifyRequest>(handler: (req: R) => Prom
       });
     return reply.code(202).send({ job: id });
   };
+}
+
+/** Cancels a job of this person's (the work stops at its next step; nothing more is saved). */
+export function cancelJob(id: string, userId: string, scope: string | null = null) {
+  const job = jobs.get(id);
+  if (!job || job.userId !== userId || (scope !== null && job.scope !== scope)) throw new HttpError(404, 'That AI request is no longer available.');
+  if (!job.done) {
+    job.controller.abort();
+    job.error = { status: 409, message: 'Cancelled' };
+  }
 }
 
 /** A job's state, for its owner: not done yet, its answer, or its error (thrown with its status). */

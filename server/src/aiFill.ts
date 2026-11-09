@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { aiAccess, complete } from './ai.js';
+import { jobSignal } from './aiJobs.js';
 import { editDoc, readDoc } from './blocks.js';
 import { config } from './config.js';
 import { fieldsOf, type FieldInfo } from './docIndex.js';
@@ -72,7 +73,9 @@ export async function fillAiField(userId: string, pageId: string, fieldId: strin
   const system = `You fill in one property of a card in a database in ${config.appName}. You are given the card's other properties and the text of its page.
 Reply with ONLY the value for the property — no label, no quotes, no explanation. Keep it short (a word, a phrase or a sentence or two) unless the instruction asks for more. If the card doesn't have enough information, give your best short guess, or reply "—".`;
   const values = new Map<string, string>();
+  const cancelled = jobSignal();
   for (const row of batch) {
+    if (cancelled?.aborted) return { filled: 0, remaining: wanted.length }; // stopped: nothing is written
     await useAi(userId);
     const title = primary ? cellText(primary, row.cells[primary.id]) : '';
     const props = others
@@ -87,7 +90,7 @@ Reply with ONLY the value for the property — no label, no quotes, no explanati
     const answer = (await complete(a.active, system, [{ role: 'user', content }])).trim().replace(/^["“](.*)["”]$/s, '$1');
     values.set(row.id, answer.slice(0, 5000));
   }
-  if (values.size) {
+  if (values.size && !cancelled?.aborted) {
     await editDoc(
       pageId,
       null,

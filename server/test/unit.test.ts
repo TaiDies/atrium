@@ -11,7 +11,7 @@ import createDOMPurify from '../../web/node_modules/dompurify/dist/purify.es.mjs
 import { ffmpegInput, INPUT_FORMATS } from '../src/ffmpegArgs.ts';
 import { historyNotice } from '../src/historyNotice.ts';
 import { shouldRenewTicket } from '../../web/src/lib/ticketRenewal.ts';
-import { fallbackMessage, healthOk, isUnreachable } from '../../web/src/lib/reachability.ts';
+import { fallbackMessage, healthOk, isNetworkFailure, isUnreachable, outboxVerdict } from '../../web/src/lib/reachability.ts';
 import { asyncCapable, jobState, aiTimeout, HELD_TIMEOUT_MS } from '../src/aiJobs.ts';
 import { HttpError } from '../src/util.ts';
 import { fetch as undiciFetch } from 'undici';
@@ -449,5 +449,20 @@ describe('settings and limits from 1.11.3', () => {
     l.hit('2001:db8:9:9::1');
     l.hit('2001:db8:9:9::2');
     assert.equal(l.blocked('2001:db8:9:9:ffff::3'), true, 'another address in the same /64 is blocked too');
+  });
+});
+
+describe('offline changes and network errors', () => {
+  it('keeps queued changes when signed out or when the server is busy', () => {
+    assert.equal(outboxVerdict(200), 'done');
+    assert.equal(outboxVerdict(204), 'done');
+    assert.equal(outboxVerdict(401), 'wait-for-sign-in');
+    for (const s of [408, 425, 429, 500, 502, 503, 504, 524]) assert.equal(outboxVerdict(s), 'retry-later', String(s));
+    for (const s of [400, 403, 404, 409, 423]) assert.equal(outboxVerdict(s), 'refused', String(s));
+  });
+  it('only a network failure counts as offline', () => {
+    assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
+    assert.equal(isNetworkFailure(new DOMException('Stopped', 'AbortError')), false);
+    assert.equal(isNetworkFailure(new Error('The app couldn’t send this request')), false);
   });
 });
