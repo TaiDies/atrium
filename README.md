@@ -2,6 +2,8 @@
 
 <img src="web/public/logo.svg" alt="Atrium logo" width="96" />
 
+<a href="https://ko-fi.com/taidie"><img src="docs/media/kofi-button.svg" alt="Support Atrium on Ko-fi" height="44" /></a>
+
 # Atrium
 
 **Your team's open hall — on your own server.**

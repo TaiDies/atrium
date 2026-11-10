@@ -239,3 +239,6 @@ mark { background: color-mix(in srgb, #ffd54a 55%, transparent); color: inherit;
 /* Privacy note */
 .wrap.narrow { max-width: 760px; }
 #privacy p { color: var(--muted); line-height: 1.7; }
+
+.btn.kofi { background: #ff5e5b; border-color: transparent; color: #fff; }
+.btn.kofi:hover { background: #f04845; }
