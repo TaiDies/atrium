@@ -3,6 +3,8 @@ package io.github.taidies.atrium
 import android.app.PictureInPictureParams
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Environment
@@ -218,6 +220,85 @@ class MainActivity : TauriActivity() {
         printing = view // kept until the next print, so it isn't collected while printing
         view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
       }
+    }
+
+    // ----- updating the app: the page finds a newer release on GitHub, the app downloads the APK,
+    // checks its SHA-256 against the release's, and hands it to Android's installer (the person taps
+    // Install; Android only accepts it if it's signed with the same key as the installed app) -----
+
+    /** Whether Android lets this app open the installer (Settings → Install unknown apps). */
+    @JavascriptInterface
+    fun canInstallUpdates(): Boolean =
+      Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
+
+    /** Opens the switch that lets this app install updates. */
+    @JavascriptInterface
+    fun openInstallSettings() {
+      runOnUiThread {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+        }
+      }
+    }
+
+    /**
+     * Downloads the APK at `url` (GitHub only), checks it against `sha256` (hex) and opens the installer.
+     * Progress and the outcome are reported to window.__afUpdate({ progress }) / ({ error }) / ({ done }).
+     */
+    @JavascriptInterface
+    fun installUpdate(url: String, sha256: String) {
+      val report = { json: String -> runOnUiThread { web?.evaluateJavascript("window.__afUpdate && window.__afUpdate($json)", null) } }
+      Thread {
+        try {
+          val host = Uri.parse(url).host ?: ""
+          if (!url.startsWith("https://") || !(host == "github.com" || host.endsWith(".githubusercontent.com"))) throw Exception("Updates only come from GitHub")
+          if (!Regex("^[0-9a-f]{64}$").matches(sha256)) throw Exception("The release has no checksum to verify the download")
+          val dir = java.io.File(cacheDir, "updates").apply { mkdirs() }
+          dir.listFiles()?.forEach { it.delete() }
+          val file = java.io.File(dir, "Atrium.apk")
+          val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+          conn.instanceFollowRedirects = true
+          conn.connectTimeout = 15000
+          conn.readTimeout = 30000
+          conn.connect()
+          if (conn.responseCode != 200) throw Exception("Download failed (${conn.responseCode})")
+          val finalHost = conn.url.host ?: ""
+          if (!(finalHost == "github.com" || finalHost.endsWith(".githubusercontent.com"))) throw Exception("Updates only come from GitHub")
+          val total = conn.contentLengthLong
+          val digest = java.security.MessageDigest.getInstance("SHA-256")
+          var done = 0L
+          var last = -1
+          conn.inputStream.use { input ->
+            java.io.FileOutputStream(file).use { out ->
+              val buf = ByteArray(64 * 1024)
+              while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                digest.update(buf, 0, n)
+                done += n
+                val pct = if (total > 0) (done * 100 / total).toInt() else -1
+                if (pct != last) { last = pct; report("{\"progress\":$pct}") }
+              }
+            }
+          }
+          val hex = digest.digest().joinToString("") { "%02x".format(it) }
+          if (hex != sha256) {
+            file.delete()
+            throw Exception("The download didn't match the release's checksum")
+          }
+          val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
+          runOnUiThread {
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+              setDataAndType(uri, "application/vnd.android.package-archive")
+              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+          }
+          report("{\"done\":true}")
+        } catch (e: Exception) {
+          report("{\"error\":${org.json.JSONObject.quote(e.message ?: "The update couldn't be downloaded")}}")
+        }
+      }.start()
     }
 
     @JavascriptInterface
