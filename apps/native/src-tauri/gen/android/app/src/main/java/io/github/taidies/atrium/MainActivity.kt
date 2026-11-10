@@ -25,6 +25,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+
+/** The app's own page (Tauri serves it from this origin on Android). Only it may use AfAndroidSecure. */
+private val APP_ORIGINS = setOf("http://app.localhost")
 
 class MainActivity : TauriActivity() {
   override val handleBackNavigation: Boolean = false
@@ -108,8 +114,228 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     web = webView
     webView.post { claimBack() }
-    // The app tells Android its colours, so the status and navigation bars match its theme.
+    // The app tells Android its colours, so the status and navigation bars match its theme. Only harmless
+    // calls go here: Android puts this object in every frame and can't say which frame called.
     webView.addJavascriptInterface(Bars(), "AfAndroid")
+    // Saving files, printing and installing updates go through a message channel instead, which Android
+    // only gives to pages from the app's own origin; each message must also come from the top-level page.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+      WebViewCompat.addWebMessageListener(webView, "AfAndroidSecure", APP_ORIGINS) { _, message, origin, isMainFrame, reply ->
+        val text = message.data ?: return@addWebMessageListener
+        if (!isMainFrame || origin.toString().trimEnd('/') !in APP_ORIGINS) return@addWebMessageListener
+        handleSecure(text, reply)
+      }
+    }
+  }
+
+  // ----- the privileged channel (AfAndroidSecure): {"id", "method", "args"} in, {"id", "result"} or
+  // {"id", "error"} back. Work runs on one background thread, in order; replies go back on the UI thread. -----
+
+  private val secureWork = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+  private fun handleSecure(text: String, reply: JavaScriptReplyProxy) {
+    val msg = try {
+      org.json.JSONObject(text)
+    } catch (_: Exception) {
+      return
+    }
+    val id = msg.optString("id")
+    val args = msg.optJSONArray("args") ?: org.json.JSONArray()
+    secureWork.execute {
+      val out = org.json.JSONObject().put("id", id)
+      try {
+        val result: Any? = when (msg.optString("method")) {
+          "saveBegin" -> saveBegin(args.getString(0), args.getString(1))
+          "saveChunk" -> saveChunk(args.getString(0), args.getString(1))
+          "saveEnd" -> saveEnd(args.getString(0))
+          "saveAbort" -> { saveAbort(args.getString(0)); null }
+          "printHtml" -> { printHtml(args.getString(0), args.getString(1)); null }
+          "canInstallUpdates" -> canInstallUpdates()
+          "openInstallSettings" -> { openInstallSettings(); null }
+          "installUpdate" -> { installUpdate(args.getString(0), args.getString(1)); null }
+          else -> throw Exception("Unknown call")
+        }
+        out.put("result", result ?: org.json.JSONObject.NULL)
+      } catch (e: Exception) {
+        out.put("error", e.message ?: "Failed")
+      }
+      runOnUiThread { reply.postMessage(out.toString()) }
+    }
+  }
+
+  // ----- saving files (exports, attachments) to Downloads, handed over by the page in pieces -----
+
+  /** Starts a file; returns its id, or "" if it can't be made. */
+  private fun saveBegin(name: String, mime: String): String {
+    return try {
+      val id = java.util.UUID.randomUUID().toString()
+      val safe = name.replace(Regex("[\\\\/:*?\"<>|]+"), "-").take(150).ifBlank { "download" }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+          put(MediaStore.Downloads.DISPLAY_NAME, safe)
+          put(MediaStore.Downloads.MIME_TYPE, mime.ifBlank { "application/octet-stream" })
+          put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+          put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return ""
+        val out = contentResolver.openOutputStream(uri) ?: return ""
+        saves[id] = Save(out, uri, null)
+      } else {
+        // Android 9 and older: the app's own Downloads folder, which needs no storage permission.
+        val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return ""
+        dir.mkdirs()
+        val file = java.io.File(dir, safe)
+        saves[id] = Save(java.io.FileOutputStream(file), null, file)
+      }
+      id
+    } catch (_: Exception) {
+      ""
+    }
+  }
+
+  private fun saveChunk(id: String, base64: String): Boolean {
+    val s = saves[id] ?: return false
+    return try {
+      s.out.write(Base64.decode(base64, Base64.DEFAULT))
+      true
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /** Finishes a file; returns "" when it's saved, or what went wrong. */
+  private fun saveEnd(id: String): String {
+    val s = saves.remove(id) ?: return "The download was interrupted"
+    return try {
+      s.out.close()
+      if (s.uri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        contentResolver.update(s.uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+      }
+      ""
+    } catch (e: Exception) {
+      e.message ?: "Could not save the file"
+    }
+  }
+
+  private fun saveAbort(id: String) {
+    val s = saves.remove(id) ?: return
+    try {
+      s.out.close()
+    } catch (_: Exception) {
+    }
+    if (s.uri != null) contentResolver.delete(s.uri, null, null)
+    s.file?.delete()
+  }
+
+  /** Prints a complete HTML page with Android's print service (where "Save as PDF" is one of the printers). */
+  private fun printHtml(html: String, title: String) {
+    runOnUiThread {
+      val view = WebView(this@MainActivity)
+      var started = false
+      view.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(v: WebView, url: String?) {
+          if (started) return
+          started = true
+          val manager = getSystemService(Context.PRINT_SERVICE) as PrintManager
+          val name = title.ifBlank { "Document" }
+          manager.print(name, v.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+        }
+      }
+      printing = view // kept until the next print, so it isn't collected while printing
+      view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+    }
+  }
+
+  // ----- updating the app: the page finds a newer release of our repository on GitHub, the app downloads
+  // that release's APK (nothing else, see UpdateSource), checks its SHA-256 against the one GitHub lists
+  // and hands it to Android's installer (the person taps Update; Android only accepts an APK signed with
+  // the same key as the installed app) -----
+
+  /** Whether Android lets this app open the installer (Settings → Install unknown apps). */
+  private fun canInstallUpdates(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
+
+  /** Opens the switch that lets this app install updates. */
+  private fun openInstallSettings() {
+    runOnUiThread {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+      }
+    }
+  }
+
+  /** Opens `url`, following up to five redirects by hand so that every hop is on GitHub's release hosts. */
+  private fun openRelease(url: String): java.net.HttpURLConnection {
+    var next = url
+    repeat(6) {
+      if (!UpdateSource.isAllowedHop(next)) throw Exception("Updates only come from this app's GitHub releases")
+      val conn = java.net.URL(next).openConnection() as java.net.HttpURLConnection
+      conn.instanceFollowRedirects = false
+      conn.connectTimeout = 15000
+      conn.readTimeout = 30000
+      val code = conn.responseCode
+      if (code in 300..399) {
+        val location = conn.getHeaderField("Location") ?: throw Exception("Download failed (no redirect address)")
+        conn.disconnect()
+        next = java.net.URL(java.net.URL(next), location).toString()
+        return@repeat
+      }
+      if (code != 200) throw Exception("Download failed ($code)")
+      return conn
+    }
+    throw Exception("Download failed (too many redirects)")
+  }
+
+  /**
+   * Downloads the APK at `url` (only https://github.com/<UpdateSource.REPO>/releases/download/<tag>/Atrium.apk),
+   * checks it against `sha256` (hex) and opens the installer. Progress and the outcome are reported to
+   * window.__afUpdate({ progress }) / ({ error }) / ({ done }) in the top-level page.
+   */
+  private fun installUpdate(url: String, sha256: String) {
+    val report = { json: String -> runOnUiThread { web?.evaluateJavascript("window.__afUpdate && window.__afUpdate($json)", null) } }
+    Thread {
+      try {
+        if (!UpdateSource.isReleaseApk(url)) throw Exception("Updates only come from this app's GitHub releases")
+        if (!Regex("^[0-9a-f]{64}$").matches(sha256)) throw Exception("The release has no checksum to verify the download")
+        val dir = java.io.File(cacheDir, "updates").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val file = java.io.File(dir, UpdateSource.APK)
+        val conn = openRelease(url)
+        val total = conn.contentLengthLong
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        var done = 0L
+        var last = -1
+        conn.inputStream.use { input ->
+          java.io.FileOutputStream(file).use { out ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+              val n = input.read(buf)
+              if (n < 0) break
+              out.write(buf, 0, n)
+              digest.update(buf, 0, n)
+              done += n
+              val pct = if (total > 0) (done * 100 / total).toInt() else -1
+              if (pct != last) { last = pct; report("{\"progress\":$pct}") }
+            }
+          }
+        }
+        val hex = digest.digest().joinToString("") { "%02x".format(it) }
+        if (hex != sha256) {
+          file.delete()
+          throw Exception("The download didn't match the release's checksum")
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
+        runOnUiThread {
+          startActivity(Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+          })
+        }
+        report("{\"done\":true}")
+      } catch (e: Exception) {
+        report("{\"error\":${org.json.JSONObject.quote(e.message ?: "The update couldn't be downloaded")}}")
+      }
+    }.start()
   }
 
   inner class Bars {
@@ -132,173 +358,6 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun leave() {
       runOnUiThread { leave() }
-    }
-
-    // ----- saving files (exports, attachments) to Downloads, handed over by the page in pieces -----
-
-    /** Starts a file; returns its id, or "" if it can't be made. */
-    @JavascriptInterface
-    fun saveBegin(name: String, mime: String): String {
-      return try {
-        val id = java.util.UUID.randomUUID().toString()
-        val safe = name.replace(Regex("[\\\\/:*?\"<>|]+"), "-").take(150).ifBlank { "download" }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, safe)
-            put(MediaStore.Downloads.MIME_TYPE, mime.ifBlank { "application/octet-stream" })
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            put(MediaStore.Downloads.IS_PENDING, 1)
-          }
-          val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return ""
-          val out = contentResolver.openOutputStream(uri) ?: return ""
-          saves[id] = Save(out, uri, null)
-        } else {
-          // Android 9 and older: the app's own Downloads folder, which needs no storage permission.
-          val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return ""
-          dir.mkdirs()
-          val file = java.io.File(dir, safe)
-          saves[id] = Save(java.io.FileOutputStream(file), null, file)
-        }
-        id
-      } catch (_: Exception) {
-        ""
-      }
-    }
-
-    @JavascriptInterface
-    fun saveChunk(id: String, base64: String): Boolean {
-      val s = saves[id] ?: return false
-      return try {
-        s.out.write(Base64.decode(base64, Base64.DEFAULT))
-        true
-      } catch (_: Exception) {
-        false
-      }
-    }
-
-    /** Finishes a file; returns "" when it's saved, or what went wrong. */
-    @JavascriptInterface
-    fun saveEnd(id: String): String {
-      val s = saves.remove(id) ?: return "The download was interrupted"
-      return try {
-        s.out.close()
-        if (s.uri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          contentResolver.update(s.uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
-        }
-        ""
-      } catch (e: Exception) {
-        e.message ?: "Could not save the file"
-      }
-    }
-
-    @JavascriptInterface
-    fun saveAbort(id: String) {
-      val s = saves.remove(id) ?: return
-      try {
-        s.out.close()
-      } catch (_: Exception) {
-      }
-      if (s.uri != null) contentResolver.delete(s.uri, null, null)
-      s.file?.delete()
-    }
-
-    /** Prints a complete HTML page with Android's print service (where "Save as PDF" is one of the printers). */
-    @JavascriptInterface
-    fun printHtml(html: String, title: String) {
-      runOnUiThread {
-        val view = WebView(this@MainActivity)
-        var started = false
-        view.webViewClient = object : WebViewClient() {
-          override fun onPageFinished(v: WebView, url: String?) {
-            if (started) return
-            started = true
-            val manager = getSystemService(Context.PRINT_SERVICE) as PrintManager
-            val name = title.ifBlank { "Document" }
-            manager.print(name, v.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
-          }
-        }
-        printing = view // kept until the next print, so it isn't collected while printing
-        view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
-      }
-    }
-
-    // ----- updating the app: the page finds a newer release on GitHub, the app downloads the APK,
-    // checks its SHA-256 against the release's, and hands it to Android's installer (the person taps
-    // Install; Android only accepts it if it's signed with the same key as the installed app) -----
-
-    /** Whether Android lets this app open the installer (Settings → Install unknown apps). */
-    @JavascriptInterface
-    fun canInstallUpdates(): Boolean =
-      Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
-
-    /** Opens the switch that lets this app install updates. */
-    @JavascriptInterface
-    fun openInstallSettings() {
-      runOnUiThread {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-        }
-      }
-    }
-
-    /**
-     * Downloads the APK at `url` (GitHub only), checks it against `sha256` (hex) and opens the installer.
-     * Progress and the outcome are reported to window.__afUpdate({ progress }) / ({ error }) / ({ done }).
-     */
-    @JavascriptInterface
-    fun installUpdate(url: String, sha256: String) {
-      val report = { json: String -> runOnUiThread { web?.evaluateJavascript("window.__afUpdate && window.__afUpdate($json)", null) } }
-      Thread {
-        try {
-          val host = Uri.parse(url).host ?: ""
-          if (!url.startsWith("https://") || !(host == "github.com" || host.endsWith(".githubusercontent.com"))) throw Exception("Updates only come from GitHub")
-          if (!Regex("^[0-9a-f]{64}$").matches(sha256)) throw Exception("The release has no checksum to verify the download")
-          val dir = java.io.File(cacheDir, "updates").apply { mkdirs() }
-          dir.listFiles()?.forEach { it.delete() }
-          val file = java.io.File(dir, "Atrium.apk")
-          val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-          conn.instanceFollowRedirects = true
-          conn.connectTimeout = 15000
-          conn.readTimeout = 30000
-          conn.connect()
-          if (conn.responseCode != 200) throw Exception("Download failed (${conn.responseCode})")
-          val finalHost = conn.url.host ?: ""
-          if (!(finalHost == "github.com" || finalHost.endsWith(".githubusercontent.com"))) throw Exception("Updates only come from GitHub")
-          val total = conn.contentLengthLong
-          val digest = java.security.MessageDigest.getInstance("SHA-256")
-          var done = 0L
-          var last = -1
-          conn.inputStream.use { input ->
-            java.io.FileOutputStream(file).use { out ->
-              val buf = ByteArray(64 * 1024)
-              while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                out.write(buf, 0, n)
-                digest.update(buf, 0, n)
-                done += n
-                val pct = if (total > 0) (done * 100 / total).toInt() else -1
-                if (pct != last) { last = pct; report("{\"progress\":$pct}") }
-              }
-            }
-          }
-          val hex = digest.digest().joinToString("") { "%02x".format(it) }
-          if (hex != sha256) {
-            file.delete()
-            throw Exception("The download didn't match the release's checksum")
-          }
-          val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
-          runOnUiThread {
-            startActivity(Intent(Intent.ACTION_VIEW).apply {
-              setDataAndType(uri, "application/vnd.android.package-archive")
-              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
-          }
-          report("{\"done\":true}")
-        } catch (e: Exception) {
-          report("{\"error\":${org.json.JSONObject.quote(e.message ?: "The update couldn't be downloaded")}}")
-        }
-      }.start()
     }
 
     @JavascriptInterface

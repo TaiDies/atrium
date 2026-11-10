@@ -1,6 +1,6 @@
 [package]
 name = "atrium"
-version = "1.11.9"
+version = "1.11.10"
 license = "AGPL-3.0-only"
 description = "The Windows and Android apps: the web app, working offline, connected to a server of your choice"
 edition = "2021"
