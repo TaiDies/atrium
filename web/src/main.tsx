@@ -117,7 +117,13 @@ async function start() {
   installAndroidDownloads();
   const root = createRoot(document.getElementById('root')!);
   if (native && !native.server) {
-    root.render(<ServerPicker />);
+    root.render(
+      <>
+        <ServerPicker />
+        <Toaster />
+        <AppUpdate />
+      </>,
+    );
     return;
   }
   root.render(

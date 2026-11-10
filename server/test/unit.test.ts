@@ -640,3 +640,20 @@ describe('Markdown written into a page', () => {
     assert.deepEqual(items.map((i) => i.getAttribute('checked')), [false, true]);
   });
 });
+
+describe('app updates', () => {
+  it('only offers a newer version', async () => {
+    const { isNewer } = await import('../../web/src/app/AppUpdate.tsx');
+    assert.equal(isNewer('1.11.9', '1.11.8'), true);
+    assert.equal(isNewer('1.12.0', '1.11.10'), true);
+    assert.equal(isNewer('1.11.8', '1.11.8'), false);
+    assert.equal(isNewer('1.11.7', '1.11.8'), false);
+    assert.equal(isNewer('2.0', '1.99.99'), true);
+  });
+  it('shows release notes without Markdown symbols', async () => {
+    const { plainNotes } = await import('../../web/src/app/AppUpdate.tsx');
+    const nl = String.fromCharCode(10);
+    assert.equal(plainNotes(`## Fix${nl}**Bold** and \`code\``), `Fix${nl}Bold and code`);
+    assert.equal(plainNotes('   '), null);
+  });
+});

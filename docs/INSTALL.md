@@ -262,6 +262,13 @@ Download them from the [latest release](https://github.com/TaiDies/atrium/releas
 4. Allow notifications (Settings → Notifications in the app) and camera/microphone when asked in a
    meeting.
 
+**Updates** (since 1.11.9): when a new version is out, the app shows **Update available**. **Update now**
+downloads it, checks it against the checksum GitHub lists for the release, and opens Android's installer,
+where you tap **Install**; your data and sign-in stay. The first time, Android asks you to let Atrium
+install apps (**Open settings** → **Allow from this source**). Android doesn't let apps installed from an
+APK update silently, so that one tap is always needed. Versions before 1.11.9 don't check: install
+1.11.9 by hand once.
+
 **Downloads and printing** (since 1.11.6): exports (Markdown, PDF, the .zip, office files as .docx, .pdf
 or .xlsx, statistics) and downloaded attachments are saved to the phone's **Downloads** folder.
 Printing opens Android's print screen, where **Save as PDF** is one of the printers. (1.11.5 and older
