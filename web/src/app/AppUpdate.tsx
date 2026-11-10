@@ -2,6 +2,7 @@ import { ArrowUpCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, Dialog, toastError } from '../components/ui';
 import { nativeInfo, nativeInvoke } from '../lib/native';
+import { androidCall, hasAndroidBridge } from '../lib/androidBridge';
 
 // The Windows and Android apps look for a newer release on GitHub when they open and every few hours
 // while they're open, and ask before updating. "Later" waits until the next check.
@@ -19,18 +20,22 @@ interface Update {
 }
 
 interface AndroidUpdater {
-  canInstallUpdates(): boolean;
-  openInstallSettings(): void;
-  installUpdate(url: string, sha256: string): void;
+  canInstallUpdates(): Promise<boolean>;
+  openInstallSettings(): Promise<void>;
+  installUpdate(url: string, sha256: string): Promise<void>;
 }
 
 const EVERY = 4 * 60 * 60 * 1000;
+/** Must match UpdateSource.REPO in the Android app, which refuses APKs from anywhere else. */
 const REPO = 'TaiDies/atrium';
 
-const android = () => {
-  const a = (window as unknown as { AfAndroid?: Partial<AndroidUpdater> }).AfAndroid;
-  return a?.installUpdate && a.canInstallUpdates && a.openInstallSettings ? (a as AndroidUpdater) : null;
+const androidUpdater: AndroidUpdater = {
+  canInstallUpdates: () => androidCall<boolean>('canInstallUpdates'),
+  openInstallSettings: () => androidCall<void>('openInstallSettings'),
+  installUpdate: (url, sha256) => androidCall<void>('installUpdate', url, sha256),
 };
+
+const android = () => (hasAndroidBridge() ? androidUpdater : null);
 
 /** Whether version a is newer than b ("1.11.9" > "1.11.8"). */
 export function isNewer(a: string, b: string) {
@@ -121,7 +126,7 @@ export function AppUpdate() {
   useEffect(() => {
     const a = android();
     if (!a || !update) return;
-    const recheck = () => setAllowed(a.canInstallUpdates());
+    const recheck = () => void a.canInstallUpdates().then(setAllowed, () => setAllowed(false));
     recheck();
     window.addEventListener('focus', recheck);
     document.addEventListener('visibilitychange', recheck);
@@ -145,7 +150,11 @@ export function AppUpdate() {
       }
       setBusy(true);
       setProgress(0);
-      a.installUpdate(update.apk.url, update.apk.sha256);
+      a.installUpdate(update.apk.url, update.apk.sha256).catch((err) => {
+        toastError(err);
+        setBusy(false);
+        setProgress(null);
+      });
       return;
     }
     setBusy(true);
@@ -174,7 +183,7 @@ export function AppUpdate() {
         {onAndroid && verifiable && !allowed && (
           <div className="rounded-lg bg-hover p-3 text-sm">
             <p className="mb-2">First, let Atrium install updates: turn on <b>Allow from this source</b>, then come back.</p>
-            <Button onClick={() => android()?.openInstallSettings()}>Open settings</Button>
+            <Button onClick={() => void android()?.openInstallSettings()}>Open settings</Button>
           </div>
         )}
         {update.notes && <p className="max-h-48 overflow-y-auto rounded-lg bg-hover p-3 text-xs whitespace-pre-wrap text-muted">{update.notes}</p>}

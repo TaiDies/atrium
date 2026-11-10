@@ -1,21 +1,30 @@
 import { toast, toastError } from '../components/ui';
 import { downloadUrl } from './api';
+import { androidCall, hasAndroidBridge } from './androidBridge';
 
 // Saving files and printing. Browsers do both themselves; the Android app's web view does neither
 // (links with `download` and print() are ignored there), so in the app they go through MainActivity:
 // files are handed over in pieces and written to Downloads, and printing uses Android's print service.
+// Both use the app's privileged channel, which only the app's own top-level page gets (androidBridge.ts).
 
 interface AndroidSave {
-  saveBegin(name: string, mime: string): string;
-  saveChunk(id: string, base64: string): boolean;
-  saveEnd(id: string): string;
-  saveAbort?(id: string): void;
-  printHtml(html: string, title: string): void;
+  saveBegin(name: string, mime: string): Promise<string>;
+  saveChunk(id: string, base64: string): Promise<boolean>;
+  saveEnd(id: string): Promise<string>;
+  saveAbort(id: string): Promise<void>;
+  printHtml(html: string, title: string): Promise<void>;
 }
 
+const androidSave: AndroidSave = {
+  saveBegin: (name, mime) => androidCall<string>('saveBegin', name, mime),
+  saveChunk: (id, data) => androidCall<boolean>('saveChunk', id, data),
+  saveEnd: (id) => androidCall<string>('saveEnd', id),
+  saveAbort: (id) => androidCall<void>('saveAbort', id),
+  printHtml: (html, title) => androidCall<void>('printHtml', html, title),
+};
+
 function android(): AndroidSave | null {
-  const a = (window as unknown as { AfAndroid?: Partial<AndroidSave> }).AfAndroid;
-  return a?.saveBegin && a.saveChunk && a.saveEnd && a.printHtml ? (a as AndroidSave) : null;
+  return hasAndroidBridge() ? androidSave : null;
 }
 
 /** Whether downloads and printing go through the Android app. */
@@ -32,18 +41,18 @@ function base64(bytes: Uint8Array): string {
 const cleanName = (name: string) => name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'download';
 
 async function saveOnAndroid(bridge: AndroidSave, blob: Blob, name: string) {
-  const id = bridge.saveBegin(cleanName(name), blob.type || 'application/octet-stream');
+  const id = await bridge.saveBegin(cleanName(name), blob.type || 'application/octet-stream');
   if (!id) throw new Error('Could not save the file on this device');
   try {
     for (let at = 0; at < blob.size; at += CHUNK) {
       const part = new Uint8Array(await blob.slice(at, at + CHUNK).arrayBuffer());
-      if (!bridge.saveChunk(id, base64(part))) throw new Error('Could not save the file on this device');
+      if (!(await bridge.saveChunk(id, base64(part)))) throw new Error('Could not save the file on this device');
     }
   } catch (err) {
-    bridge.saveAbort?.(id);
+    await bridge.saveAbort(id).catch(() => {});
     throw err;
   }
-  const error = bridge.saveEnd(id);
+  const error = await bridge.saveEnd(id);
   if (error) throw new Error(error);
   toast(`Saved “${cleanName(name)}” to Downloads`);
 }
@@ -130,7 +139,7 @@ export async function printDocument(html: string, title: string) {
   const bridge = android();
   if (bridge) {
     try {
-      bridge.printHtml(await inlineImages(html), title || 'Document');
+      await bridge.printHtml(await inlineImages(html), title || 'Document');
     } catch (err) {
       toastError(err);
     }

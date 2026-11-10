@@ -51,5 +51,11 @@ is published (Admin panel → Updates shows when one is out).
   is written to the log ("Uncaught exception" or "Unhandled promise rejection", with its stack) instead of
   stopping the server, so one bad request can't take it down. If something misbehaves, the logs
   (`docker compose logs app`) are where to look.
+- **App updates rely on the signing key.** The Android app only downloads updates from this repository's
+  own GitHub releases and checks each APK against the SHA-256 that GitHub lists for that release. That
+  checksum comes from the same release as the APK, so it catches a broken download, not a tampered
+  release: what stops a tampered release is Android itself, which only installs an update signed with the
+  same key as the installed app (the Windows app checks its own update signature the same way). The
+  signing keys must therefore be kept safe and backed up outside the repository.
 - **Meetings connect people directly to each other** (each person to every other), so they suit small
   groups. Large calls need a media server, which Atrium doesn't include.
