@@ -1,7 +1,7 @@
 import clsx from 'clsx';
-import { ArrowDown, ArrowLeftToLine, ArrowRightToLine, ArrowUp, ChevronRight, Copy, EyeOff, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeftToLine, ArrowRightToLine, ArrowUp, Check, Copy, EyeOff, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { type Anchor, confirmDialog, MenuDivider, MenuItem, Popover } from '../components/ui';
+import { type Anchor, confirmDialog, MenuDivider, MenuItem, Popover, SubMenu } from '../components/ui';
 import { FieldIcon } from './cells';
 import { AiFieldSettings } from './AiFill';
 import { DoneQuestionsSettings } from './DoneQuestions';
@@ -16,11 +16,9 @@ export function FieldMenu({ field: opened, view, anchor, onClose }: { field: Fie
   // changed in the menu show straight away.
   const field = (opened && db.fields.find((f) => f.id === opened.id)) ?? opened;
   const [name, setName] = useState('');
-  const [typesOpen, setTypesOpen] = useState(false);
 
   useEffect(() => {
     if (field) setName(field.name);
-    setTypesOpen(false);
   }, [field?.id, anchor]);
 
   if (!field) return null;
@@ -37,7 +35,7 @@ export function FieldMenu({ field: opened, view, anchor, onClose }: { field: Fie
   };
 
   return (
-    <Popover anchor={anchor} onClose={close} className="w-60 p-1">
+    <Popover anchor={anchor} onClose={close} className={clsx(CONFIG_TYPES.has(field.type) ? 'w-80' : 'w-60', 'p-1')}>
       <div className="p-1.5">
         <input
           autoFocus
@@ -142,31 +140,24 @@ export function FieldMenu({ field: opened, view, anchor, onClose }: { field: Fie
         </label>
       )}
       {!field.primary && !field.relation?.reverse && (
-        <button
-          onClick={() => setTypesOpen(!typesOpen)}
-          className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-start text-sm hover:bg-hover"
-        >
-          <FieldIcon type={fieldKind(field)} className="text-muted" />
-          <span className="flex-1">{fieldTypeLabel(fieldKind(field))}</span>
-          <ChevronRight size={14} className={clsx('text-faint transition-transform', typesOpen && 'rotate-90')} />
-        </button>
-      )}
-      {typesOpen && (
-        <div className="mb-1 ms-3 border-s border-line ps-1">
-          {FIELD_TYPES.map((t) => (
-            <button
-              key={t.type}
-              onClick={() => {
-                actions.changeFieldType(field.id, t.type as FieldType);
-                setTypesOpen(false);
-              }}
-              className={clsx('flex h-7 w-full items-center gap-2 rounded-md px-2 text-start text-sm hover:bg-hover', t.type === fieldKind(field) && 'text-accent')}
-            >
-              <FieldIcon type={t.type} />
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <SubMenu key={field.id} icon={<FieldIcon type={fieldKind(field)} />} label={fieldTypeLabel(fieldKind(field))}>
+          {(closeTypes) =>
+            FIELD_TYPES.map((t) => (
+              <button
+                key={t.type}
+                onClick={() => {
+                  if (t.type !== fieldKind(field)) actions.changeFieldType(field.id, t.type as FieldType);
+                  closeTypes();
+                }}
+                className={clsx('flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-start text-sm hover:bg-hover', t.type === fieldKind(field) ? 'text-accent' : 'text-fg')}
+              >
+                <FieldIcon type={t.type} className={t.type === fieldKind(field) ? undefined : 'text-muted'} />
+                <span className="flex-1">{t.label}</span>
+                {t.type === fieldKind(field) && <Check size={14} />}
+              </button>
+            ))
+          }
+        </SubMenu>
       )}
       <MenuDivider />
       {view && (
@@ -247,7 +238,7 @@ export function NewFieldMenu({
   }, [anchor]);
   if (pending) {
     return (
-      <Popover anchor={anchor} onClose={onClose} align="end" className="w-72 p-1">
+      <Popover anchor={anchor} onClose={onClose} align="end" className="w-80 p-1">
         <div className="flex items-center gap-2 px-1.5 pt-1.5">
           <button onClick={() => setPending(null)} className="text-xs text-muted hover:text-fg">
             ← Back

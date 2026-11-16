@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, open, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { strToU8, zipSync, type Zippable } from 'fflate';
+import { Writable } from 'node:stream';
+import { promisify } from 'node:util';
+import { crc32, deflateRaw } from 'node:zlib';
 import { z } from 'zod';
 import * as Y from 'yjs';
 import { type Access, accessMap } from './access.js';
@@ -109,11 +111,237 @@ function decode(state: string | Buffer | null | undefined): Y.Doc {
   return doc;
 }
 
+const deflateRawAsync = promisify(deflateRaw);
+const MAX32 = 0xffffffff;
+/** Attachments of a text type up to this size are compressed (in memory, off the main thread); others are stored as they are. */
+const COMPRESS_FILES_UP_TO = 16 * 1024 * 1024;
+const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-ndjson|x-yaml|yaml|sql|x-sh|rtf)\b|image\/svg\+xml|[^;]*\+(json|xml)\b)/i;
+const TEXT_NAMES = /\.(txt|md|markdown|csv|tsv|json|ndjson|xml|svg|html?|css|js|ts|log|ya?ml|sql|rtf|ics|vcf)$/i;
+/** Read size for attachments. */
+const CHUNK = 1024 * 1024;
+
+/** The export was stopped because whoever was downloading it went away. */
+export class ExportAborted extends Error {
+  constructor() {
+    super('The download was closed before the export finished');
+  }
+}
+
+interface ZipRecord {
+  name: Buffer;
+  utf8: boolean;
+  method: 0 | 8;
+  crc: number;
+  csize: number;
+  usize: number;
+  offset: number;
+}
+
 /**
- * Builds the export .zip. `rootIds` null means the whole workspace; otherwise those pages (and, with
- * `subpages`, everything under them). Only pages the user can see are included.
+ * Writes a .zip to a stream entry by entry. Every entry's size and checksum go in its own header (no
+ * trailing "data descriptors"): the importer reads a .zip front to back (unzipDisk.ts), and without sizes up
+ * front it would have to guess where an entry ends by looking for zip markers in the data — which breaks
+ * on attachments that are themselves zips (.docx, .xlsx …). So attachments are read twice, once for the
+ * checksum and once to send, a chunk at a time. Zip64 records are added only past 4 GB / 65535 entries.
+ */
+class ZipWriter {
+  private offset = 0;
+  private records: ZipRecord[] = [];
+  private readonly time: number;
+  private readonly date: number;
+
+  constructor(private out: Writable) {
+    const d = new Date();
+    this.time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    this.date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  }
+
+  /** Writes a chunk, waiting while the reader is slower than the export. */
+  private async put(chunk: Uint8Array) {
+    if (this.out.destroyed || this.out.writableEnded) throw new ExportAborted();
+    this.offset += chunk.length;
+    if (this.out.write(chunk)) return;
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        this.out.off('drain', done);
+        this.out.off('close', closed);
+        resolve();
+      };
+      const closed = () => {
+        this.out.off('drain', done);
+        reject(new ExportAborted());
+      };
+      this.out.once('drain', done);
+      this.out.once('close', closed);
+    });
+  }
+
+  private async header(name: string, method: 0 | 8, crc: number, csize: number, usize: number) {
+    const nameBytes = Buffer.from(name, 'utf8');
+    if (nameBytes.length > 0xffff) throw new Error(`Name too long for a .zip: ${name.slice(0, 80)}…`);
+    // eslint-disable-next-line no-control-regex
+    const utf8 = /[^\x00-\x7f]/.test(name);
+    const z64 = csize >= MAX32 || usize >= MAX32;
+    const h = Buffer.alloc(30 + (z64 ? 20 : 0));
+    h.writeUInt32LE(0x04034b50, 0);
+    h.writeUInt16LE(z64 ? 45 : 20, 4);
+    h.writeUInt16LE(utf8 ? 0x0800 : 0, 6);
+    h.writeUInt16LE(method, 8);
+    h.writeUInt16LE(this.time, 10);
+    h.writeUInt16LE(this.date, 12);
+    h.writeUInt32LE(crc, 14);
+    h.writeUInt32LE(z64 ? MAX32 : csize, 18);
+    h.writeUInt32LE(z64 ? MAX32 : usize, 22);
+    h.writeUInt16LE(nameBytes.length, 26);
+    h.writeUInt16LE(z64 ? 20 : 0, 28);
+    if (z64) {
+      h.writeUInt16LE(0x0001, 30);
+      h.writeUInt16LE(16, 32);
+      h.writeBigUInt64LE(BigInt(usize), 34);
+      h.writeBigUInt64LE(BigInt(csize), 42);
+    }
+    this.records.push({ name: nameBytes, utf8, method, crc, csize, usize, offset: this.offset });
+    await this.put(h.subarray(0, 30));
+    await this.put(nameBytes);
+    if (z64) await this.put(h.subarray(30));
+  }
+
+  /** Adds an entry from memory; `compress` deflates it (on a worker thread) when that makes it smaller. */
+  async addBytes(name: string, data: Uint8Array, compress: boolean) {
+    const crc = crc32(data);
+    let body = data;
+    let method: 0 | 8 = 0;
+    if (compress && data.length) {
+      const packed = await deflateRawAsync(data, { level: 6 });
+      if (packed.length < data.length) (body = packed), (method = 8);
+    }
+    await this.header(name, method, crc, body.length, data.length);
+    for (let i = 0; i < body.length; i += CHUNK) await this.put(body.subarray(i, i + CHUNK));
+  }
+
+  /** Adds a file from disk. Returns false (and adds nothing) if it can't be opened (missing on disk). */
+  async addFile(name: string, file: string, compress: boolean): Promise<boolean> {
+    let handle;
+    try {
+      handle = await open(file, 'r');
+    } catch {
+      return false;
+    }
+    try {
+      const { size } = await handle.stat();
+      if (compress && size <= COMPRESS_FILES_UP_TO) {
+        await this.addBytes(name, await handle.readFile(), true);
+        return true;
+      }
+      let crc = 0;
+      let seen = 0;
+      for await (const chunk of handle.createReadStream({ start: 0, highWaterMark: CHUNK, autoClose: false }) as AsyncIterable<Buffer>) {
+        crc = crc32(chunk, crc);
+        seen += chunk.length;
+      }
+      if (seen !== size) throw new Error(`${file} changed while it was being exported`);
+      await this.header(name, 0, crc, size, size);
+      let sent = 0;
+      for await (const chunk of handle.createReadStream({ start: 0, highWaterMark: CHUNK, autoClose: false }) as AsyncIterable<Buffer>) {
+        sent += chunk.length;
+        if (sent > size) break;
+        await this.put(chunk);
+      }
+      if (sent !== size) throw new Error(`${file} changed while it was being exported`);
+      return true;
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  }
+
+  /** Writes the central directory and closes the .zip (the stream itself is left to the caller). */
+  async finish() {
+    const start = this.offset;
+    for (const r of this.records) {
+      const big = [r.usize >= MAX32, r.csize >= MAX32, r.offset >= MAX32];
+      const extra = big.filter(Boolean).length * 8;
+      const h = Buffer.alloc(46 + (extra ? 4 + extra : 0));
+      h.writeUInt32LE(0x02014b50, 0);
+      h.writeUInt16LE(extra ? 45 : 20, 4);
+      h.writeUInt16LE(extra ? 45 : 20, 6);
+      h.writeUInt16LE(r.utf8 ? 0x0800 : 0, 8);
+      h.writeUInt16LE(r.method, 10);
+      h.writeUInt16LE(this.time, 12);
+      h.writeUInt16LE(this.date, 14);
+      h.writeUInt32LE(r.crc, 16);
+      h.writeUInt32LE(big[1] ? MAX32 : r.csize, 20);
+      h.writeUInt32LE(big[0] ? MAX32 : r.usize, 24);
+      h.writeUInt16LE(r.name.length, 28);
+      h.writeUInt16LE(extra ? 4 + extra : 0, 30);
+      h.writeUInt32LE(big[2] ? MAX32 : r.offset, 42);
+      if (extra) {
+        h.writeUInt16LE(0x0001, 46);
+        h.writeUInt16LE(extra, 48);
+        let at = 50;
+        for (const [i, v] of [r.usize, r.csize, r.offset].entries()) if (big[i]) h.writeBigUInt64LE(BigInt(v), at), (at += 8);
+      }
+      await this.put(h.subarray(0, 46));
+      await this.put(r.name);
+      if (extra) await this.put(h.subarray(46));
+    }
+    const size = this.offset - start;
+    const count = this.records.length;
+    if (count >= 0xffff || size >= MAX32 || start >= MAX32) {
+      const z = Buffer.alloc(56 + 20);
+      z.writeUInt32LE(0x06064b50, 0);
+      z.writeBigUInt64LE(44n, 4);
+      z.writeUInt16LE(45, 12);
+      z.writeUInt16LE(45, 14);
+      z.writeBigUInt64LE(BigInt(count), 24);
+      z.writeBigUInt64LE(BigInt(count), 32);
+      z.writeBigUInt64LE(BigInt(size), 40);
+      z.writeBigUInt64LE(BigInt(start), 48);
+      z.writeUInt32LE(0x07064b50, 56);
+      z.writeBigUInt64LE(BigInt(this.offset), 64);
+      z.writeUInt32LE(1, 72);
+      await this.put(z);
+    }
+    const e = Buffer.alloc(22);
+    e.writeUInt32LE(0x06054b50, 0);
+    e.writeUInt16LE(Math.min(count, 0xffff), 8);
+    e.writeUInt16LE(Math.min(count, 0xffff), 10);
+    e.writeUInt32LE(Math.min(size, MAX32), 12);
+    e.writeUInt32LE(Math.min(start, MAX32), 16);
+    await this.put(e);
+  }
+}
+
+/** A prepared export: its file name, and `write`, which streams the .zip into `out` (and doesn't end it). */
+export interface PreparedExport {
+  name: string;
+  write: (out: Writable) => Promise<void>;
+}
+
+/**
+ * Builds the export .zip in memory (for templates, which are kept in the database). The routes stream it
+ * instead, with `prepareExport`.
  */
 export async function buildExport(userId: string, workspaceId: string, rootIds: string[] | null, subpages: boolean): Promise<{ zip: Uint8Array; name: string }> {
+  const prepared = await prepareExport(userId, workspaceId, rootIds, subpages);
+  const chunks: Buffer[] = [];
+  const sink = new Writable({
+    write(chunk: Buffer, _enc, done) {
+      chunks.push(Buffer.from(chunk));
+      done();
+    },
+  });
+  await prepared.write(sink);
+  sink.end();
+  return { zip: Buffer.concat(chunks), name: prepared.name };
+}
+
+/**
+ * Gets an export ready. `rootIds` null means the whole workspace; otherwise those pages (and, with
+ * `subpages`, everything under them). Only pages the user can see are included. Everything that can fail
+ * with a reply (not found, nothing to export) fails here, before any of the .zip is sent; attachments are
+ * read from disk only while the .zip is being written.
+ */
+export async function prepareExport(userId: string, workspaceId: string, rootIds: string[] | null, subpages: boolean): Promise<PreparedExport> {
   const workspace = await one<{ name: string }>('select name from workspaces where id = $1', [workspaceId]);
   if (!workspace) throw new HttpError(404, 'Workspace not found');
   const access = await accessMap(userId, workspaceId);
@@ -186,15 +414,33 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
     whole ? [workspaceId] : [workspaceId, [...referenced]],
   );
 
-  const zip: Zippable = {};
+  const first = rootIds?.length === 1 ? chosen.get(rootIds[0]) : null;
+  const name = safeName(whole ? workspace.name : first ? first.title : 'Pages', 'Export');
+  return { name: `${name}.zip`, write: (out) => writeExport(out, { workspace, whole, subpages, all, pages, boards, events, files }) };
+}
+
+/** Streams an export's .zip: attachments first, then the readable copies, the manifest and a README. */
+async function writeExport(
+  out: Writable,
+  { workspace, whole, subpages, all, pages, boards, events, files }: {
+    workspace: { name: string };
+    whole: boolean;
+    subpages: boolean;
+    all: { id: string; title: string }[];
+    pages: ExportPage[];
+    boards: { id: string; title: string; state: Buffer | null }[];
+    events: ExportEvent[];
+    files: { id: string; filename: string; mime_type: string; is_note: boolean; annotations: Buffer | null }[];
+  },
+) {
+  const zip = new ZipWriter(out);
+  const text = (s: string) => Buffer.from(s, 'utf8');
   const manifestFiles: ExportFile[] = [];
   for (const f of files) {
     const filePath = `files/${f.id}/${safeName(f.filename, 'file')}`;
-    try {
-      zip[filePath] = [await readFile(path.join(config.uploadDir, f.id)), { level: 0 }];
-    } catch {
-      continue; // missing on disk
-    }
+    // Already-compressed formats (images, video, PDF, office files …) are stored as they are.
+    const compress = TEXT_TYPES.test(f.mime_type) || TEXT_NAMES.test(f.filename);
+    if (!(await zip.addFile(filePath, path.join(config.uploadDir, f.id), compress))) continue; // missing on disk
     manifestFiles.push({ id: f.id, name: f.filename, mimeType: f.mime_type, isNote: f.is_note, path: filePath, annotations: b64(f.annotations) });
   }
 
@@ -218,28 +464,28 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
   const eventById = new Map(events.map((e) => [e.id, e]));
   const boardById = new Map(boards.map((b) => [b.id, b]));
   for (const p of pages) {
-    const out = fileOf(p);
+    const entry = fileOf(p);
     const doc = decode(p.state);
-    if ((DATABASE_TYPES as readonly string[]).includes(p.type)) zip[out] = strToU8(databaseToCsv(doc));
-    else
-      zip[out] = strToU8(
-        docToMarkdown(doc, p.title, {
+    const body = (DATABASE_TYPES as readonly string[]).includes(p.type)
+      ? databaseToCsv(doc)
+      : docToMarkdown(doc, p.title, {
           pageLink: (id) => {
             const target = pages.find((x) => x.id === id);
-            return { title: titleOf.get(id) ?? 'a page that was not exported', href: target ? relative(out, fileOf(target)) : null };
+            return { title: titleOf.get(id) ?? 'a page that was not exported', href: target ? relative(entry, fileOf(target)) : null };
           },
           fileLink: (url) => {
             const id = /\/api\/files\/([0-9a-f-]{36})/i.exec(url)?.[1]?.toLowerCase();
             const f = id ? fileById.get(id) : undefined;
-            return f ? relative(out, f.path) : null;
+            return f ? relative(entry, f.path) : null;
           },
           eventLabel: (id) => {
             const e = eventById.get(id);
             return e ? `${e.title || 'Untitled'} — ${e.startDate}${e.startTime ? ` ${e.startTime}` : ''}` : null;
           },
           boardLabel: (id) => boardById.get(id)?.title ?? null,
-        }),
-      );
+        });
+    doc.destroy();
+    await zip.addBytes(entry, text(body), true);
   }
 
   const manifest: Manifest = {
@@ -264,9 +510,10 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
     })),
     whiteboards: boards.map((b) => ({ id: b.id, title: b.title, state: b64(b.state) })),
   };
-  zip[MANIFEST] = strToU8(JSON.stringify(manifest));
-  zip['README.txt'] = strToU8(
-    [
+  await zip.addBytes(MANIFEST, text(JSON.stringify(manifest)), true);
+  await zip.addBytes(
+    'README.txt',
+    text([
       `Exported from "${workspace.name}" on ${new Date().toUTCString()}.`,
       '',
       'To bring this into another account or workspace of this app: Import (in the sidebar) and choose this .zip.',
@@ -276,12 +523,10 @@ export async function buildExport(userId: string, workspaceId: string, rootIds: 
       'For other apps: "readable" has each page as Markdown (.md) and each database as a spreadsheet (.csv),',
       'and "files" has every attachment in its original format.',
       '',
-    ].join('\n'),
+    ].join('\n')),
+    true,
   );
-
-  const first = rootIds?.length === 1 ? chosen.get(rootIds[0]) : null;
-  const name = safeName(whole ? workspace.name : first ? first.title : 'Pages', 'Export');
-  return { zip: zipSync(zip, { level: 6 }), name: `${name}.zip` };
+  await zip.finish();
 }
 
 /** Rewrites every id in a document that's in `map` (pages, files, events, boards made by the import). */

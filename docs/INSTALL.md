@@ -206,7 +206,11 @@ server {
 
 **Cloudflare** (proxy or Tunnel) ends any request after about 100 seconds. AI answers that can take
 longer run in the background, and the rest stop at `AI_TIMEOUT_MS` (90 seconds), so keep that below the
-limit. Cloudflare's free plan also limits uploads to 100 MB, which caps imports.
+limit. Cloudflare also refuses requests over 100 MB. To get bigger files through (uploads, imports,
+saved office files), open the admin panel → **Limits** → **Big uploads** and turn on **Send big files
+in pieces**, with a piece size under 100 MB (16 MB is the default). It's off until you turn it on, so
+without it files over 100 MB fail through the tunnel. Your own `MAX_UPLOAD_MB` and storage limits still
+apply.
 
 ---
 

@@ -1,11 +1,13 @@
 import { filterSuggestionItems } from '@blocknote/core';
 import { CommentsExtension, DefaultThreadStoreAuth } from '@blocknote/core/comments';
 import { CollaborationExtension, YjsThreadStore } from '@blocknote/core/yjs';
+import { FilePanelExtension } from '@blocknote/core/extensions';
 import { BlockNoteView } from '@blocknote/mantine';
-import { FormattingToolbarController, SideMenuController, SuggestionMenuController, ThreadsSidebar, useCreateBlockNote } from '@blocknote/react';
+import { FilePanel, FilePanelController, type FilePanelProps, useExtension, FormattingToolbarController, SideMenuController, SuggestionMenuController, ThreadsSidebar, useCreateBlockNote } from '@blocknote/react';
 import clsx from 'clsx';
-import { X } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { Loader2, X } from 'lucide-react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import type * as Y from 'yjs';
 import { useLocation } from 'react-router';
 import { cascadeChecklists } from '../editor/checklistCascade';
 import { embedUrl } from '../editor/extraBlocks';
@@ -20,6 +22,7 @@ import { usePhone } from '../lib/device';
 import { FindBar } from '../editor/FindBar';
 import { mentionItems, schema, slashItems, type AppEditor } from '../editor/schema';
 import { uploadFile, type User } from '../lib/api';
+import { blockUpload, fillBlockProps, holdDoc, markBlockUploading, useBlockUpload } from '../lib/collab';
 import { getDirectory } from '../lib/directory';
 import { publicFileUrl } from '../lib/publicDoc';
 import type { CollabSession } from '../lib/collab';
@@ -97,7 +100,26 @@ export function DocumentEditor({
         }),
             ]),
       ],
-      uploadFile: (file) => uploadFile(workspaceId, file),
+      // The upload carries on if the page is closed or another one opened meanwhile: the document stays
+      // connected until it's done and the link is written into its block directly (the editor that
+      // started it may be gone by then).
+      // While it runs the block is listed as uploading, so a second upload into it is refused (it would
+      // replace the first) and its file panel shows the progress instead.
+      uploadFile: (file, blockId) => {
+        if (blockId) {
+          const busy = blockUpload(session.doc, blockId);
+          if (busy) return Promise.reject(new Error(`Still uploading ${busy.name} into this block`));
+        }
+        const mark = blockId ? markBlockUploading(session.doc, blockId, file.name, file.size) : null;
+        const work = uploadFile(workspaceId, file, (sent) => mark?.progress(sent))
+          .then((url) => {
+            if (blockId) fillBlockProps(session.doc, blockId, { url, name: file.name });
+            return url;
+          })
+          .finally(() => mark?.finish());
+        holdDoc(session.doc, work);
+        return work;
+      },
       ...(publicToken ? { resolveFileUrl: async (url: string) => publicFileUrl(publicToken, url) } : {}),
       // A link pasted over selected text links it; one pasted on an empty line of a video, map or
       // document site becomes an embed. Anything else (Markdown included) is pasted as usual.
@@ -182,14 +204,20 @@ export function DocumentEditor({
   const aiAvailable = useAiAvailable();
   const aiToolbar = aiAvailable && !publicToken && !readOnly && !!workspaceId;
   const phone = usePhone();
+  // The file panel, except for a block that's still being uploaded into: that shows the upload instead.
+  const filePanel = useMemo(() => {
+    const Panel = ({ blockId }: FilePanelProps) => <UploadAwareFilePanel doc={session.doc} blockId={blockId} />;
+    return Panel;
+  }, [session.doc]);
 
   return (
     <div ref={wrapper} className="relative">
-      <BlockNoteView editor={editor} theme={resolved} className={className} slashMenu={false} editable={!readOnly && !publicToken} formattingToolbar={!publicToken && !aiToolbar} sideMenu={!publicToken && !aiToolbar}>
+      <BlockNoteView editor={editor} theme={resolved} className={className} slashMenu={false} filePanel={false} editable={!readOnly && !publicToken} formattingToolbar={!publicToken && !aiToolbar} sideMenu={!publicToken && !aiToolbar}>
         {aiToolbar && <SideMenuController sideMenu={AiSideMenu} />}
         {aiToolbar && <FormattingToolbarController formattingToolbar={AiFormattingToolbar} />}
         {aiToolbar && <AiSelectionHost editor={editor} workspaceId={workspaceId} />}
         {phone && !readOnly && !publicToken && <PhoneToolbar editor={editor} wrapper={wrapper} ai={aiToolbar} />}
+        {!readOnly && !publicToken && <FilePanelController filePanel={filePanel} />}
         <SuggestionMenuController
           triggerCharacter="/"
           getItems={async (query) => {
@@ -233,6 +261,33 @@ export function DocumentEditor({
         />
       )}
       {find && <FindBar view={editor.prosemirrorView} replace={find.replace} editable={!readOnly && !publicToken} onClose={() => setFind(null)} />}
+    </div>
+  );
+}
+
+function UploadAwareFilePanel({ doc, blockId }: { doc: Y.Doc; blockId: string }) {
+  const upload = useBlockUpload(doc, blockId);
+  const panel = useExtension(FilePanelExtension);
+  // Closes once the upload lands, rather than turning into "Upload file" (which would replace it).
+  const wasUploading = useRef(false);
+  useEffect(() => {
+    if (upload) wasUploading.current = true;
+    else if (wasUploading.current) panel.closeMenu();
+  }, [upload, panel]);
+  if (!upload) return wasUploading.current ? null : <FilePanel blockId={blockId} />;
+  const pct = upload.total ? Math.floor((100 * upload.sent) / upload.total) : 0;
+  return (
+    <div className="shadow-pop w-80 rounded-lg border border-line bg-bg p-3 text-sm">
+      <div className="flex items-center gap-2 font-medium">
+        <Loader2 size={14} className="shrink-0 animate-spin text-muted" />
+        <span className="min-w-0 flex-1 truncate">Uploading {upload.name}</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-hover">
+        <div className="h-full rounded-full bg-accent transition-[width] duration-200" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {pct >= 100 ? 'Processing…' : `${pct}%`} · This block gets the file when the upload finishes. Wait for it, or add another file block.
+      </p>
     </div>
   );
 }

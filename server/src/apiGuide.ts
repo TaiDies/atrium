@@ -84,7 +84,11 @@ const S: Record<string, Row[]> = {
     ['POST', '/api/workspaces/{workspaceId}/events/import', 'Import an .ics file (text in {"ics"}).', 'member'],
   ],
   'Files and whiteboards': [
-    ['POST', '/api/workspaces/{workspaceId}/files', 'Upload (multipart/form-data, field "file") → {"url"}.', 'role: upload files'],
+    ['POST', '/api/workspaces/{workspaceId}/files', 'Upload (multipart/form-data, field "file") → {"url"}. A file sent in pieces (below) is named with ?upload={uploadId} instead, with no body.', 'role: upload files'],
+    ['POST', '/api/uploads', 'Start sending a big file in pieces (for proxies that cap request size, e.g. Cloudflare at 100 MB; only when the admin has turned it on, see GET /api/auth/options → uploads): {"name", "type", "size", "kind"} → {"id", "chunkBytes"}. kind is "file" (a new attachment), "content" (new contents or a conversion) or "import", so a file over the limit is refused before it is sent. Works for every route that takes a file: files, import-export, convert, files/{id}/content.'],
+    ['PUT', '/api/uploads/{uploadId}', 'The next piece (application/octet-stream, up to chunkBytes) at ?offset= (where the last piece ended) → {"received", "size"}. Unfinished uploads are deleted after a day.'],
+    ['GET', '/api/uploads/{uploadId}', 'How much has arrived → {"received", "size"}, to carry on after a dropped connection.'],
+    ['DELETE', '/api/uploads/{uploadId}', 'Stop an upload and throw away its pieces.'],
     ['GET', '/api/workspaces/{workspaceId}/files', 'Files you can see.'],
     ['GET', '/api/files/{fileId}', 'Download (?download=1 to save rather than show). Guests: only files used on pages shared with them.'],
     ['PATCH', '/api/files/{fileId}', 'Rename: {"name"}.', 'uploader, an owner, or an editor of a page it’s on'],
@@ -108,7 +112,7 @@ const S: Record<string, Row[]> = {
   'Export and import': [
     ['GET', '/api/workspaces/{workspaceId}/export', 'The whole workspace as a .zip.', 'owner'],
     ['GET', '/api/pages/{pageId}/export', 'One page (and what’s inside) as a .zip.', 'view'],
-    ['POST', '/api/workspaces/{workspaceId}/import-export', 'Import an Atrium export .zip (multipart, field "file"). One import per person at a time.', 'owner'],
+    ['POST', '/api/workspaces/{workspaceId}/import-export', 'Import an Atrium export .zip (multipart, field "file", or ?upload={uploadId} for one sent in pieces). One import per person at a time.', 'owner'],
   ],
   'Chat and meetings': [
     ['GET / POST', '/api/workspaces/{workspaceId}/chats', 'Your chats; start one: {"kind": "direct" | "group" | "team", "name", "memberIds"}.'],

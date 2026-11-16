@@ -96,6 +96,11 @@ export function ButtonCell({ field, row }: { field: Field; row: Row }) {
         const target = db.fields.find((f) => f.id === action.fieldId);
         if (!target) continue;
         let value = fill(action.value, target, dir?.user.id);
+        // A toggle: clicking again when the value is already set puts the other value back.
+        if (action.undo !== undefined && JSON.stringify(row.cells[target.id] ?? null) === JSON.stringify(value ?? null)) {
+          actions.updateCell(row.id, target.id, fill(action.undo, target, dir?.user.id));
+          continue;
+        }
         // Checklists and people are added to rather than replaced.
         if (target.type === 'person' && Array.isArray(value)) {
           const current = Array.isArray(row.cells[target.id]) ? (row.cells[target.id] as string[]) : [];

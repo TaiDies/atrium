@@ -17,7 +17,18 @@ export interface ServerSettings {
   requireEmailVerification: boolean | null;
   /** New versions: who's emailed, whether the server updates itself, and what's been done (updates.ts). */
   updates: UpdateSettings;
+  /** Sending big files in pieces (uploads.ts), for proxies that cap request size. Off by default. */
+  uploads: UploadSettings;
 }
+
+export interface UploadSettings {
+  chunked: boolean;
+  /** Size of each piece, and the size above which a file is sent in pieces. */
+  chunkMb: number;
+}
+
+/** The smallest piece size. There's no largest: the admin picks what suits their proxy (Cloudflare: under 100 MB). */
+export const CHUNK_MB_MIN = 1;
 
 export interface UpdateSettings {
   /** "Server notifications receiver email": told when a new version is out ('' for nobody). */
@@ -59,7 +70,7 @@ export interface SharedAi {
   allowOwn: boolean;
 }
 
-const DEFAULTS: ServerSettings = { allowSignups: true, adminPasswordHash: null, ai: null, defaultLimits: {}, mail: null, requireEmailVerification: null, updates: { email: '', auto: false } };
+const DEFAULTS: ServerSettings = { allowSignups: true, adminPasswordHash: null, ai: null, defaultLimits: {}, mail: null, requireEmailVerification: null, updates: { email: '', auto: false }, uploads: { chunked: false, chunkMb: 16 } };
 
 let cache: { at: number; value: ServerSettings } | null = null;
 

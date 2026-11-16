@@ -145,6 +145,15 @@ const matchPh = (list: Placeholder[], ph: { type: string; idx: string | null }) 
   list.find((p) => p.type === ph.type) ??
   list.find((p) => (ph.type === 'ctrTitle' && p.type === 'title') || (ph.type === 'subTitle' && p.type === 'body'));
 
+/** A placeholder's inherited position, text size and colour: each from the layout when it sets it, else
+ *  from the master. Office's own layouts often leave the position out (an empty spPr) and inherit it. */
+function inheritPh(layout: Placeholder[], master: Placeholder[], ph: { type: string; idx: string | null }): Placeholder | undefined {
+  const l = matchPh(layout, ph);
+  const m = matchPh(master, ph);
+  if (!l || !m) return l ?? m;
+  return { ...l, box: l.box ?? m.box, size: l.size ?? m.size, color: l.color ?? m.color };
+}
+
 function esc(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -314,7 +323,7 @@ export async function pptxToSlides(data: ArrayBuffer, upload: (blob: Blob, ext: 
         if (node.localName === 'sp' || node.localName === 'cxnSp') {
           const spPr = kid(node, 'spPr');
           const ph = placeholderOf(node);
-          const inherited = ph ? (matchPh(layoutPh, ph) ?? matchPh(masterPh, ph)) : undefined;
+          const inherited = ph ? inheritPh(layoutPh, masterPh, ph) : undefined;
           const box = place(xfrmOf(spPr) ?? inherited?.box ?? null);
           if (!box) continue;
           const prst = attr(kid(spPr, 'prstGeom'), 'prst') ?? 'rect';

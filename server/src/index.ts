@@ -50,6 +50,7 @@ import { handleError } from './util.js';
 /** Bumped with each release; the apps show it and can warn about very old servers. */
 import { SERVER_VERSION, startUpdateChecks } from './updates.js';
 import { openapi, recordRoute } from './openapi.js';
+import { uploadRoutes } from './uploads.js';
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
@@ -95,6 +96,7 @@ await app.register(
     await api.register(workspaceRoutes);
     await api.register(pageRoutes);
     await api.register(fileRoutes);
+    await api.register(uploadRoutes);
     await api.register(noteRoutes);
     await api.register(calendarRoutes);
     await api.register(whiteboardRoutes);
