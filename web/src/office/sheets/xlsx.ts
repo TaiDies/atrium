@@ -79,6 +79,8 @@ function toCell(cell: ExcelJS.Cell): Cell | null {
   } else if (typeof raw === 'number') out.ct = { fa, t: 'n' };
   else if (typeof raw === 'boolean') out.ct = { fa: 'General', t: 'b' };
   else if (typeof raw === 'string') out.ct = { fa: fa === 'General' ? 'General' : fa, t: 's' };
+  // A formula saved without its result: keep the number format for when it's worked out (fillMissingResults).
+  if (out.f && (raw === undefined || raw === null)) out.ct = { fa, t: 'g' };
   if (raw !== undefined && raw !== null) {
     out.v = raw as string | number | boolean;
     out.m = typeof raw === 'string' ? raw : display(out.ct?.fa ?? 'General', raw);
@@ -226,7 +228,67 @@ export async function xlsxToSheets(data: ArrayBuffer, upload?: (blob: Blob, ext:
       ...(ws.views?.[0] && (ws.views[0] as { showGridLines?: boolean }).showGridLines === false ? { showGridLines: 0 } : {}),
     });
   }
-  return sheets.length ? sheets : [blankSheet()];
+  if (!sheets.length) return [blankSheet()];
+  await fillMissingResults(sheets);
+  return sheets;
+}
+
+/** Formulas saved without their last result (files written by scripts and some apps) would show as
+ *  empty cells, because the editor only recalculates a formula when something it uses changes. Works
+ *  those results out once, here. Formulas that already carry a result keep it. */
+async function fillMissingResults(sheets: Sheet[]) {
+  const missing = sheets.some((s) => s.celldata?.some((x) => x.v?.f && x.v.v === undefined));
+  if (!missing) return;
+  const { Parser } = await import('@fortune-sheet/formula-parser');
+  const byName = new Map(sheets.map((s) => [s.name.toUpperCase(), new Map((s.celldata ?? []).filter((x) => x.v).map((x) => [`${x.r}_${x.c}`, x.v!]))]));
+  const busy = new Set<string>();
+  const parser = new Parser();
+  let current = sheets[0].name.toUpperCase();
+
+  const valueAt = (sheet: string, r: number, c: number): unknown => {
+    const cell = byName.get(sheet)?.get(`${r}_${c}`);
+    if (!cell) return null;
+    if (cell.v !== undefined || !cell.f) return cell.v ?? null;
+    const key = `${sheet}!${r}_${c}`;
+    if (busy.has(key)) return '#REF!'; // a formula that depends on itself
+    busy.add(key);
+    const before = current;
+    current = sheet;
+    const out = parser.parse(cell.f.replace(/^=/, ''));
+    current = before;
+    busy.delete(key);
+    const result = out.error ?? out.result;
+    cell.v = result as Cell['v'];
+    if (typeof result === 'number') {
+      const fa = cell.ct?.fa ?? 'General';
+      cell.ct = { fa, t: 'n' };
+      cell.m = display(fa, result);
+    } else {
+      cell.ct = { fa: 'General', t: typeof result === 'boolean' ? 'b' : 's' };
+      cell.m = String(result ?? '');
+    }
+    return result;
+  };
+  const sheetOf = (name: string | null | undefined) => (name ? name.toUpperCase() : current);
+
+  parser.on('callCellValue', (ref: { row: { index: number }; column: { index: number }; sheetName?: string | null }, _o: unknown, done: (v: unknown) => void) => {
+    done(valueAt(sheetOf(ref.sheetName), ref.row.index, ref.column.index));
+  });
+  parser.on('callRangeValue', (a: { row: { index: number }; column: { index: number }; sheetName?: string | null }, b: { row: { index: number }; column: { index: number } }, _o: unknown, done: (v: unknown[][]) => void) => {
+    const sheet = sheetOf(a.sheetName);
+    const rows: unknown[][] = [];
+    for (let r = a.row.index; r <= b.row.index; r++) {
+      const row: unknown[] = [];
+      for (let c = a.column.index; c <= b.column.index; c++) row.push(valueAt(sheet, r, c));
+      rows.push(row);
+    }
+    done(rows);
+  });
+
+  for (const s of sheets) {
+    current = s.name.toUpperCase();
+    for (const x of s.celldata ?? []) if (x.v?.f && x.v.v === undefined) valueAt(current, x.r, x.c);
+  }
 }
 
 export function blankSheet(name = 'Sheet1'): Sheet {

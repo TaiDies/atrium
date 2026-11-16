@@ -1,5 +1,6 @@
 import { OfflineError, trackedFetch } from './offline';
 import { fallbackMessage } from './reachability';
+import { sendFile } from './upload';
 
 export const APP_NAME = 'Atrium';
 
@@ -194,10 +195,9 @@ export async function aiApi<T = unknown>(path: string, options: ApiOptions & { s
   }
 }
 
-export async function uploadFile(workspaceId: string, file: File): Promise<string> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await trackedFetch(`/api/workspaces/${workspaceId}/files`, { method: 'POST', body: form, credentials: 'same-origin' });
+export async function uploadFile(workspaceId: string, file: File, onProgress?: (sent: number, total: number) => void): Promise<string> {
+  // Big files go up in pieces first (lib/upload.ts); progress shows in the corner either way.
+  const res = await sendFile({ url: `/api/workspaces/${workspaceId}/files`, file, name: file.name, kind: 'file', onProgress });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data?.error ?? 'Upload failed');
   return data.url as string;

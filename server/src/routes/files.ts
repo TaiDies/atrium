@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { queueFileText } from '../fileText.js';
@@ -15,6 +14,7 @@ import { emit } from '../webhooks.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { requirePermission } from '../roles.js';
 import { positionSchema, positionsFor, savePosition } from '../filePositions.js';
+import { receiveFile } from '../uploads.js';
 
 // Types that are safe to render inline; everything else (HTML, SVG, ...) is forced to download.
 export const INLINE_TYPES = new Set([
@@ -28,18 +28,11 @@ export async function fileRoutes(app: FastifyInstance) {
   app.post('/workspaces/:id/files', async (req, reply) => {
     const { id } = parse(idParams, req.params);
     await requireMember(req.user.id, id, undefined, true);
-    const file = await req.file();
-    if (!file) throw new HttpError(400, 'No file uploaded');
-
     const fileId = randomUUID();
     const target = path.join(config.uploadDir, fileId);
-    let size = 0;
-    file.file.on('data', (chunk: Buffer) => (size += chunk.length));
-    await pipeline(file.file, createWriteStream(target));
-    if (file.file.truncated) {
-      await unlink(target).catch(() => {});
-      throw new HttpError(413, `Files must be smaller than ${Math.round(config.maxUploadBytes / 1024 / 1024)} MB`);
-    }
+    // The multipart field "file", or a file sent in pieces first (?upload=, see uploads.ts).
+    const file = await receiveFile(req, target, config.maxUploadBytes);
+    const size = file.size;
     // This person's own limits: the largest file, and their total storage.
     try {
       await requirePermission(req.user.id, 'upload_files');

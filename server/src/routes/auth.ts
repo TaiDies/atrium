@@ -1,5 +1,5 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
-import bcrypt from 'bcryptjs';
+import { hash as hashPassword, verify as verifyPassword } from '@node-rs/bcrypt';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { clearSessionCookie, endSessions, liveTicket, looksLikeApiToken, requireSession, requireUser, sessionToken, setSessionCookie, type SessionUser, userFromToken } from '../auth.js';
@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { one, query, type Queryable, tx } from '../db.js';
 import { codeEmail, mailEnabled, sendMail, verificationRequired } from '../mail.js';
 import { getSettings } from '../settings.js';
+import { chunkSettings } from '../uploads.js';
 import { limitsFor, usageFor } from '../limits.js';
 import { colorFor, email, HttpError, parse } from '../util.js';
 import { permissionsFor } from '../roles.js';
@@ -101,6 +102,11 @@ export async function authRoutes(app: FastifyInstance) {
     requireEmailVerification: await mustVerify(),
     appName: config.appName,
     signups: (await getSettings()).allowSignups,
+    // Whether the app sends big files in pieces, and how big each is (admin panel → Limits).
+    uploads: await (async () => {
+      const { chunked, chunkMb } = await chunkSettings();
+      return { chunked, chunkMb };
+    })(),
   }));
 
   app.post('/auth/signup', async (req, reply) => {
@@ -110,7 +116,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (existing) throw new HttpError(409, 'An account with this email already exists');
     await checkSignupAllowed(body.email);
 
-    const passwordHash = await bcrypt.hash(body.password, 10);
+    const passwordHash = await hashPassword(body.password, { cost: 10 });
     const user = await tx((c) => createAccount(c, body.email, body.name, passwordHash, false));
     if ((await mustVerify())) {
       // The account exists, but can only be used once the email is confirmed.
@@ -133,7 +139,7 @@ export async function authRoutes(app: FastifyInstance) {
       'select id, email, name, color, password_hash, email_verified_at, disabled_at from users where email = $1',
       [body.email],
     );
-    const ok = row?.password_hash ? await bcrypt.compare(body.password, row.password_hash) : false;
+    const ok = row?.password_hash ? await verifyPassword(body.password, row.password_hash) : false;
     if (!row || !ok) failedByIp.hit(req.ip);
     if (!row || !ok) throw new HttpError(401, row && !row.password_hash ? 'This account signs in with an email code' : 'Incorrect email or password');
     if (row.disabled_at) throw new HttpError(403, DISABLED);
@@ -272,10 +278,10 @@ export async function authRoutes(app: FastifyInstance) {
     const body = parse(z.object({ currentPassword: z.string().optional(), newPassword: password }), req.body);
     const row = (await one<{ password_hash: string | null }>('select password_hash from users where id = $1', [req.user.id]))!;
     // Accounts made with an email code can set a first password without a current one.
-    if (row.password_hash && !(await bcrypt.compare(body.currentPassword ?? '', row.password_hash))) {
+    if (row.password_hash && !(await verifyPassword(body.currentPassword ?? '', row.password_hash))) {
       throw new HttpError(400, 'Current password is incorrect');
     }
-    await query('update users set password_hash = $2 where id = $1', [req.user.id, await bcrypt.hash(body.newPassword, 10)]);
+    await query('update users set password_hash = $2 where id = $1', [req.user.id, await hashPassword(body.newPassword, { cost: 10 })]);
     // A new password signs out every other device; this one gets a fresh session.
     await endSessions(req.user.id);
     closeUserSessions(req.user.id);

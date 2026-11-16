@@ -102,14 +102,146 @@ export function useCollab(pageId: string, user: User, onPageUpdated: () => void)
     return () => {
       clearTimeout(fallback);
       stopWatching();
-      stopRenewal();
-      provider.destroy();
-      void local.destroy();
-      doc.destroy();
+      const close = () => {
+        stopRenewal();
+        provider.destroy();
+        void local.destroy();
+        doc.destroy();
+      };
+      // Files still uploading into this page (the person moved on before they finished): keep the
+      // document connected until they're done, so their links land in the right blocks.
+      const pending = holds.get(doc);
+      if (pending?.size) void Promise.allSettled([...pending]).then(close);
+      else close();
     };
   }, [pageId, user.id, user.name, user.color]);
 
   return { session, synced, status, denied };
+}
+
+const holds = new WeakMap<Y.Doc, Set<Promise<unknown>>>();
+
+/** Keeps a page's document open until `work` is done, even if the page is closed meanwhile. */
+export function holdDoc(doc: Y.Doc, work: Promise<unknown>) {
+  let set = holds.get(doc);
+  if (!set) holds.set(doc, (set = new Set()));
+  set.add(work);
+  const release = () => set.delete(work);
+  work.then(release, release);
+}
+
+/**
+ * Sets props of one block straight in the document (the editor's structure: blockGroup → blockContainer
+ * with the block's id → its content element, whose attributes are the props). Used when an upload
+ * finishes after its page was closed, since the editor that started it is gone. Props that already have
+ * a value are left alone (someone set them since). Returns whether the block was found.
+ */
+export function fillBlockProps(doc: Y.Doc, blockId: string, props: Record<string, string>): boolean {
+  if (doc.isDestroyed) return false;
+  const find = (group: Y.XmlElement | Y.XmlFragment): Y.XmlElement | null => {
+    for (const child of group.toArray()) {
+      if (!(child instanceof Y.XmlElement)) continue;
+      if (child.nodeName === 'blockGroup') {
+        const hit = find(child);
+        if (hit) return hit;
+      } else if (child.nodeName === 'blockContainer') {
+        if (child.getAttribute('id') === blockId) return child;
+        const nested = child.toArray().find((c) => c instanceof Y.XmlElement && c.nodeName === 'blockGroup') as Y.XmlElement | undefined;
+        const hit = nested && find(nested);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  const container = find(doc.getXmlFragment('document-store'));
+  const content = container?.toArray().find((c) => c instanceof Y.XmlElement && c.nodeName !== 'blockGroup') as Y.XmlElement | undefined;
+  if (!content) return false;
+  doc.transact(() => {
+    for (const [k, v] of Object.entries(props)) if (!content.getAttribute(k)) content.setAttribute(k, v);
+  });
+  return true;
+}
+
+// ---------- blocks being uploaded into ----------
+// While a file is uploading into a block, the block is listed in the document's "uploads" map (shared
+// with every device that has the page open), so nobody starts another upload into it meanwhile.
+
+export interface BlockUpload {
+  name: string;
+  sent: number;
+  total: number;
+  /** When the uploading device last refreshed it (its own clock; not used for staleness). */
+  at: number;
+}
+const UPLOAD_STALE_MS = 2 * 60 * 1000;
+
+/**
+ * When this device last saw each entry change, by its own clock: an entry that stops changing (the
+ * upload died with its tab) goes stale. Comparing with the uploader's timestamps would depend on both
+ * devices' clocks agreeing.
+ */
+const seenAt = new WeakMap<Y.Doc, Map<string, number>>();
+function seen(doc: Y.Doc) {
+  let map = seenAt.get(doc);
+  if (!map) {
+    const times = new Map<string, number>();
+    seenAt.set(doc, (map = times));
+    doc.getMap<BlockUpload>('uploads').observe((e) => e.keysChanged.forEach((k) => times.set(k, Date.now())));
+  }
+  return map;
+}
+
+/** The upload going into a block right now, if any. */
+export function blockUpload(doc: Y.Doc, blockId: string): BlockUpload | null {
+  const entry = doc.getMap<BlockUpload>('uploads').get(blockId);
+  if (!entry) return null;
+  const times = seen(doc);
+  // Already there when this device opened the page: count from now.
+  if (!times.has(blockId)) times.set(blockId, Date.now());
+  return Date.now() - times.get(blockId)! < UPLOAD_STALE_MS ? entry : null;
+}
+
+/** Lists a block as being uploaded into until `finish` is called; `progress` keeps the entry fresh. */
+export function markBlockUploading(doc: Y.Doc, blockId: string, name: string, total: number) {
+  const map = doc.getMap<BlockUpload>('uploads');
+  let sent = 0;
+  let written = 0;
+  const write = () => {
+    if (doc.isDestroyed) return;
+    written = Date.now();
+    map.set(blockId, { name, sent, total, at: written });
+  };
+  write();
+  // Still alive even when no progress is reported for a while (the server converting a big file).
+  const beat = setInterval(write, 20_000);
+  return {
+    progress(n: number) {
+      sent = n;
+      if (Date.now() - written > 1000) write();
+    },
+    finish() {
+      clearInterval(beat);
+      if (!doc.isDestroyed) map.delete(blockId);
+    },
+  };
+}
+
+/** Re-renders when the document's uploads change. */
+export function useBlockUpload(doc: Y.Doc, blockId: string) {
+  const [entry, setEntry] = useState(() => blockUpload(doc, blockId));
+  useEffect(() => {
+    const map = doc.getMap<BlockUpload>('uploads');
+    const update = () => setEntry(blockUpload(doc, blockId));
+    update();
+    map.observe(update);
+    // An entry that stops changing goes stale with no event: look again now and then.
+    const timer = setInterval(update, 15_000);
+    return () => {
+      map.unobserve(update);
+      clearInterval(timer);
+    };
+  }, [doc, blockId]);
+  return entry;
 }
 
 /** Other people currently viewing the same page (one entry per person). */

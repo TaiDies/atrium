@@ -202,7 +202,7 @@ function FormulaConfigForm({ field, onSave }: { field?: Field; onSave: (extra: F
   const insert = (text: string) => setFormula((f) => (f ? `${f}${/\s$/.test(f) ? '' : ' '}${text}` : text));
 
   return (
-    <div className="w-[min(360px,80vw)] space-y-2 p-1.5">
+    <div className="w-full min-w-0 space-y-2 p-1.5">
       <textarea
         autoFocus
         value={formula}
@@ -307,38 +307,62 @@ function ButtonConfigForm({ field, onSave }: { field?: Field; onSave: (extra: Fi
   };
 
   return (
-    <div className="w-[min(340px,80vw)] space-y-2 p-1.5">
+    <div className="w-full min-w-0 space-y-2 p-1.5">
       <label className="block">
         <span className="mb-1 block text-xs text-faint">Button text</span>
         <input value={label} onChange={(e) => setLabel(e.target.value)} className="h-8 w-full rounded-md border border-line bg-bg px-2 text-sm outline-none focus:border-accent" />
       </label>
       <div className="text-xs text-faint">When clicked</div>
-      {steps.map((step, i) => (
-        <div key={i} className="flex flex-wrap items-center gap-1 rounded-md border border-line p-1.5">
-          {step.type === 'set' ? (
-            <>
-              <span className="text-xs text-muted">Set</span>
-              <select value={step.fieldId} onChange={(e) => update(i, { type: 'set', fieldId: e.target.value, value: null })} className={control}>
-                {targets.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
-              <span className="text-xs text-muted">to</span>
-              {valueInput(step, i)}
-            </>
-          ) : (
-            <>
-              <span className="text-xs text-muted">Open</span>
-              <input value={step.url} onChange={(e) => update(i, { type: 'url', url: e.target.value })} placeholder="https://…" className={clsx(control, 'min-w-0 flex-1')} />
-            </>
-          )}
-          <button type="button" onClick={() => setSteps((s) => s.filter((_, j) => j !== i))} className="ms-auto rounded px-1 text-xs text-muted hover:text-danger" aria-label="Remove">
+      {steps.map((step, i) => {
+        const remove = (
+          <button type="button" onClick={() => setSteps((s) => s.filter((_, j) => j !== i))} className="shrink-0 rounded px-1 text-xs text-muted hover:text-danger" aria-label="Remove" title="Remove">
             ✕
           </button>
-        </div>
-      ))}
+        );
+        const target = step.type === 'set' ? db.fields.find((f) => f.id === step.fieldId) : undefined;
+        return (
+          <div key={i} className="space-y-1.5 rounded-md border border-line p-1.5">
+            {step.type === 'set' ? (
+              <>
+                <div className="flex items-center gap-1">
+                  <span className="shrink-0 text-xs text-muted">Set</span>
+                  <select value={step.fieldId} onChange={(e) => update(i, { type: 'set', fieldId: e.target.value, value: null })} className={clsx(control, 'min-w-0 flex-1')}>
+                    {targets.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                  {remove}
+                </div>
+                <div className="flex items-center gap-1 [&>input]:flex-1 [&>select]:min-w-0 [&>select]:flex-1">
+                  <span className="shrink-0 text-xs text-muted">to</span>
+                  {valueInput(step, i)}
+                </div>
+                {target?.type === 'select' && (
+                  <label className="flex items-center gap-1 text-xs text-muted">
+                    <span className="shrink-0">Click again to set back to</span>
+                    <select value={String(step.undo ?? '')} onChange={(e) => update(i, { ...step, undo: e.target.value || undefined })} className={clsx(control, 'min-w-0 flex-1')}>
+                      <option value="">(don't undo)</option>
+                      {target.options?.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-1">
+                <span className="shrink-0 text-xs text-muted">Open</span>
+                <input value={step.url} onChange={(e) => update(i, { type: 'url', url: e.target.value })} placeholder="https://…" className={clsx(control, 'min-w-0 flex-1')} />
+                {remove}
+              </div>
+            )}
+          </div>
+        );
+      })}
       <div className="flex gap-1">
         <button
           type="button"

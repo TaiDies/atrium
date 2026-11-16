@@ -194,6 +194,10 @@ const TOOLS: Tool[] = [
               + (select count(*) from unnest($2::text[]) k where c.text_content ilike k) as score
            from pages p left join page_content c on c.page_id = p.id
           where p.workspace_id = $1 and p.deleted_at is null and p.archived_at is null
+            -- Only notes that contain a word at all (found through the text indexes) get scored.
+            and p.id in (select id from pages where workspace_id = $1 and title ilike any($2)
+                         union select c2.page_id from page_content c2 join pages w on w.id = c2.page_id
+                                where w.workspace_id = $1 and c2.text_content ilike any($2))
           order by score desc, p.updated_at desc limit 60`,
         [ctx.workspaceId, patterns],
       );

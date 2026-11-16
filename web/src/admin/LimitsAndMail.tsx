@@ -130,7 +130,72 @@ export function LimitsTab() {
           </div>
         </form>
       )}
+      <ChunkedUploads />
     </>
+  );
+}
+
+/** Sending big files in pieces: for servers behind a proxy that caps request size (Cloudflare: 100 MB). */
+function ChunkedUploads() {
+  type UploadSettings = { chunked: boolean; chunkMb: number; min: number };
+  const { data, refetch } = useQuery({ queryKey: ['admin', 'settings'], queryFn: () => adminApi<{ uploads: UploadSettings }>('/settings') });
+  const [chunked, setChunked] = useState(false);
+  const [chunkMb, setChunkMb] = useState('16');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!data?.uploads) return;
+    setChunked(data.uploads.chunked);
+    setChunkMb(String(data.uploads.chunkMb));
+  }, [data]);
+  if (!data?.uploads) return null;
+  const { min } = data.uploads;
+  const mb = Number(chunkMb);
+  const valid = Number.isInteger(mb) && mb >= min;
+  const changed = chunked !== data.uploads.chunked || mb !== data.uploads.chunkMb;
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await adminApi('/settings/uploads', { method: 'PUT', body: { chunked, chunkMb: mb } });
+      toast(chunked ? `Big files are now sent in ${mb} MB pieces` : 'Files are now sent in one piece');
+      await refetch();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={save} className="mt-10 max-w-2xl space-y-3">
+      <div>
+        <h3 className="text-base font-semibold">Big uploads</h3>
+        <p className="mt-1 text-sm text-muted">
+          A proxy or tunnel in front of the server may refuse big requests (Cloudflare refuses anything over 100 MB). Turn this on to send big files
+          in pieces instead, so they get through. Leave it off if people reach the server directly.
+        </p>
+      </div>
+      <label className="flex items-start gap-3 rounded-lg border border-line p-3">
+        <input type="checkbox" checked={chunked} onChange={(e) => setChunked(e.target.checked)} className="mt-1" />
+        <span>
+          <span className="block text-sm font-medium">Send big files in pieces</span>
+          <span className="block text-xs text-muted">Files bigger than one piece go up as several requests, and carry on after a dropped connection.</span>
+        </span>
+      </label>
+      <label className={clsx('flex items-center gap-3 text-sm', !chunked && 'opacity-50')}>
+        <span className="w-28 shrink-0">Piece size</span>
+        <div className="w-24 shrink-0">
+          <Input type="number" min={min} step={1} value={chunkMb} disabled={!chunked} onChange={(e) => setChunkMb(e.target.value)} />
+        </div>
+        <span className="text-muted">MB</span>
+      </label>
+      {chunked && !valid && <p className="text-xs text-danger">Choose a whole number of MB, at least {min}.</p>}
+      <p className="text-xs text-muted">Keep pieces under your proxy's limit (for Cloudflare, under 100 MB). Smaller pieces lose less when a connection drops.</p>
+      <Button type="submit" variant="primary" loading={busy} disabled={!changed || (chunked && !valid)}>
+        Save
+      </Button>
+    </form>
   );
 }
 

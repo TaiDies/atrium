@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { queueFileText } from '../fileText.js';
 import { z } from 'zod';
 import { requireFileEditor, requireMember } from '../access.js';
@@ -13,6 +13,7 @@ import { one, query } from '../db.js';
 import { checkStorage, uploadLimitBytes } from '../limits.js';
 import { requirePermission } from '../roles.js';
 import { HttpError, idParams, parse } from '../util.js';
+import { readUpload, uploadIdOf } from '../uploads.js';
 
 // Documents, spreadsheets and presentations: new blank files, conversions between formats, saving
 // the editors' work back into the file, and an exact "original layout" preview as PDF.
@@ -66,6 +67,17 @@ const previewDir = path.join(config.uploadDir, '..', 'previews');
 /** Someone is loading a file into its (still empty) live editor; others wait for them. */
 const claims = new Map<string, { token: string; until: number }>();
 
+/** The most an editor's file may be when it's converted or saved. */
+const CONVERT_MAX = 200 * 1024 * 1024;
+
+/** The file sent as the request body (application/octet-stream), or sent in pieces first (?upload=, see uploads.ts). */
+async function bodyOrUpload(req: FastifyRequest, maxBytes: number): Promise<Buffer> {
+  const upload = uploadIdOf(req);
+  if (upload) return readUpload(upload, req.user.id, maxBytes);
+  if (!Buffer.isBuffer(req.body)) throw new HttpError(400, 'Send the file as application/octet-stream');
+  return req.body;
+}
+
 export async function officeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
   await mkdir(previewDir, { recursive: true });
@@ -110,14 +122,14 @@ export async function officeRoutes(app: FastifyInstance) {
   });
 
   // Converting what an editor produced (e.g. its HTML) to a file format, for "Download as…" and saving.
-  app.post('/workspaces/:id/convert', { bodyLimit: 200 * 1024 * 1024 }, async (req, reply) => {
+  app.post('/workspaces/:id/convert', { bodyLimit: CONVERT_MAX }, async (req, reply) => {
     const { id } = parse(idParams, req.params);
     await requireMember(req.user.id, id);
     const { kind, from, to, name } = parse(z.object({ kind: KIND, from: z.string().regex(/^[a-z]{2,5}$/), to: z.string().regex(/^[a-z]{2,5}$/), name: z.string().max(200).default('file') }), req.query);
-    if (!Buffer.isBuffer(req.body)) throw new HttpError(400, 'Send the file as application/octet-stream');
+    const body = await bodyOrUpload(req, CONVERT_MAX);
     // LibreOffice names things (e.g. a CSV's sheet) after the file, so keep the real name.
     const safe = name.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N} _-]+/gu, ' ').trim().slice(0, 80) || 'file';
-    const out = await convert(req.body, `${safe}.${from}`, kind, to);
+    const out = await convert(body, `${safe}.${from}`, kind, to);
     return reply
       .header('Content-Type', mimeFor(to))
       .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${name.replace(/\.[^.]+$/, '')}.${to}`)}`)
@@ -125,25 +137,25 @@ export async function officeRoutes(app: FastifyInstance) {
   });
 
   // Saving the editor's work into the file itself (optionally renaming it, e.g. .doc → .docx).
-  app.put('/files/:id/content', { bodyLimit: 200 * 1024 * 1024 }, async (req) => {
+  app.put('/files/:id/content', { bodyLimit: CONVERT_MAX }, async (req) => {
     const { id } = parse(idParams, req.params);
     const { name } = parse(z.object({ name: z.string().trim().min(1).max(255).optional() }), req.query);
     const file = await fileFor(req.user.id, id);
     await requireFileEditor(req.user.id, id);
-    if (!Buffer.isBuffer(req.body)) throw new HttpError(400, 'Send the file as application/octet-stream');
     // Saving is uploading: the same permission and size limit apply.
     await requirePermission(req.user.id, 'upload_files');
     const max = await uploadLimitBytes(req.user.id);
-    if (req.body.length > max) throw new HttpError(413, `Files must be smaller than ${Math.round(max / 1024 / 1024)} MB`);
+    const body = await bodyOrUpload(req, CONVERT_MAX);
+    if (body.length > max) throw new HttpError(413, `Files must be smaller than ${Math.round(max / 1024 / 1024)} MB`);
     const filename = name ?? file.filename;
     // A bigger file counts against the storage of whoever uploaded it.
     const stored = await one<{ uploaded_by: string | null; size: string }>('select uploaded_by, size from files where id = $1', [id]);
-    if (stored?.uploaded_by) await checkStorage(stored.uploaded_by, req.body.length, Number(stored.size));
-    await writeFile(path.join(config.uploadDir, id), req.body);
-    await query('update files set filename = $2, mime_type = $3, size = $4, updated_at = now() where id = $1', [id, filename, mimeFor(path.extname(filename).slice(1)), req.body.length]);
+    if (stored?.uploaded_by) await checkStorage(stored.uploaded_by, body.length, Number(stored.size));
+    await writeFile(path.join(config.uploadDir, id), body);
+    await query('update files set filename = $2, mime_type = $3, size = $4, updated_at = now() where id = $1', [id, filename, mimeFor(path.extname(filename).slice(1)), body.length]);
     for (const f of await readdir(previewDir)) if (f.startsWith(id)) await unlink(path.join(previewDir, f)).catch(() => {});
     queueFileText(id);
-    return { ok: true, name: filename, size: req.body.length };
+    return { ok: true, name: filename, size: body.length };
   });
 
   // The file exactly as it looks in its own app, as a PDF (made once per version, then kept).

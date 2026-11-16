@@ -11,6 +11,7 @@ import { convertForeignFormats } from '../lib/importFormats';
 import { invalidatePages } from '../lib/queries';
 import { useApp } from './context';
 import { PageTypeIcon } from './PageIcon';
+import { sendFile } from '../lib/upload';
 
 type Step = 'pick' | 'review' | 'running' | 'done';
 
@@ -107,9 +108,9 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
     if (!native) return;
     setStep('running');
     try {
-      const form = new FormData();
-      form.append('file', native.file);
-      const res = await fetch(`/api/workspaces/${workspace.id}/import-export${parentId ? `?parentId=${parentId}` : ''}`, { method: 'POST', body: form, credentials: 'same-origin' });
+      const url = `/api/workspaces/${workspace.id}/import-export${parentId ? `?parentId=${parentId}` : ''}`;
+      // Big exports go up in pieces first, so proxies that cap request sizes don't refuse them.
+      const res = await sendFile({ url, file: native.file, name: native.file.name, kind: 'import' });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new ApiError(res.status, data?.error ?? 'Import failed');
       invalidatePages(workspace.id, parentId || undefined);

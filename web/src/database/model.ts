@@ -43,7 +43,10 @@ export const STATUS_GROUPS: { group: StatusGroup; label: string }[] = [
 ];
 
 /** What a button property does when clicked. Values "@today", "@now" and "@me" are filled in then. */
-export type ButtonAction = { type: 'set'; fieldId: string; value: unknown } | { type: 'url'; url: string };
+export type ButtonAction =
+  /** `undo`: when the property already holds `value`, clicking sets it to `undo` instead (a toggle, e.g. Done ↔ To Do). */
+  | { type: 'set'; fieldId: string; value: unknown; undo?: unknown }
+  | { type: 'url'; url: string };
 
 export interface ButtonConfig {
   label: string;

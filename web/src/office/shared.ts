@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import { ApiError } from '../lib/api';
 import { saveBlob } from '../lib/save';
 import type { CollabSession } from '../lib/collab';
+import { sendFile } from '../lib/upload';
 
 // Shared by the document, spreadsheet and presentation editors. Each file's live content is a Yjs
 // document ("file:<id>"), filled from the file once — by whoever opens it first — and then edited by
@@ -44,26 +45,21 @@ export async function convertStored(file: OfficeFile, to: string): Promise<Array
   return res.arrayBuffer();
 }
 
+/** Sends a file as the request body, or in pieces first when it's too big for one request (lib/upload.ts). */
+async function sendBody(url: string, method: 'POST' | 'PUT', data: Blob, name: string) {
+  return sendFile({ url, method, file: data, name, kind: 'content', as: 'body' });
+}
+
 /** Bytes an editor produced, converted by the server to another format. */
 export async function convertBytes(workspaceId: string, kind: OfficeKind, from: string, to: string, data: Blob | ArrayBuffer | Uint8Array, name: string): Promise<Blob> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/convert?kind=${kind}&from=${from}&to=${to}&name=${encodeURIComponent(name)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: data instanceof Blob ? data : new Blob([data as BlobPart]),
-    credentials: 'same-origin',
-  });
+  const res = await sendBody(`/api/workspaces/${workspaceId}/convert?kind=${kind}&from=${from}&to=${to}&name=${encodeURIComponent(name)}`, 'POST', data instanceof Blob ? data : new Blob([data as BlobPart]), name);
   if (!res.ok) throw await failed(res, `Could not make a .${to} file`);
   return res.blob();
 }
 
 /** Writes new contents into the stored file (optionally under a new name, e.g. .doc → .docx). */
 export async function saveContent(fileId: string, data: Blob, name?: string) {
-  const res = await fetch(`/api/files/${fileId}/content${name ? `?name=${encodeURIComponent(name)}` : ''}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: data,
-    credentials: 'same-origin',
-  });
+  const res = await sendBody(`/api/files/${fileId}/content${name ? `?name=${encodeURIComponent(name)}` : ''}`, 'PUT', data, name ?? 'file');
   if (!res.ok) throw await failed(res, 'Could not save the file');
   return (await res.json()) as { name: string; size: number };
 }

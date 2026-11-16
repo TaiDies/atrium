@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { Check, X } from 'lucide-react';
+import { Check, ChevronRight, X } from 'lucide-react';
 import {
   type ButtonHTMLAttributes,
   type ReactNode,
@@ -225,14 +225,28 @@ export function Popover({
   useBackClose(!!anchor, onClose);
 
   useLayoutEffect(() => {
-    if (!anchor || !ref.current || phone) return;
-    const el = ref.current.getBoundingClientRect();
-    const rect = 'width' in anchor ? anchor : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
-    let left = align === 'end' ? rect.right - el.width : rect.left;
-    let top = rect.bottom + 4;
-    if (top + el.height > window.innerHeight - 8) top = Math.max(8, rect.top - el.height - 4);
-    left = Math.min(Math.max(8, left), window.innerWidth - el.width - 8);
-    setPos({ left, top });
+    const box = ref.current;
+    if (!anchor || !box || phone) return;
+    // Below the anchor, else above it, else wherever it fits best; never past the window's edges
+    // (taller than the window, it scrolls). Placed again whenever its content grows or shrinks.
+    const place = () => {
+      const el = box.getBoundingClientRect();
+      const rect = 'width' in anchor ? anchor : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
+      let left = align === 'end' ? rect.right - el.width : rect.left;
+      let top = rect.bottom + 4;
+      if (top + el.height > window.innerHeight - 8) top = rect.top - el.height - 4 >= 8 ? rect.top - el.height - 4 : window.innerHeight - el.height - 8;
+      top = Math.max(8, top);
+      left = Math.min(Math.max(8, left), window.innerWidth - el.width - 8);
+      setPos((p) => (p && p.left === left && p.top === top ? p : { left, top }));
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(box);
+    window.addEventListener('resize', place);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', place);
+    };
   }, [anchor, align, phone]);
 
   useEffect(() => {
@@ -280,12 +294,91 @@ export function Popover({
     <div
       ref={ref}
       data-atrium-popover=""
-      className={clsx('shadow-pop fixed z-[60] rounded-lg bg-surface', className)}
-      style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999 }}
+      className={clsx('shadow-pop fixed z-[60] overflow-y-auto overscroll-contain rounded-lg bg-surface', className)}
+      style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, maxHeight: 'calc(100dvh - 16px)' }}
     >
       {children}
     </div>,
     document.body,
+  );
+}
+
+/** A menu row that opens a second menu beside it — on hover, like a desktop right-click menu, or on
+ *  click (touch, keyboard). The second menu flips to the other side when there's no room, and scrolls
+ *  when it's taller than the window. On phones it opens underneath, inside the sheet. */
+export function SubMenu({ icon, label, children, className }: { icon?: ReactNode; label: ReactNode; children: (close: () => void) => ReactNode; className?: string }) {
+  const phone = usePhone();
+  const [open, setOpen] = useState(false);
+  const row = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const close = () => setOpen(false);
+  const stay = () => clearTimeout(timer.current);
+  const leave = () => {
+    stay();
+    timer.current = setTimeout(close, 250);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  useLayoutEffect(() => {
+    if (!open || phone || !row.current || !panel.current) return;
+    const r = row.current.getBoundingClientRect();
+    const parent = row.current.closest('[data-atrium-popover]')?.getBoundingClientRect() ?? r;
+    const el = panel.current.getBoundingClientRect();
+    let left = parent.right + 2;
+    if (left + el.width > window.innerWidth - 8) left = Math.max(8, parent.left - el.width - 2);
+    const top = Math.max(8, Math.min(r.top - 4, window.innerHeight - el.height - 8));
+    setPos({ left, top });
+  }, [open, phone]);
+
+  const trigger = (
+    <button
+      ref={row}
+      onClick={() => setOpen((o) => !o)}
+      onPointerEnter={(e) => {
+        if (e.pointerType !== 'mouse') return;
+        stay();
+        setOpen(true);
+      }}
+      onPointerLeave={(e) => e.pointerType === 'mouse' && leave()}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      className={clsx('atrium-menu-item flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-start text-sm text-fg hover:bg-hover', open && 'bg-hover', className)}
+    >
+      {icon && <span className="flex w-4 justify-center text-muted">{icon}</span>}
+      <span className="flex-1 truncate">{label}</span>
+      <ChevronRight size={14} className={clsx('text-faint transition-transform rtl:rotate-180', phone && open && 'rotate-90')} />
+    </button>
+  );
+
+  if (phone) {
+    return (
+      <>
+        {trigger}
+        {open && <div className="mb-1 ms-3 border-s border-line ps-1">{children(close)}</div>}
+      </>
+    );
+  }
+  return (
+    <>
+      {trigger}
+      {open &&
+        createPortal(
+          <div
+            ref={panel}
+            role="menu"
+            data-atrium-popover=""
+            onPointerEnter={stay}
+            onPointerLeave={(e) => e.pointerType === 'mouse' && leave()}
+            className="shadow-pop fixed z-[61] min-w-[200px] overflow-y-auto overscroll-contain rounded-lg bg-surface p-1"
+            style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, maxHeight: 'calc(100dvh - 16px)' }}
+          >
+            {children(close)}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

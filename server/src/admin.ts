@@ -4,7 +4,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
-import bcrypt from 'bcryptjs';
+import { hash as hashPassword, verify as verifyPassword } from '@node-rs/bcrypt';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -14,7 +14,8 @@ import { config } from './config.js';
 import { one, query, tx } from './db.js';
 import { createAccount } from './routes/auth.js';
 import { endSessions } from './auth.js';
-import { getSettings, type Limits, setSetting } from './settings.js';
+import { CHUNK_MB_MIN, getSettings, type Limits, setSetting } from './settings.js';
+import { chunkSettings } from './uploads.js';
 import { LIMIT_KEYS, limitsFor, resolve, usageFor } from './limits.js';
 import { mailEnabled, sendMail, verifyMail } from './mail.js';
 import { checkForUpdate, requestUpdate, updateStatus } from './updates.js';
@@ -36,7 +37,7 @@ async function checkPassword(given: string): Promise<boolean> {
     return a.length === b.length && timingSafeEqual(a, b);
   }
   const hash = (await getSettings()).adminPasswordHash;
-  return !!hash && bcrypt.compare(given, hash);
+  return !!hash && verifyPassword(given, hash);
 }
 
 /** On first start without ADMIN_PASSWORD: makes a password and prints it once. */
@@ -51,7 +52,7 @@ async function ensurePassword(log: (msg: string) => void) {
     return;
   }
   const password = randomBytes(9).toString('base64url');
-  await setSetting('adminPasswordHash', await bcrypt.hash(password, 10));
+  await setSetting('adminPasswordHash', await hashPassword(password, { cost: 10 }));
   await writeFile(passwordFile(), `${password}\n`, { mode: 0o600 });
   log(`Admin panel password (change it in the panel): ${password} — also saved in ${passwordFile()}`);
 }
@@ -246,7 +247,7 @@ export async function startAdminServer() {
             req.body,
           );
           if (await one('select 1 from users where email = $1', [body.email])) throw new HttpError(409, 'An account with this email already exists');
-          const hash = body.password ? await bcrypt.hash(body.password, 10) : null;
+          const hash = body.password ? await hashPassword(body.password, { cost: 10 }) : null;
           const user = await tx((c) => createAccount(c, body.email, body.name, hash, true));
           return reply.code(201).send({ user });
         });
@@ -270,7 +271,7 @@ export async function startAdminServer() {
           if (body.email !== undefined) await query('update users set email = $2 where id = $1', [id, body.email]);
           if (body.verified !== undefined) await query(`update users set email_verified_at = ${body.verified ? 'coalesce(email_verified_at, now())' : 'null'} where id = $1`, [id]);
           if (body.password !== undefined) {
-            await query('update users set password_hash = $2 where id = $1', [id, await bcrypt.hash(body.password, 10)]);
+            await query('update users set password_hash = $2 where id = $1', [id, await hashPassword(body.password, { cost: 10 })]);
             // A new password signs them out everywhere (and stops their API tokens), as when they change it themselves.
             await endSessions(id);
             closeUserSessions(id);
@@ -401,9 +402,16 @@ export async function startAdminServer() {
           const s = await getSettings();
           return {
             allowSignups: s.allowSignups,
+            uploads: await chunkSettings().then(({ chunked, chunkMb }) => ({ chunked, chunkMb, min: CHUNK_MB_MIN })),
             passwordFromEnv: !!config.admin.password,
             ai: s.ai ? { provider: s.ai.provider, model: s.ai.model, baseUrl: s.ai.baseUrl, keyHint: maskKey(decryptKey(s.ai.keyEnc)), allowOwn: s.ai.allowOwn } : null,
           };
+        });
+
+        secured.put('/settings/uploads', async (req) => {
+          const body = parse(z.object({ chunked: z.boolean(), chunkMb: z.number().int().min(CHUNK_MB_MIN) }), req.body);
+          await setSetting('uploads', body);
+          return { ok: true };
         });
 
         secured.put('/settings/signups', async (req) => {
@@ -551,7 +559,7 @@ export async function startAdminServer() {
           if (config.admin.password) throw new HttpError(400, 'The password is set with ADMIN_PASSWORD on the server; change it there');
           const body = parse(z.object({ current: z.string().max(200), next: z.string().min(10, 'Use at least 10 characters').max(200) }), req.body);
           if (!(await checkPassword(body.current))) throw new HttpError(401, 'The current password is wrong');
-          await setSetting('adminPasswordHash', await bcrypt.hash(body.next, 10));
+          await setSetting('adminPasswordHash', await hashPassword(body.next, { cost: 10 }));
           await unlink(passwordFile()).catch(() => {});
           return { ok: true };
         });

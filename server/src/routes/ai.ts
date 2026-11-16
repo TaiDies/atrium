@@ -10,7 +10,7 @@ import { readDoc } from '../blocks.js';
 import { DATABASE_TYPES } from '../collab.js';
 import { APP_GUIDE, BUILD_GUIDE } from '../aiGuide.js';
 import { config } from '../config.js';
-import { one, query } from '../db.js';
+import { one, query, tx } from '../db.js';
 import { addDays, isDate } from '../repeat.js';
 import { databaseToCsv, docToMarkdown } from '../readable.js';
 import { HttpError, idParams, parse } from '../util.js';
@@ -114,6 +114,12 @@ async function searchForQuestion(userId: string, workspaceId: string, question: 
           + (select count(*) from unnest($2::text[]) k where exists (select 1 from row_documents r where r.page_id = p.id and r.text_content ilike k)) as score
        from pages p left join page_content c on c.page_id = p.id
       where p.workspace_id = $1 and p.deleted_at is null and p.archived_at is null
+        -- Only pages that contain a word at all (found through the text indexes) get scored.
+        and p.id in (select id from pages where workspace_id = $1 and title ilike any($2)
+                     union select c2.page_id from page_content c2 join pages w on w.id = c2.page_id
+                            where w.workspace_id = $1 and c2.text_content ilike any($2)
+                     union select r2.page_id from row_documents r2 join pages w on w.id = r2.page_id
+                            where w.workspace_id = $1 and r2.text_content ilike any($2))
       order by score desc, p.updated_at desc
       limit 40`,
     [workspaceId, patterns],
@@ -123,14 +129,22 @@ async function searchForQuestion(userId: string, workspaceId: string, question: 
   const files = guest
     ? []
     : (
-        await query<{ id: string; name: string; text: string | null; score: number }>(
-          `select f.id, f.filename as name, f.text_content as text,
-                  (select count(*) from unnest($2::text[]) k where f.filename ilike k) * 3
-                + (select count(*) from unnest($2::text[]) k where f.text_content ilike k) as score
-             from files f where f.workspace_id = $1 and f.text_content is not null and f.text_content <> ''
-            order by score desc, f.updated_at desc limit 20`,
-          [workspaceId, patterns],
-        )
+        // A file's text is stored out of line, so the table looks tiny to the planner and it would read every
+        // file's text instead of using the text indexes; turning off plain table scans for this one query fixes that.
+        await tx(async (client) => {
+          await client.query('set local enable_seqscan = off');
+          return query<{ id: string; name: string; text: string | null; score: number }>(
+            `select f.id, f.filename as name, f.text_content as text,
+                    (select count(*) from unnest($2::text[]) k where f.filename ilike k) * 3
+                  + (select count(*) from unnest($2::text[]) k where f.text_content ilike k) as score
+               from files f where f.workspace_id = $1 and f.text_content is not null and f.text_content <> ''
+                and f.id in (select id from files where filename ilike any($2)
+                             union select id from files where text_content ilike any($2))
+              order by score desc, f.updated_at desc limit 20`,
+            [workspaceId, patterns],
+            client,
+          );
+        })
       )
         .filter((f) => f.score > 0);
   // Files on pages hidden from this person don't count.

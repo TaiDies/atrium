@@ -561,8 +561,12 @@ export async function pageRoutes(app: FastifyInstance) {
                 ) as text
            from pages p left join page_content c on c.page_id = p.id
           where p.workspace_id = $1 and p.deleted_at is null
-            and (p.title ilike $2 or c.text_content ilike $2
-                 or exists (select 1 from row_documents r where r.page_id = p.id and r.text_content ilike $2))
+            -- Each part is its own lookup so the text indexes can find the matches.
+            and p.id in (select id from pages where workspace_id = $1 and title ilike $2
+                         union select c2.page_id from page_content c2 join pages w on w.id = c2.page_id
+                                where w.workspace_id = $1 and c2.text_content ilike $2
+                         union select r2.page_id from row_documents r2 join pages w on w.id = r2.page_id
+                                where w.workspace_id = $1 and r2.text_content ilike $2)
             and ($3::text = 'all' or ($3 = 'pages' and p.type = 'document') or ($3 = 'databases' and p.type <> 'document'))
             and ($4::timestamptz is null or p.updated_at >= $4)
             and ($5::uuid is null or p.created_by = $5)
@@ -574,16 +578,23 @@ export async function pageRoutes(app: FastifyInstance) {
     }
     const guest = (await requireMember(req.user.id, id, undefined, true)) === 'guest';
     if (!guest && (f.kind === 'all' || f.kind === 'files')) {
-      const files = await query<{ id: string; name: string; mimeType: string; text: string | null }>(
-        `select f.id, f.filename as name, f.mime_type as "mimeType", f.text_content as text
-           from files f
-          where f.workspace_id = $1 and (f.filename ilike $2 or f.text_content ilike $2)
-            and ($3::timestamptz is null or f.updated_at >= $3)
-            and ($4::uuid is null or f.uploaded_by = $4)
-          order by (f.filename ilike $2) desc, f.updated_at desc
-          limit 20`,
-        [id, pattern, since, f.mine === '1' ? req.user.id : null],
-      ).catch(() => []);
+      // A file's text is stored out of line, so the table looks tiny to the planner and it would read every
+      // file's text instead of using the text indexes; turning off plain table scans for this one query fixes that.
+      const files = await tx(async (client) => {
+        await client.query('set local enable_seqscan = off');
+        return query<{ id: string; name: string; mimeType: string; text: string | null }>(
+          `select f.id, f.filename as name, f.mime_type as "mimeType", f.text_content as text
+             from files f
+            where f.workspace_id = $1
+              and f.id in (select id from files where filename ilike $2 union select id from files where text_content ilike $2)
+              and ($3::timestamptz is null or f.updated_at >= $3)
+              and ($4::uuid is null or f.uploaded_by = $4)
+            order by (f.filename ilike $2) desc, f.updated_at desc
+            limit 20`,
+          [id, pattern, since, f.mine === '1' ? req.user.id : null],
+          client,
+        );
+      }).catch(() => []);
       // Files on pages hidden from this person don't show up (their text would leak through the snippet).
       const seen = await visibleFiles(req.user.id, id, files.map((f) => f.id));
       for (const file of files.filter((f) => seen.has(f.id))) results.push({ id: file.id, title: file.name, icon: '', type: 'file', mimeType: file.mimeType, snippet: snippetOf(file.text) });
