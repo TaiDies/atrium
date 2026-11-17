@@ -223,8 +223,9 @@ function textHtml(txBody: Xml | null, theme: ThemeColors, defaultSize: number, d
   return { html: blocks.join(''), align, valign, size: firstSize };
 }
 
-/** Reads a .pptx into slides, uploading pictures with `upload`. */
-export async function pptxToSlides(data: ArrayBuffer, upload: (blob: Blob, ext: string) => Promise<string>): Promise<{ deck: Deck; slides: Slide[] }> {
+/** Reads a .pptx into slides, uploading pictures with `upload`. `parts` names each slide's part in the
+ *  file (e.g. "ppt/slides/slide3.xml"), for saving back into it (pptxMerge.ts). */
+export async function pptxToSlides(data: ArrayBuffer, upload: (blob: Blob, ext: string) => Promise<string>): Promise<{ deck: Deck; slides: Slide[]; parts: string[] }> {
   const files = unzipSync(new Uint8Array(data));
   const pres = parse(files['ppt/presentation.xml']);
   const size = all(pres, 'sldSz')[0];
@@ -250,6 +251,7 @@ export async function pptxToSlides(data: ArrayBuffer, upload: (blob: Blob, ext: 
   };
 
   const slides: Slide[] = [];
+  const parts: string[] = [];
   for (const slidePath of order) {
     const doc = parse(files[slidePath]);
     if (!doc) continue;
@@ -385,8 +387,9 @@ export async function pptxToSlides(data: ArrayBuffer, upload: (blob: Blob, ext: 
     const tree = all(doc, 'spTree')[0];
     if (tree) await walk(tree, { dx: 0, dy: 0, sx: 1, sy: 1 });
     slides.push(slide);
+    parts.push(slidePath);
   }
-  return { deck, slides };
+  return { deck, slides, parts };
 }
 
 // ---------- writing .pptx ----------

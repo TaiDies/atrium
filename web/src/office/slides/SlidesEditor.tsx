@@ -66,6 +66,7 @@ import {
   THEMES,
 } from './model';
 import { pptxToSlides, slidesToPptx } from './pptx';
+import { keptFeatures, mergePptx, readOrigins, recordOrigins } from './pptxMerge';
 
 const LOCAL = 'slides-local';
 const FONTS = ['Calibri', 'Arial', 'Helvetica', 'Segoe UI', 'Georgia', 'Garamond', 'Times New Roman', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Courier New', 'Comic Sans MS'];
@@ -77,12 +78,16 @@ export async function loadPresentation(doc: Y.Doc, file: OfficeFile) {
   const upload = (blob: Blob, ext: string) => uploadFile(file.workspaceId, new File([blob], `slide-image.${ext}`, { type: blob.type }));
   let deck: Deck = DEFAULT_DECK;
   let slides: Slide[];
+  let parts: string[] = [];
+  // A .pptx is saved back into itself (pptxMerge.ts), so remember where each slide came from.
+  let original: ArrayBuffer | null = null;
   if (file.size === 0) slides = [newSlide('title', deck)];
   else {
     const ext = extOf(file.name);
     const data = ['pptx', 'ppsx', 'potx', 'pptm'].includes(ext) ? await fileBytes(file) : await convertStored(file, 'pptx');
-    ({ deck, slides } = await pptxToSlides(data, upload));
+    ({ deck, slides, parts } = await pptxToSlides(data, upload));
     if (!slides.length) slides = [newSlide('title', deck)];
+    if (ext === 'pptx') original = data;
   }
   doc.transact(() => {
     const d = doc.getMap('deck');
@@ -91,6 +96,14 @@ export async function loadPresentation(doc: Y.Doc, file: OfficeFile) {
     d.set('theme', deck.theme);
     doc.getArray('slides').push(slides.map(slideMap));
   });
+  if (original) {
+    try {
+      recordOrigins(doc, original, parts);
+      doc.getMap('office').set('kept', JSON.stringify(keptFeatures(original)));
+    } catch {
+      // Without origins every slide counts as new when saving: nothing is lost from the editor.
+    }
+  }
 }
 
 export const PRESENTATION_FORMATS = [
@@ -267,12 +280,24 @@ export const SlidesEditor = forwardRef<EditorHandle, Props>(function SlidesEdito
   };
 
   const exportPptx = () => slidesToPptx(deck, slides, file.name.replace(/\.[^.]+$/, ''));
+  /** For a .pptx: the stored file with the edits merged in, so nothing the editor doesn't show is lost;
+   *  if that fails for any reason, the file as PptxGenJS writes it (the edits are never lost). */
+  const exportBest = async () => {
+    const generated = await exportPptx();
+    if (extOf(file.name) !== 'pptx') return generated;
+    try {
+      return await mergePptx(await fileBytes(file), generated, slides, readOrigins(session.doc), deck);
+    } catch (err) {
+      console.warn('Could not save into the original presentation; writing a new one', err);
+      return generated;
+    }
+  };
   useImperativeHandle(ref, () => ({
     formats: PRESENTATION_FORMATS,
-    exportAs: async (ext) => (ext === 'pptx' ? exportPptx() : convertBytes(file.workspaceId, 'presentation', 'pptx', ext, await exportPptx(), file.name)),
+    exportAs: async (ext) => (ext === 'pptx' ? exportBest() : convertBytes(file.workspaceId, 'presentation', 'pptx', ext, await exportBest(), file.name)),
     exportOriginal: async () => {
       const ext = extOf(file.name);
-      if (ext === 'pptx') return { blob: await exportPptx(), name: file.name };
+      if (ext === 'pptx') return { blob: await exportBest(), name: file.name };
       if (ext === 'odp' || ext === 'ppt') return { blob: await convertBytes(file.workspaceId, 'presentation', 'pptx', ext, await exportPptx(), file.name), name: file.name };
       return { blob: await exportPptx(), name: `${file.name.replace(/\.[^.]+$/, '')}.pptx` };
     },

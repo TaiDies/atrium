@@ -5,3 +5,8 @@ declare module '@fortune-sheet/formula-parser' {
     on(event: string, handler: (...args: never[]) => void): void;
   }
 }
+
+// The formula functions behind it; the spreadsheet editor uses its error values (sheets/formulas.ts).
+declare module '@formulajs/formulajs' {
+  export const utils: { errors: Record<string, Error> };
+}

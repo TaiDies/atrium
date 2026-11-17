@@ -13,6 +13,11 @@ import {
   Hand,
   Highlighter,
   Keyboard,
+  ChevronLeft,
+  ChevronRight,
+  Settings2,
+  BookOpen,
+  Rows3,
   Minus,
   MoveUpRight,
   PenLine,
@@ -264,6 +269,35 @@ function InkedPdfInner({ file, user }: { file: FileInfo; user: NonNullable<Retur
 
 type Zoom = number | 'fit';
 
+/** How the PDF viewer shows pages (kept on this device). */
+interface ViewPrefs {
+  /** One column of pages, or two side by side like an open book. */
+  layout: 'scroll' | 'book';
+  /** Book layout: the first page on its own, like a cover, so left and right pages pair up as printed. */
+  cover: boolean;
+  /** Book layout: which side the first page of a pair goes. Auto: right to left for Arabic, Hebrew and Persian text. */
+  direction: 'auto' | 'ltr' | 'rtl';
+  /** Draw pages before they come into view: `ahead` pages before and after the one you're on. */
+  preload: boolean;
+  ahead: number;
+  /** Free the drawings of pages far from view: big files use less memory; scrolling back redraws them. */
+  unload: boolean;
+  /** Scrolling settles on the top of a page (or pair of pages). */
+  snap: boolean;
+  /** Sharp: the screen's full resolution. Faster: fewer pixels to draw, for slow devices. */
+  quality: 'sharp' | 'fast';
+  /** What Fit fits on screen: the page's width, or the whole page. */
+  fit: 'width' | 'page';
+}
+const VIEW_KEY = 'atrium-pdf-view';
+const VIEW_DEFAULTS: ViewPrefs = { layout: 'scroll', cover: true, direction: 'auto', preload: true, ahead: 2, unload: false, snap: false, quality: 'sharp', fit: 'width' };
+const MAX_AHEAD = 50;
+function loadViewPrefs(): ViewPrefs {
+  const saved = getLocal<Partial<ViewPrefs> | null>(VIEW_KEY, null) ?? {};
+  const v = { ...VIEW_DEFAULTS, ...saved };
+  return { ...v, ahead: Math.min(MAX_AHEAD, Math.max(1, Math.round(Number(v.ahead) || VIEW_DEFAULTS.ahead))) };
+}
+
 const TOOL_KEY = 'atrium-ink-tool';
 
 /** `recent` holds the custom colours picked for a tool, newest first. */
@@ -358,7 +392,32 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     setDarkPagesState(v);
     setLocal('atrium-pdf-dark', v);
   };
+  const [view, setViewState] = useState(loadViewPrefs);
+  const [settingsAnchor, setSettingsAnchor] = useState<Anchor | null>(null);
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
+  // Whether the PDF's text is mostly right-to-left script (for the book layout's page order).
+  const [rtlText, setRtlText] = useState(false);
+  useEffect(() => {
+    if (!doc) return;
+    let alive = true;
+    (async () => {
+      let rtl = 0;
+      let ltr = 0;
+      for (let n = 1; n <= Math.min(doc.numPages, 8) && rtl + ltr < 2000; n++) {
+        const content = await (await doc.getPage(n)).getTextContent();
+        for (const item of content.items) {
+          const s = 'str' in item ? item.str : '';
+          rtl += (s.match(/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/g) ?? []).length;
+          ltr += (s.match(/[A-Za-z\u00C0-\u024F\u0400-\u04FF]/g) ?? []).length;
+        }
+      }
+      if (alive) setRtlText(rtl > ltr);
+    })().catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [doc]);
   const [page, setPage] = useState(1);
   const [lastSize, setLastSize] = useState<{ w: number; h: number } | null>(null);
   const [firstSize, setFirstSize] = useState<{ w: number; h: number } | null>(null);
@@ -416,7 +475,11 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     const el = scroller.current;
     if (!el) return;
     setWidth(el.clientWidth);
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    setHeight(el.clientHeight);
+    const ro = new ResizeObserver(() => {
+      setWidth(el.clientWidth);
+      setHeight(el.clientHeight);
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -538,6 +601,111 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   };
 
   const total = (doc?.numPages ?? 0) + extraPages;
+  const book = view.layout === 'book';
+  const rtl = view.direction === 'rtl' || (view.direction === 'auto' && rtlText);
+  /** The pages, one per row, or in pairs for the book layout (the cover alone when chosen). */
+  const rows = useMemo(() => {
+    const pages = Array.from({ length: total }, (_, i) => i + 1);
+    if (!book) return pages.map((p) => [p]);
+    const out: number[][] = [];
+    let i = 0;
+    if (view.cover && pages.length) out.push([pages[i++]]);
+    for (; i < pages.length; i += 2) out.push(pages.slice(i, i + 2));
+    return out;
+  }, [total, book, view.cover]);
+
+  // ----- Book view: one pair of pages at a time, flipped left and right -----
+  const [spread, setSpread] = useState(0);
+  const pageNow = useRef(page);
+  pageNow.current = page;
+  const spreadOf = useCallback((p: number) => Math.max(0, rows.findIndex((r) => r.includes(p))), [rows]);
+  // Opening the book view (or pairing pages differently): start at the page you were on.
+  useEffect(() => {
+    if (book) setSpread(spreadOf(pageNow.current));
+  }, [book, spreadOf]);
+  const shown = book ? (rows[Math.min(spread, rows.length - 1)] ?? []) : [];
+  const flip = useCallback((step: number) => setSpread((s) => Math.min(rows.length - 1, Math.max(0, s + step))), [rows.length]);
+  /** Flips toward the left or right edge: forward is to the left in right-to-left books. */
+  const flipSide = useCallback((side: 'left' | 'right') => flip((side === 'right') !== rtl ? 1 : -1), [flip, rtl]);
+  useEffect(() => {
+    if (!book || !shown.length) return;
+    setPage(shown[0]);
+    scroller.current?.scrollTo({ top: 0, left: 0 });
+    if (restored.current && total > 0) savePlace({ kind: 'page', page: shown[0], pages: total, offset: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book, shown[0], total]);
+  // Pages kept on hand in the book view: the open pair, the pages ahead, and (unless far pages are
+  // freed) every page already seen, so flipping back is instant.
+  const seenPages = useRef(new Set<number>());
+  const bookPages = useMemo(() => {
+    if (!book || !shown.length) return [];
+    const keep = new Set(shown);
+    if (view.preload) for (let n = shown[0] - view.ahead; n <= shown[shown.length - 1] + view.ahead; n++) if (n >= 1 && n <= total) keep.add(n);
+    if (view.unload) seenPages.current.clear();
+    else for (const n of seenPages.current) keep.add(n);
+    for (const n of keep) seenPages.current.add(n);
+    return [...keep].sort((a, b) => a - b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book, shown[0], shown.length, view.preload, view.ahead, view.unload, total]);
+
+  // The mouse wheel flips (when the pages fit on screen), and so does swiping sideways in reading mode.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !book) return;
+    let wheel = 0;
+    let quietUntil = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey || el.scrollHeight > el.clientHeight + 2) return;
+      e.preventDefault();
+      if (Date.now() < quietUntil) return;
+      wheel += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : rtl ? -e.deltaX : e.deltaX;
+      if (Math.abs(wheel) >= 60) {
+        flip(wheel > 0 ? 1 : -1);
+        wheel = 0;
+        quietUntil = Date.now() + 350;
+      }
+    };
+    let start: { x: number; y: number } | null = null;
+    const onStart = (e: TouchEvent) => {
+      start = e.touches.length === 1 && mode === 'read' ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!start || el.scrollWidth > el.clientWidth + 2) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - start.x;
+      const dy = t.clientY - start.y;
+      start = null;
+      // A swipe to the left brings in the page on the right.
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) flipSide(dx < 0 ? 'right' : 'left');
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchend', onEnd);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchend', onEnd);
+    };
+  }, [book, flip, flipSide, rtl, mode]);
+
+  // Arrow keys, Page Up/Down and space flip; Home and End go to the covers.
+  useEffect(() => {
+    if (!book) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (e.key === 'ArrowRight') flipSide('right');
+      else if (e.key === 'ArrowLeft') flipSide('left');
+      else if (e.key === 'PageDown' || e.key === ' ' || e.key === 'ArrowDown') flip(1);
+      else if (e.key === 'PageUp' || e.key === 'ArrowUp') flip(-1);
+      else if (e.key === 'Home') setSpread(0);
+      else if (e.key === 'End') setSpread(rows.length - 1);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [book, flip, flipSide, rows.length]);
   // ----- Where you are: saved per person, restored on any device; zoom keeps the middle of the screen in place -----
   const pageEl = useCallback((n: number) => scroller.current?.querySelector<HTMLElement>(`#ink-page-${n}`) ?? null, []);
   /** The page at a point down the pages (in scroll coordinates), and how far down it that point is. */
@@ -566,6 +734,11 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   useEffect(() => {
     const target = restoreTo.current;
     if (!doc || width === 0 || restored.current || target?.kind !== 'page') return;
+    if (book) {
+      setSpread(spreadOf(Math.min(target.page, total)));
+      restored.current = true;
+      return;
+    }
     const apply = () => {
       const el = scroller.current;
       const page = pageEl(Math.min(target.page, total));
@@ -578,14 +751,14 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       timers.forEach(clearTimeout);
       clearTimeout(done);
     };
-  }, [doc, width, total, pageEl]);
+  }, [doc, width, total, pageEl, book, spreadOf]);
 
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     let frame: ReturnType<typeof setTimeout> | undefined;
     const onScroll = () => {
-      if (!restored.current || frame) return;
+      if (book || !restored.current || frame) return;
       frame = setTimeout(() => {
         frame = undefined;
         const at = pageAt(el.scrollTop + 8);
@@ -603,7 +776,29 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       el.removeEventListener('scroll', onScroll);
       for (const t of ['wheel', 'touchstart', 'pointerdown', 'keydown']) el.removeEventListener(t, touch);
     };
-  }, [pageAt, savePlace, total]);
+  }, [pageAt, savePlace, total, book]);
+
+  // The page you're on: the one in the middle of the screen (works however tall the pages are). It
+  // drives the page counter and which pages are drawn ahead.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || book) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const update = () => {
+      timer = undefined;
+      const at = pageAt(el.scrollTop + el.clientHeight / 2);
+      if (at) setPage(at.page);
+    };
+    const onScroll = () => {
+      timer ??= setTimeout(update, 60);
+    };
+    update();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [pageAt, doc, rows, book]);
 
   /** The zoom as a number, even when fitting the width (so zooming from Fit doesn't jump). */
   const zoomNow = useCallback(() => {
@@ -625,6 +820,22 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     [pageAt],
   );
   const zoomBy = (factor: number) => zoomTo(zoomNow() * factor);
+  /** Changes how pages are shown, keeping the page in the middle of the screen in view. */
+  const setView = useCallback(
+    (patch: Partial<ViewPrefs>) => {
+      const el = scroller.current;
+      if (el && !book && ('layout' in patch || 'cover' in patch || 'fit' in patch)) {
+        const at = pageAt(el.scrollTop + el.clientHeight / 2);
+        if (at) anchor.current = { page: at.page, fy: at.offset, fx: 0.5 };
+      } else if (book && patch.layout === 'scroll') anchor.current = { page: pageNow.current, fy: 0, fx: 0.5 };
+      setViewState((v) => {
+        const next = { ...v, ...patch };
+        setLocal(VIEW_KEY, next);
+        return next;
+      });
+    },
+    [pageAt, book],
+  );
   useLayoutEffect(() => {
     const a = anchor.current;
     const el = scroller.current;
@@ -634,7 +845,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     if (!page) return;
     el.scrollTop = page.offsetTop + a.fy * page.offsetHeight - el.clientHeight / 2;
     el.scrollLeft = page.offsetLeft + a.fx * page.offsetWidth - el.clientWidth / 2;
-  }, [zoom, pageEl]);
+  }, [zoom, pageEl, view.layout, view.cover, view.fit]);
 
   // Ctrl + mouse wheel (and pinching a touchpad) zooms the pages; pinching with two fingers too.
   const content = useRef<HTMLDivElement>(null);
@@ -827,21 +1038,37 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
         </div>
       </Popover>
 
-      <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto" style={{ touchAction: 'pan-x pan-y' }}>
+      <div className="relative min-h-0 flex-1">
+      <div
+        ref={scroller}
+        className="absolute inset-0 overflow-auto"
+        style={{ touchAction: 'pan-x pan-y', scrollSnapType: view.snap && !book ? 'y proximity' : undefined }}
+      >
         {!doc && <Spinner />}
-        {doc && width > 0 && (
-          <div ref={content} className="flex w-max min-w-full flex-col items-center gap-3 px-2 py-4 sm:px-6">
-            {Array.from({ length: total }, (_, i) => (
+        {doc && width > 0 && book && (
+          // Book view: the open pair fills the screen; the pages ahead wait hidden, already drawn.
+          <div
+            ref={content}
+            className={clsx('flex w-max min-w-full items-center justify-center gap-3 px-2 py-3 sm:px-12', rtl && 'flex-row-reverse')}
+            style={{ minHeight: 'calc(100% - 64px)' }}
+          >
+            {bookPages.map((n) => (
               <PdfPage
-                key={i}
+                key={n}
                 doc={doc}
-                index={i + 1}
-                blank={i >= doc.numPages ? lastSize : null}
+                index={n}
+                hidden={!shown.includes(n)}
+                blank={n > doc.numPages ? lastSize : null}
                 estimate={firstSize}
                 zoom={zoom}
-                available={width - 16}
-                onVisible={setPage}
-                items={byPage.get(i) ?? EMPTY}
+                fit="page"
+                available={(width - (width < 640 ? 16 : 96) - 12) / 2}
+                fitCap={4000}
+                availableHeight={height - 64 - 24}
+                wanted
+                unload={view.unload}
+                sharp={view.quality === 'sharp'}
+                items={byPage.get(n - 1) ?? EMPTY}
                 ink={ink ? inkSettings : null}
                 actions={actions}
                 onPen={onPen}
@@ -850,32 +1077,243 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
             ))}
           </div>
         )}
-        {doc && (
-          <div className="sticky bottom-4 z-10 mx-auto mb-4 flex w-max items-center gap-1 rounded-full border border-line bg-surface/95 px-2 py-1 text-sm shadow-pop backdrop-blur">
-            <span className="px-2 text-muted tabular-nums">
-              {page} / {total}
-            </span>
-            <RoundButton label="Zoom out" onClick={() => zoomBy(1 / 1.2)}>
-              <Minus size={15} />
-            </RoundButton>
-            <span className="w-12 text-center text-xs text-muted tabular-nums">{zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</span>
-            <RoundButton label="Zoom in" onClick={() => zoomBy(1.2)}>
-              <Plus size={15} />
-            </RoundButton>
-            <RoundButton label="Fit to width" onClick={() => zoomTo('fit')}>
-              <ScanLine size={15} />
-            </RoundButton>
-            <RoundButton label={darkPages ? 'Light pages' : 'Dark pages'} onClick={() => setDarkPages(!darkPages)}>
-              {darkPages ? <Sun size={15} /> : <Moon size={15} />}
-            </RoundButton>
+        {doc && width > 0 && !book && (
+          <div ref={content} className="flex w-max min-w-full flex-col items-center gap-3 px-2 pt-4 pb-20 sm:px-6">
+            {rows.map((row) => (
+              <div key={`${view.layout}-${row[0]}`} className={clsx('flex items-start gap-3', rtl && 'flex-row-reverse')} style={view.snap ? { scrollSnapAlign: 'start', scrollMarginTop: 12 } : undefined}>
+                {row.map((n) => (
+                  <PdfPage
+                    key={n}
+                    doc={doc}
+                    index={n}
+                    blank={n > doc.numPages ? lastSize : null}
+                    estimate={firstSize}
+                    zoom={zoom}
+                    fit={view.fit}
+                    available={book ? (width - 16 - 12) / 2 : width - 16}
+                    fitCap={book ? 900 : 1100}
+                    availableHeight={height - 32}
+                    wanted={view.preload && Math.abs(n - page) <= view.ahead}
+                    unload={view.unload}
+                    sharp={view.quality === 'sharp'}
+                    items={byPage.get(n - 1) ?? EMPTY}
+                    ink={ink ? inkSettings : null}
+                    actions={actions}
+                    onPen={onPen}
+                    dark={darkPages}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
         )}
+        <Popover anchor={settingsAnchor} onClose={() => setSettingsAnchor(null)} align="end">
+          <ViewSettings view={view} onChange={setView} dark={darkPages} onDark={setDarkPages} detectedRtl={rtlText} />
+        </Popover>
+      </div>
+      {/* The bar stays put at the bottom however the pages are zoomed or scrolled. */}
+      {doc && (
+        <div className="absolute bottom-4 left-1/2 z-10 flex w-max max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-surface/95 px-2 py-1 text-sm shadow-pop backdrop-blur">
+          {book && (
+            <RoundButton label={rtl ? 'Next pages' : 'Previous pages'} onClick={() => flipSide('left')}>
+              <ChevronLeft size={16} />
+            </RoundButton>
+          )}
+          <span className="px-2 text-muted tabular-nums">
+            {book && shown.length > 1 ? `${shown[0]}–${shown[shown.length - 1]}` : book ? shown[0] : page} / {total}
+          </span>
+          {book && (
+            <RoundButton label={rtl ? 'Previous pages' : 'Next pages'} onClick={() => flipSide('right')}>
+              <ChevronRight size={16} />
+            </RoundButton>
+          )}
+          <RoundButton label="Zoom out" onClick={() => zoomBy(1 / 1.2)}>
+            <Minus size={15} />
+          </RoundButton>
+          <span className="w-12 text-center text-xs text-muted tabular-nums">{zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</span>
+          <RoundButton label="Zoom in" onClick={() => zoomBy(1.2)}>
+            <Plus size={15} />
+          </RoundButton>
+          <RoundButton label={book ? 'Fit to screen' : view.fit === 'page' ? 'Fit the whole page' : 'Fit to width'} onClick={() => zoomTo('fit')}>
+            <ScanLine size={15} />
+          </RoundButton>
+          <RoundButton label={darkPages ? 'Light pages' : 'Dark pages'} onClick={() => setDarkPages(!darkPages)}>
+            {darkPages ? <Sun size={15} /> : <Moon size={15} />}
+          </RoundButton>
+          <RoundButton label="View settings" onClick={(e) => setSettingsAnchor(e.currentTarget.getBoundingClientRect())}>
+            <Settings2 size={15} />
+          </RoundButton>
+        </div>
+      )}
+      {doc && book && (
+        <>
+          <EdgeButton side="left" label={rtl ? 'Next pages' : 'Previous pages'} disabled={rtl ? spread >= rows.length - 1 : spread <= 0} onClick={() => flipSide('left')} />
+          <EdgeButton side="right" label={rtl ? 'Previous pages' : 'Next pages'} disabled={rtl ? spread <= 0 : spread >= rows.length - 1} onClick={() => flipSide('right')} />
+        </>
+      )}
       </div>
     </div>
   );
 }
 
 const EMPTY: InkItem[] = [];
+
+/** The viewer's settings: layout, fitting, drawing pages ahead, memory and sharpness. Kept on this device. */
+function ViewSettings({
+  view,
+  onChange,
+  dark,
+  onDark,
+  detectedRtl,
+}: {
+  view: ViewPrefs;
+  onChange: (patch: Partial<ViewPrefs>) => void;
+  dark: boolean;
+  onDark: (v: boolean) => void;
+  detectedRtl: boolean;
+}) {
+  const [ahead, setAhead] = useState(String(view.ahead));
+  useEffect(() => setAhead(String(view.ahead)), [view.ahead]);
+  const commitAhead = (raw: string) => {
+    const n = Math.round(Number(raw));
+    if (Number.isFinite(n) && n >= 1) onChange({ ahead: Math.min(MAX_AHEAD, n) });
+    else setAhead(String(view.ahead));
+  };
+  return (
+    <div className="w-80 max-w-[calc(100vw-2rem)] space-y-4 p-3 text-sm">
+      <div className="font-medium">View settings</div>
+
+      <Setting label="Pages">
+        <Choice
+          value={view.layout}
+          onChange={(layout) => onChange({ layout })}
+          options={[
+            { value: 'scroll', label: 'Scrolling', icon: <Rows3 size={14} /> },
+            { value: 'book', label: 'Book (2 pages)', icon: <BookOpen size={14} /> },
+          ]}
+        />
+        {view.layout === 'book' && (
+          <>
+            <Check label="Cover page on its own" help="The first page alone, so left and right pages pair up as in the printed book." checked={view.cover} onChange={(cover) => onChange({ cover })} />
+            <div className="text-xs text-muted">Reading direction</div>
+            <Choice
+              value={view.direction}
+              onChange={(direction) => onChange({ direction })}
+              options={[
+                { value: 'auto', label: `Auto (${detectedRtl ? 'right to left' : 'left to right'})` },
+                { value: 'ltr', label: 'Left to right' },
+                { value: 'rtl', label: 'Right to left' },
+              ]}
+            />
+          </>
+        )}
+      </Setting>
+
+      {view.layout === 'book' ? (
+        <p className="text-xs text-muted">Two pages at a time, fitted to the screen. Flip with the arrows at the sides, the arrow keys, the mouse wheel or by swiping.</p>
+      ) : (
+        <Setting label="Fit shows">
+          <Choice
+            value={view.fit}
+            onChange={(fit) => onChange({ fit })}
+            options={[
+              { value: 'width', label: 'Full width' },
+              { value: 'page', label: 'Whole page' },
+            ]}
+          />
+        </Setting>
+      )}
+
+      <Setting label="Loading">
+        <Check
+          label="Load pages ahead"
+          help="Draws nearby pages before you reach them, so they're ready when you scroll. Off: only what's on screen is drawn."
+          checked={view.preload}
+          onChange={(preload) => onChange({ preload })}
+        />
+        {view.preload && (
+          <label className="flex items-center gap-2 ps-6 text-xs text-muted">
+            <input
+              type="number"
+              min={1}
+              max={MAX_AHEAD}
+              step={1}
+              value={ahead}
+              onChange={(e) => setAhead(e.target.value)}
+              onBlur={(e) => commitAhead(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && commitAhead((e.target as HTMLInputElement).value)}
+              className="h-7 w-16 rounded-md border border-line bg-bg px-2 text-sm text-fg tabular-nums"
+            />
+            pages before and after the one you're on
+          </label>
+        )}
+        <Check
+          label="Free memory from far pages"
+          help="Pages far from view are cleared and drawn again when you come back. Helps with very long books on phones."
+          checked={view.unload}
+          onChange={(unload) => onChange({ unload })}
+        />
+      </Setting>
+
+      <Setting label="Display">
+        {view.layout !== 'book' && <Check label="Snap to pages" help="Scrolling settles on the top of a page." checked={view.snap} onChange={(snap) => onChange({ snap })} />}
+        <Check label="Dark pages" help="Pages drawn with their colours turned dark; handwriting keeps its colours." checked={dark} onChange={onDark} />
+        <Choice
+          value={view.quality}
+          onChange={(quality) => onChange({ quality })}
+          options={[
+            { value: 'sharp', label: 'Sharp' },
+            { value: 'fast', label: 'Faster' },
+          ]}
+        />
+        <p className="text-xs text-muted">Faster draws fewer pixels: a little softer on sharp screens, quicker on slow devices.</p>
+      </Setting>
+    </div>
+  );
+}
+
+function Setting({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium tracking-wide text-muted uppercase">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function Choice<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { value: T; label: string; icon?: React.ReactNode }[] }) {
+  return (
+    <div className="flex rounded-lg bg-hover p-0.5" role="radiogroup">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={clsx(
+            'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs whitespace-nowrap',
+            value === o.value ? 'bg-bg font-medium text-fg shadow-sm' : 'text-muted hover:text-fg',
+          )}
+        >
+          {o.icon}
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Check({ label, help, checked, onChange }: { label: string; help?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5" />
+      <span>
+        <span className="block">{label}</span>
+        {help && <span className="block text-xs text-muted">{help}</span>}
+      </span>
+    </label>
+  );
+}
 
 function Switch({ label, title, checked, onChange }: { label: string; title: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -923,7 +1361,25 @@ function ToolButton({ label, active, disabled, onClick, children }: { label: str
   );
 }
 
-function RoundButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+/** A tall, quiet button at the side of the book view that flips the pages. */
+function EdgeButton({ side, label, disabled, onClick }: { side: 'left' | 'right'; label: string; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={clsx(
+        'absolute top-1/2 z-10 flex h-24 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted transition-opacity hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-0 max-sm:hidden',
+        side === 'left' ? 'left-1' : 'right-1',
+      )}
+    >
+      {side === 'left' ? <ChevronLeft size={22} /> : <ChevronRight size={22} />}
+    </button>
+  );
+}
+
+function RoundButton({ label, onClick, children }: { label: string; onClick: (e: React.MouseEvent<HTMLButtonElement>) => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} title={label} aria-label={label} className="flex size-8 items-center justify-center rounded-full text-muted hover:bg-hover hover:text-fg">
       {children}
@@ -934,13 +1390,24 @@ function RoundButton({ label, onClick, children }: { label: string; onClick: () 
 interface PageProps {
   doc: PDFDocumentProxy;
   index: number;
+  /** Kept on hand but not shown (the book view's pages ahead): drawn, not displayed. */
+  hidden?: boolean;
   /** Set for blank pages added after the PDF's own pages: the size to draw them at. */
   blank: { w: number; h: number } | null;
   /** The size to draw it at until its own is known (the first page's). */
   estimate: { w: number; h: number } | null;
   zoom: Zoom;
+  /** What Fit fits: the width (up to `fitCap`), or the whole page within `availableHeight` too. */
+  fit: ViewPrefs['fit'];
   available: number;
-  onVisible: (n: number) => void;
+  fitCap: number;
+  availableHeight: number;
+  /** Near the page being read (within the pages drawn ahead): draw it even before it's on screen. */
+  wanted: boolean;
+  /** Free its drawing once it's neither on screen nor wanted. */
+  unload: boolean;
+  /** Full screen resolution (off: fewer pixels, faster). */
+  sharp: boolean;
   items: InkItem[];
   ink: InkSettings | null;
   actions: InkActions;
@@ -950,12 +1417,18 @@ interface PageProps {
 }
 
 /** One page: sized up front from its viewport, drawn only once it scrolls near the screen, with its handwriting on top. */
-const PdfPage = memo(function PdfPage({ doc, index, blank, estimate, zoom, available, onVisible, items, ink, actions, onPen, dark }: PageProps) {
+const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoom, fit, available, fitCap, availableHeight, wanted, unload, sharp, items, ink, actions, onPen, dark }: PageProps) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textLayer = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(blank);
-  const [near, setNear] = useState(index <= 2);
+  const [onScreen, setOnScreen] = useState(index <= 2);
+  const [everDrawn, setEverDrawn] = useState(false);
+  // Drawn while on screen or near the page being read; kept afterwards unless far pages are freed.
+  const near = onScreen || wanted || (!unload && everDrawn);
+  useEffect(() => {
+    if (onScreen || wanted) setEverDrawn(true);
+  }, [onScreen, wanted]);
 
   useEffect(() => {
     if (blank) {
@@ -978,26 +1451,35 @@ const PdfPage = memo(function PdfPage({ doc, index, blank, estimate, zoom, avail
 
   // Until its own size is known, a page is drawn the size of the first one, so the pages above keep their place.
   const known = size ?? estimate;
-  const scale = known ? (zoom === 'fit' ? Math.min(available, 1100) / known.w : zoom * (96 / 72)) : 1;
+  const scale = known
+    ? zoom === 'fit'
+      ? Math.min(Math.min(available, fitCap) / known.w, fit === 'page' && availableHeight > 100 ? availableHeight / known.h : Infinity)
+      : zoom * (96 / 72)
+    : 1;
 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
     const io = new IntersectionObserver(
       (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) setNear(true);
-          if (e.intersectionRatio > 0.5) onVisible(index);
-        }
+        for (const e of entries) setOnScreen(e.isIntersecting);
       },
-      { rootMargin: '800px 0px', threshold: [0, 0.5] },
+      // A little margin, so a page is drawn just before its edge appears.
+      { rootMargin: '150px 0px' },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [index, onVisible]);
+  }, [index]);
 
   useEffect(() => {
-    if (blank || !near || !size || !canvas.current || !textLayer.current) return;
+    if (blank || !size || !canvas.current || !textLayer.current) return;
+    if (!near) {
+      // Far from view with "free far pages" on: give back the canvas's memory (it's drawn again on return).
+      canvas.current.width = 0;
+      canvas.current.height = 0;
+      textLayer.current.replaceChildren();
+      return;
+    }
     let cancelled = false;
     let task: { cancel: () => void } | null = null;
     let text: { cancel: () => void } | null = null;
@@ -1006,7 +1488,7 @@ const PdfPage = memo(function PdfPage({ doc, index, blank, estimate, zoom, avail
       const p = await doc.getPage(index);
       if (cancelled) return;
       const viewport = p.getViewport({ scale });
-      const ratio = window.devicePixelRatio || 1;
+      const ratio = sharp ? window.devicePixelRatio || 1 : 1;
       const c = canvas.current!;
       c.width = Math.floor(viewport.width * ratio);
       c.height = Math.floor(viewport.height * ratio);
@@ -1027,12 +1509,12 @@ const PdfPage = memo(function PdfPage({ doc, index, blank, estimate, zoom, avail
       task?.cancel();
       text?.cancel();
     };
-  }, [near, size, scale, doc, index, blank]);
+  }, [near, size, scale, doc, index, blank, sharp]);
 
   const w = known ? known.w * scale : Math.min(available, 800);
   const h = known ? known.h * scale : w * 1.3;
   return (
-    <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h }}>
+    <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h, display: hidden ? 'none' : undefined }}>
       {!blank && <canvas ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}
       {!blank && <div ref={textLayer} className="textLayer" />}
       <InkLayer page={index - 1} aspect={h / w} pxWidth={w} items={items} ink={ink} actions={actions} onPen={onPen} />

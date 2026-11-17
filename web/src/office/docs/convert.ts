@@ -131,6 +131,20 @@ function textToHtml(text: string) {
     .join('');
 }
 
+/**
+ * Word's headers, footers, footnotes and endnotes, which LibreOffice writes into the HTML as ordinary
+ * text. A .docx keeps them in the file itself when saved (docxMerge.ts), so they're left out of the
+ * editor rather than turning into duplicate body text.
+ */
+function withoutKeptParts(html: string) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const el of [...doc.querySelectorAll('div[title="header"], div[title="footer"], div[id^="sdfootnote"], div[id^="sdendnote"], a.sdfootnoteanc, a.sdendnoteanc')]) el.remove();
+  return doc.body.innerHTML;
+}
+
+/** Formats saved by merging the edited text into the stored file, keeping everything else in it. */
+export const WORD_PACKAGES = ['docx', 'docm', 'dotx', 'dotm'];
+
 /** The stored file as editor HTML (and its page setup, if the file had one). */
 export async function documentToHtml(file: OfficeFile): Promise<{ html: string; setup: PageSetup | null }> {
   if (file.size === 0) return { html: '<p></p>', setup: null };
@@ -144,6 +158,7 @@ export async function documentToHtml(file: OfficeFile): Promise<{ html: string; 
     html = await marked.parse(await decode(), { gfm: true });
   } else if (ext === 'html' || ext === 'htm') ({ body: html, setup } = normalise(await decode()));
   else ({ body: html, setup } = normalise(new TextDecoder().decode(await convertStored(file, 'html'))));
+  if (WORD_PACKAGES.includes(ext)) html = withoutKeptParts(html);
   return { html: clean(await uploadEmbeddedImages(html, file.workspaceId)), setup };
 }
 
