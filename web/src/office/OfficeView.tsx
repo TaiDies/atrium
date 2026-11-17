@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { Check, CloudOff, Download, Loader2, Save } from 'lucide-react';
+import { Check, CloudOff, Download, Info, Loader2, Save, X } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type Anchor, Menu, MenuDivider, MenuItem, toast, toastError } from '../components/ui';
@@ -14,6 +14,50 @@ import { loadSpreadsheet, SpreadsheetEditor } from './sheets/SpreadsheetEditor';
 import './office.css';
 
 const LOADERS = { document: loadDocument, spreadsheet: loadSpreadsheet, presentation: loadPresentation };
+
+/** "charts, macros and filters". */
+function list(items: string[]) {
+  const words = items.map((s) => s.toLowerCase());
+  return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+/**
+ * What the file has that the editor doesn't show (written by the editor's loader as office.kept), until
+ * this person hides the note for this file.
+ */
+function useKept(session: ReturnType<typeof useCollab>['session'], ready: boolean, fileId: string) {
+  const key = `office-kept-hidden:${fileId}`;
+  const [items, setItems] = useState<string[]>([]);
+  const [moving, setMoving] = useState<string[]>([]);
+  const [hidden, setHidden] = useState(() => localStorage.getItem(key) === '1');
+  useEffect(() => {
+    if (!session || !ready) return;
+    const meta = session.doc.getMap<unknown>('office');
+    const read = () => {
+      const get = (k: string) => {
+        try {
+          return JSON.parse(String(meta.get(k) ?? '[]')) as string[];
+        } catch {
+          return [];
+        }
+      };
+      setItems(get('kept'));
+      // Things inside a document's text (footnotes, tracked changes…) that can't keep their place once it's edited.
+      setMoving(get('keptLostOnEdit'));
+    };
+    read();
+    meta.observe(read);
+    return () => meta.unobserve(read);
+  }, [session, ready]);
+  return {
+    items: hidden ? [] : items,
+    moving: hidden ? [] : moving,
+    dismiss: () => {
+      localStorage.setItem(key, '1');
+      setHidden(true);
+    },
+  };
+}
 
 /** Puts the editor's actions in the viewer's header. */
 function HeaderPortal({ children }: { children: ReactNode }) {
@@ -37,6 +81,7 @@ export default function OfficeView({ file, kind, renderOriginal }: { file: Offic
   const [busy, setBusy] = useState(false);
   // Saving starts only once this person actually edits, so just opening a file never rewrites it.
   const [armed, setArmed] = useState(false);
+  const kept = useKept(session, state === 'ready', file.id);
 
   const save = useCallback(async () => {
     if (!editor.current) return;
@@ -120,11 +165,25 @@ export default function OfficeView({ file, kind, renderOriginal }: { file: Offic
       {mode === 'original' ? (
         <div className="min-h-0 flex-1">{renderOriginal()}</div>
       ) : state === 'ready' && session ? (
+        <>
+        {kept.items.length > 0 && (
+          <div className="flex shrink-0 items-start gap-2 border-b border-line bg-active/60 px-3 py-1.5 text-xs text-muted">
+            <Info size={14} className="mt-px shrink-0" />
+            <span className="min-w-0 flex-1">
+              This file also has {list(kept.items)}. The editor doesn't show {kept.items.length === 1 ? 'it' : 'them'}, but {kept.items.length === 1 ? 'it stays' : 'they stay'} in the file when your changes are saved. Use "Original layout" to see {kept.items.length === 1 ? 'it' : 'them'}.
+              {kept.moving.length > 0 && ` Once you edit the text, ${list(kept.moving)} can't stay attached to ${kept.moving.length === 1 ? 'its' : 'their'} place in it.`}
+            </span>
+            <button onClick={kept.dismiss} className="shrink-0 rounded p-0.5 hover:bg-active hover:text-fg" title="Hide">
+              <X size={14} />
+            </button>
+          </div>
+        )}
         <div className={kind === 'document' ? 'min-h-0 flex-1' : 'atrium-ltr min-h-0 flex-1'} onKeyDownCapture={() => setArmed(true)} onPointerDownCapture={() => setArmed(true)} onPasteCapture={() => setArmed(true)} onDropCapture={() => setArmed(true)}>
           {kind === 'document' && <DocEditor ref={editor} {...props} />}
           {kind === 'spreadsheet' && <SpreadsheetEditor ref={editor} {...props} />}
           {kind === 'presentation' && <SlidesEditor ref={editor} {...props} />}
         </div>
+        </>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted">
           {state === 'error' ? (

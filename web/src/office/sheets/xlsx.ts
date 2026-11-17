@@ -1,6 +1,7 @@
 import type { Cell, CellWithRowAndCol, Sheet } from '@fortune-sheet/core';
 import { update as formatValue } from '@fortune-sheet/core';
 import type ExcelJS from 'exceljs';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
 // Converting between Excel workbooks (.xlsx, via ExcelJS) and the spreadsheet editor's sheets:
 // values, formulas, number formats, fonts, colours, fills, alignment, wrapping, borders, merged
@@ -130,11 +131,118 @@ function parseRef(ref: string) {
   return { r: Number(m[2]) - 1, c: c - 1 };
 }
 
+// The XML prefixes ExcelJS expects. It reads tags by their written name, so a file that writes the same
+// XML with other prefixes (or none: Python's openpyxl, .NET tools) fails to open — a drawing written as
+// <wsDr> instead of <xdr:wsDr> stops the whole workbook loading. Such parts are rewritten for it.
+const PREFIXES: Record<string, string> = {
+  'http://schemas.openxmlformats.org/spreadsheetml/2006/main': '',
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships': 'r',
+  'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing': 'xdr',
+  'http://schemas.openxmlformats.org/drawingml/2006/main': 'a',
+  'http://schemas.openxmlformats.org/drawingml/2006/chart': 'c',
+  'http://schemas.openxmlformats.org/drawingml/2006/picture': 'pic',
+  'http://schemas.openxmlformats.org/markup-compatibility/2006': 'mc',
+};
+const XMLNS = 'http://www.w3.org/2000/xmlns/';
+
+function withPrefixes(src: Element, doc: Document): Element {
+  const ns = src.namespaceURI;
+  const prefix = ns !== null && ns in PREFIXES ? PREFIXES[ns] : src.prefix;
+  const el = doc.createElementNS(ns, prefix ? `${prefix}:${src.localName}` : src.localName);
+  for (const a of src.attributes) {
+    if (a.namespaceURI === XMLNS) {
+      // Declarations other prefixes rely on (mc:Ignorable lists prefixes by name) stay, unless they clash.
+      const declared = a.prefix ? a.localName : '';
+      if (Object.values(PREFIXES).includes(declared) && PREFIXES[a.value] !== declared) continue;
+      el.setAttributeNS(XMLNS, a.name, a.value);
+    } else if (a.namespaceURI) {
+      const p = a.namespaceURI in PREFIXES ? PREFIXES[a.namespaceURI] : a.prefix;
+      el.setAttributeNS(a.namespaceURI, p ? `${p}:${a.localName}` : a.localName, a.value);
+    } else el.setAttribute(a.name, a.value);
+  }
+  for (const child of src.childNodes) {
+    if (child.nodeType === 1) el.appendChild(withPrefixes(child as Element, doc));
+    else if (child.nodeType === 3 || child.nodeType === 4) el.appendChild(doc.createTextNode(child.textContent ?? ''));
+  }
+  return el;
+}
+
+/** The file with any part ExcelJS would misread rewritten with the prefixes it expects. */
+function forExcelJS(data: ArrayBuffer): ArrayBuffer {
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(new Uint8Array(data));
+  } catch {
+    return data;
+  }
+  let changed = false;
+  for (const [path, bytes] of Object.entries(files)) {
+    if (!/^xl\/.*\.xml$/.test(path) || bytes.length === 0) continue;
+    const head = strFromU8(bytes.subarray(0, 600));
+    const root = /<([\w.-]+:)?([\w.-]+)[\s>/]/.exec(head.replace(/<\?[^>]*\?>/g, '').replace(/<!--[\s\S]*?-->/g, ''));
+    if (!root) continue;
+    const expected = root[2] === 'wsDr' ? 'xdr:' : root[2] === 'chartSpace' ? 'c:' : '';
+    if ((root[1] ?? '') === expected) continue;
+    const src = new DOMParser().parseFromString(strFromU8(bytes), 'application/xml');
+    if (src.getElementsByTagName('parsererror').length) continue;
+    const doc = document.implementation.createDocument(null, null, null);
+    doc.appendChild(withPrefixes(src.documentElement, doc));
+    files[path] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+${new XMLSerializer().serializeToString(doc)}`);
+    changed = true;
+  }
+  // ExcelJS also expects notes, their drawings and tables at fixed names, linked by relative paths.
+  const WANT: Record<string, [RegExp, (n: number) => string]> = {
+    comments: [/^xl\/comments\d+\.xml$/, (n) => `xl/comments${n}.xml`],
+    vmlDrawing: [/^xl\/drawings\/vmlDrawing\d+\.vml$/, (n) => `xl/drawings/vmlDrawing${n}.vml`],
+    table: [/^xl\/tables\/table\d+\.xml$/, (n) => `xl/tables/table${n}.xml`],
+  };
+  const resolve = (target: string) => {
+    const stack: string[] = [];
+    for (const p of (target.startsWith('/') ? target.slice(1) : `xl/worksheets/${target}`).split('/')) {
+      if (p === '..') stack.pop();
+      else if (p && p !== '.') stack.push(p);
+    }
+    return stack.join('/');
+  };
+  for (const path of Object.keys(files)) {
+    if (!/^xl\/worksheets\/_rels\/[^/]+\.rels$/.test(path)) continue;
+    const doc = new DOMParser().parseFromString(strFromU8(files[path]), 'application/xml');
+    let touched = false;
+    for (const rel of doc.getElementsByTagName('Relationship')) {
+      if (rel.getAttribute('TargetMode') === 'External') continue;
+      const type = (rel.getAttribute('Type') ?? '').split('/').pop() ?? '';
+      const target = rel.getAttribute('Target') ?? '';
+      let abs = resolve(target);
+      const want = WANT[type];
+      if (want && !want[0].test(abs) && files[abs]) {
+        let n = 1;
+        while (files[want[1](n)]) n++;
+        files[want[1](n)] = files[abs];
+        delete files[abs];
+        abs = want[1](n);
+      }
+      const relative = `../${abs.slice(3)}`;
+      if (abs.startsWith('xl/') && relative !== target) {
+        rel.setAttribute('Target', relative);
+        touched = true;
+      }
+    }
+    if (touched) {
+      files[path] = strToU8(new XMLSerializer().serializeToString(doc));
+      changed = true;
+    }
+  }
+  if (!changed) return data;
+  const out = zipSync(files);
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
+}
+
 /** An .xlsx file as the editor's sheets. `upload` stores embedded images and returns their URL. */
 export async function xlsxToSheets(data: ArrayBuffer, upload?: (blob: Blob, ext: string) => Promise<string>): Promise<Sheet[]> {
   const Excel = await loadExcelJS();
   const wb = new Excel.Workbook();
-  await wb.xlsx.load(data);
+  await wb.xlsx.load(forExcelJS(data));
   const sheets: Sheet[] = [];
   let order = 0;
   for (const ws of wb.worksheets) {
@@ -240,6 +348,7 @@ async function fillMissingResults(sheets: Sheet[]) {
   const missing = sheets.some((s) => s.celldata?.some((x) => x.v?.f && x.v.v === undefined));
   if (!missing) return;
   const { Parser } = await import('@fortune-sheet/formula-parser');
+  (await import('./formulas')).patchFormulaEngine();
   const byName = new Map(sheets.map((s) => [s.name.toUpperCase(), new Map((s.celldata ?? []).filter((x) => x.v).map((x) => [`${x.r}_${x.c}`, x.v!]))]));
   const busy = new Set<string>();
   const parser = new Parser();
@@ -258,8 +367,22 @@ async function fillMissingResults(sheets: Sheet[]) {
     current = before;
     busy.delete(key);
     const result = out.error ?? out.result;
+    // Dates come back as "2024-01-31" (or with a time): store the day number, shown as a date.
+    const date = !out.error && typeof result === 'string' ? /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}):(\d{2}))?$/.exec(result) : null;
+    if (date) {
+      const [, y, mo, d, h = '0', mi = '0', se = '0'] = date.map((x) => x ?? '0');
+      const day = (Date.UTC(+y, +mo - 1, +d, +h, +mi, +se) - Date.UTC(1899, 11, 30)) / 86_400_000;
+      const fa = cell.ct?.fa && cell.ct.fa !== 'General' ? cell.ct.fa : date[4] ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd';
+      cell.v = day;
+      cell.ct = { fa, t: 'd' };
+      cell.m = display(fa, day);
+      return day;
+    }
     cell.v = result as Cell['v'];
-    if (typeof result === 'number') {
+    if (out.error) {
+      cell.ct = { fa: 'General', t: 'e' };
+      cell.m = String(result);
+    } else if (typeof result === 'number') {
       const fa = cell.ct?.fa ?? 'General';
       cell.ct = { fa, t: 'n' };
       cell.m = display(fa, result);

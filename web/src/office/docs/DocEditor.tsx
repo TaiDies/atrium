@@ -62,9 +62,10 @@ import { type Anchor, Avatar, Button, Dialog, IconButton, Popover, toastError } 
 import { uploadFile, type User } from '../../lib/api';
 import type { CollabSession } from '../../lib/collab';
 import { timeAgo } from '../../lib/time';
-import { convertBytes, type EditorHandle, extOf, type OfficeFile } from '../shared';
+import { convertBytes, type EditorHandle, extOf, fileBytes, type OfficeFile } from '../shared';
 import { printDocument, savesNatively } from '../../lib/save';
-import { DEFAULT_SETUP, documentToHtml, exportHtml, htmlToMarkdown, inlineImages, MARGIN_PRESETS, PAGE_SIZES, type PageSetup, pageSize } from './convert';
+import { DEFAULT_SETUP, documentToHtml, exportHtml, htmlToMarkdown, inlineImages, MARGIN_PRESETS, PAGE_SIZES, type PageSetup, pageSize, WORD_PACKAGES } from './convert';
+import { fingerprint, inspectDocx, mergeDocx } from './docxMerge';
 import { Comment, FindReplace, Indent, PageBreak, searchKey, TableOfContents } from './extensions';
 
 // A word processor everyone edits at once: the text lives in the file's Yjs document ("document"),
@@ -125,8 +126,28 @@ export async function loadDocument(doc: Y.Doc, file: OfficeFile) {
   // A short-lived editor writes the content into the shared document.
   const editor = new Editor({ extensions: extensions(doc), content: '' });
   editor.commands.setContent(html, { emitUpdate: true });
+  // What was imported, so saving can tell whether anything changed since (and leave the file alone if not).
+  const importHash = fingerprint(editor.getHTML());
   editor.destroy();
-  doc.transact(() => doc.getMap('docSetup').set('setup', setup ?? DEFAULT_SETUP));
+  // What the Word file has that the editor doesn't show; it stays in the file (shown in a banner).
+  let kept: { kept: string[]; lostOnEdit: string[] } | null = null;
+  if (WORD_PACKAGES.includes(extOf(file.name)) && file.size > 0) {
+    try {
+      kept = inspectDocx(new Uint8Array(await fileBytes(file)));
+    } catch {
+      // Not a readable package; it's saved the old way.
+    }
+  }
+  doc.transact(() => {
+    doc.getMap('docSetup').set('setup', setup ?? DEFAULT_SETUP);
+    const meta = doc.getMap('office');
+    meta.set('importHash', importHash);
+    meta.set('importSetup', JSON.stringify(setup ?? DEFAULT_SETUP));
+    if (kept) {
+      meta.set('kept', JSON.stringify(kept.kept));
+      meta.set('keptLostOnEdit', JSON.stringify(kept.lostOnEdit));
+    }
+  });
 }
 
 export const DOCUMENT_FORMATS = [
@@ -234,12 +255,47 @@ export const DocEditor = forwardRef<EditorHandle, Props>(function DocEditor({ fi
     exportOriginal: async () => {
       const ext = extOf(file.name);
       const base = file.name.replace(/\.[^.]+$/, '');
+      if (WORD_PACKAGES.includes(ext) && file.size > 0) return saveWordPackage(ext, base);
       if (['docx', 'odt', 'rtf', 'doc', 'txt', 'html'].includes(ext)) return { blob: await exportAs(ext), name: file.name };
       if (ext === 'htm') return { blob: await exportAs('html'), name: file.name };
       if (ext === 'md' || ext === 'markdown') return { blob: await exportAs('md'), name: file.name };
       return { blob: await exportAs('docx'), name: `${base}.docx` }; // .dotx, .docm, .wpd… are saved as .docx
     },
   }));
+
+  /**
+   * A Word file saved without losing what the editor doesn't show: the stored file with only its text
+   * replaced (docxMerge.ts). Unchanged since it was opened → the stored file as it is. If the merge
+   * fails for any reason, the editor's content is saved the plain way rather than not at all.
+   */
+  const saveWordPackage = async (ext: string, base: string): Promise<{ blob: Blob; name: string }> => {
+    if (!editor) throw new Error('The editor is still loading');
+    const meta = session.doc.getMap<unknown>('office');
+    const setupJson = JSON.stringify(setup);
+    const setupChanged = meta.get('importSetup') !== setupJson;
+    const type = file.mimeType || 'application/octet-stream';
+    let stored: ArrayBuffer | null = null;
+    try {
+      stored = await fileBytes(file);
+    } catch {
+      // Saved the plain way below.
+    }
+    if (stored && !meta.get('rewritten') && !setupChanged && meta.get('importHash') === fingerprint(editor.getHTML())) return { blob: new Blob([stored], { type }), name: file.name };
+    // From now on the stored file holds edits, so "same as imported" no longer means "same as stored".
+    session.doc.transact(() => meta.set('rewritten', true));
+    const generated = await exportAs('docx');
+    if (stored) {
+      try {
+        const { w, h } = pageSize(setup);
+        const page = setupChanged ? { w, h, landscape: setup.orientation === 'landscape', margins: setup.margins } : null;
+        const merged = mergeDocx(new Uint8Array(stored), new Uint8Array(await generated.arrayBuffer()), page);
+        return { blob: new Blob([merged as BlobPart], { type }), name: file.name };
+      } catch (err) {
+        console.warn('Could not merge the edits into the stored Word file; saving the edited text only', err);
+      }
+    }
+    return { blob: generated, name: ext === 'docx' ? file.name : `${base}.docx` };
+  };
 
   const print = async () => {
     if (savesNatively()) return printDocument(await html(false), file.name);
