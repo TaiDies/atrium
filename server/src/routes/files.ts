@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { queueFileText } from '../fileText.js';
 import { accessMap, requireMember, requireRefAccess } from '../access.js';
@@ -110,10 +110,9 @@ export async function fileRoutes(app: FastifyInstance) {
     if (req.headers['if-none-match'] === etag) return reply.code(304).send();
     return reply
       .header('Content-Type', 'application/pdf')
-      .header('Content-Length', String(info.size))
       .header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(row.filename.replace(/\.pdf$/i, '') + ' (without text).pdf')}`)
       .header('X-Content-Type-Options', 'nosniff')
-      .send(createReadStream(file));
+      .send(sendRange(req, reply, file, info.size, etag));
   });
 
   app.get('/files/:id', async (req, reply) => {
@@ -135,9 +134,40 @@ export async function fileRoutes(app: FastifyInstance) {
     const inline = INLINE_TYPES.has(row.mime_type) && !wantsDownload;
     reply
       .header('Content-Type', INLINE_TYPES.has(row.mime_type) ? row.mime_type : 'application/octet-stream')
-      .header('Content-Length', row.size)
       .header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.filename)}`)
       .header('X-Content-Type-Options', 'nosniff');
-    return reply.send(createReadStream(path.join(config.uploadDir, id)));
+    return reply.send(sendRange(req, reply, path.join(config.uploadDir, id), Number(row.size), etag));
   });
+}
+
+/**
+ * The file, or the part of it a Range header asks for ("bytes=0-65535"). The PDF viewer asks for parts,
+ * so a big book shows its first pages without waiting for the whole file to arrive. Sets the length,
+ * status and range headers; anything it can't serve as a part is sent whole.
+ */
+function sendRange(req: FastifyRequest, reply: FastifyReply, file: string, size: number, etag: string) {
+  reply.header('Accept-Ranges', 'bytes');
+  const range = req.headers.range;
+  const ifRange = req.headers['if-range'];
+  const m = typeof range === 'string' && (!ifRange || ifRange === etag) ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (m && (m[1] || m[2]) && size > 0) {
+    let start: number;
+    let end: number;
+    if (!m[1]) {
+      // "bytes=-500": the last 500 bytes.
+      start = Math.max(0, size - Number(m[2]));
+      end = size - 1;
+    } else {
+      start = Number(m[1]);
+      end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+    }
+    if (start > end || start >= size) {
+      reply.code(416).header('Content-Range', `bytes */${size}`);
+      return '';
+    }
+    reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', String(end - start + 1));
+    return createReadStream(file, { start, end });
+  }
+  reply.header('Content-Length', String(size));
+  return createReadStream(file);
 }

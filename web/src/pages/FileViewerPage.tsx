@@ -292,6 +292,12 @@ interface ViewPrefs {
 const VIEW_KEY = 'atrium-pdf-view';
 const VIEW_DEFAULTS: ViewPrefs = { layout: 'scroll', cover: true, direction: 'auto', preload: true, ahead: 2, unload: false, snap: false, quality: 'sharp', fit: 'width' };
 const MAX_AHEAD = 50;
+/**
+ * Pages already drawn stay drawn while they're this close to the page being read (or the pages drawn
+ * ahead, if more), so scrolling back a little is instant. Further away they're cleared: each drawn page
+ * holds 8–25 MB, and keeping every page of a long book drawn filled memory until everything slowed down.
+ */
+const KEEP_NEAR = 6;
 function loadViewPrefs(): ViewPrefs {
   const saved = getLocal<Partial<ViewPrefs> | null>(VIEW_KEY, null) ?? {};
   const v = { ...VIEW_DEFAULTS, ...saved };
@@ -686,14 +692,19 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book, shown[0], total]);
   // Pages kept on hand in the book view: the open pair, the pages ahead, and (unless far pages are
-  // freed) every page already seen, so flipping back is instant.
+  // freed) the pages already seen near the open pair, so flipping back a little is instant.
   const seenPages = useRef(new Set<number>());
   const bookPages = useMemo(() => {
     if (!book || !shown.length) return [];
     const keep = new Set(shown);
     if (view.preload) for (let n = shown[0] - view.ahead; n <= shown[shown.length - 1] + view.ahead; n++) if (n >= 1 && n <= total) keep.add(n);
+    const near = Math.max(KEEP_NEAR, view.ahead);
     if (view.unload) seenPages.current.clear();
-    else for (const n of seenPages.current) keep.add(n);
+    else
+      for (const n of [...seenPages.current]) {
+        if (Math.abs(n - shown[0]) <= near) keep.add(n);
+        else seenPages.current.delete(n);
+      }
     for (const n of keep) seenPages.current.add(n);
     return [...keep].sort((a, b) => a - b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1125,7 +1136,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                 fitCap={4000}
                 availableHeight={height - 64 - 24}
                 wanted
-                unload={view.unload}
+                unload={view.unload || Math.abs(n - shown[0]) > Math.max(KEEP_NEAR, view.ahead)}
                 sharp={view.quality === 'sharp'}
                 items={byPage.get(n - 1) ?? EMPTY}
                 ink={ink ? inkSettings : null}
@@ -1153,7 +1164,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                     fitCap={book ? 900 : 1100}
                     availableHeight={height - 32}
                     wanted={view.preload && Math.abs(n - page) <= view.ahead}
-                    unload={view.unload}
+                    unload={view.unload || Math.abs(n - page) > Math.max(KEEP_NEAR, view.ahead)}
                     sharp={view.quality === 'sharp'}
                     items={byPage.get(n - 1) ?? EMPTY}
                     ink={ink ? inkSettings : null}
@@ -1338,7 +1349,7 @@ function ViewSettings({
         )}
         <Check
           label="Free memory from far pages"
-          help="Pages far from view are cleared and drawn again when you come back. Helps with very long books on phones."
+          help="Pages already drawn are cleared as soon as they leave the screen (otherwise the nearest few are kept for scrolling back). Uses the least memory, for slow phones."
           checked={view.unload}
           onChange={(unload) => onChange({ unload })}
         />
@@ -1560,6 +1571,14 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
     return () => io.disconnect();
   }, [index]);
 
+  // Zooming redraws only pages on screen or drawn ahead. Others keep their old drawing (stretched to the
+  // new size) until they come into view; redrawing every kept page at each zoom step froze the viewer.
+  const active = onScreen || wanted;
+  const [drawScale, setDrawScale] = useState(scale);
+  useEffect(() => {
+    if ((active || !everDrawn) && drawScale !== scale) setDrawScale(scale);
+  }, [active, everDrawn, scale, drawScale]);
+
   useEffect(() => {
     if (blank || !size || !canvas.current || !textLayer.current) return;
     if (!near) {
@@ -1576,7 +1595,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       const pdfjs = await loadPdfjs();
       const p = await doc.getPage(index);
       if (cancelled) return;
-      const viewport = p.getViewport({ scale });
+      const viewport = p.getViewport({ scale: drawScale });
       const ratio = sharp ? window.devicePixelRatio || 1 : 1;
       const c = canvas.current!;
       c.width = Math.floor(viewport.width * ratio);
@@ -1588,7 +1607,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       // Selectable text over the page, so text can be copied and found with Ctrl+F.
       const layer = textLayer.current!;
       layer.replaceChildren();
-      for (const [k, v] of [['--scale-factor', String(scale)], ['--total-scale-factor', String(scale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
+      for (const [k, v] of [['--scale-factor', String(drawScale)], ['--total-scale-factor', String(drawScale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
       const tl = new pdfjs.TextLayer({ textContentSource: p.streamTextContent(), container: layer, viewport });
       text = tl;
       await tl.render().catch(() => {});
@@ -1598,14 +1617,14 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       task?.cancel();
       text?.cancel();
     };
-  }, [near, size, scale, doc, index, blank, sharp]);
+  }, [near, size, drawScale, doc, index, blank, sharp]);
 
   const w = known ? known.w * scale : Math.min(available, 800);
   const h = known ? known.h * scale : w * 1.3;
   return (
     <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h, display: hidden ? 'none' : undefined }}>
       {!blank && <canvas ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}
-      {!blank && <div ref={textLayer} className="textLayer" />}
+      {!blank && <div ref={textLayer} className="textLayer" style={drawScale !== scale ? { transform: `scale(${scale / drawScale})`, transformOrigin: '0 0' } : undefined} />}
       <InkLayer page={index - 1} aspect={h / w} pxWidth={w} items={items} ink={ink} actions={actions} onPen={onPen} />
     </div>
   );
