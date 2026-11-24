@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -15,6 +15,7 @@ import { HttpError, idParams, parse } from '../util.js';
 import { requirePermission } from '../roles.js';
 import { positionSchema, positionsFor, savePosition } from '../filePositions.js';
 import { receiveFile } from '../uploads.js';
+import { flatPath, flatStatus, isPdf, queueFlat } from '../pdfFlat.js';
 
 // Types that are safe to render inline; everything else (HTML, SVG, ...) is forced to download.
 export const INLINE_TYPES = new Set([
@@ -85,6 +86,34 @@ export async function fileRoutes(app: FastifyInstance) {
     await requireMember(req.user.id, row.workspace_id, undefined, true);
     await savePosition(req.user.id, id, position);
     return { ok: true };
+  });
+
+  // The PDF's picture copy ("without text", pdfFlat.ts): the PDF itself when it's ready, otherwise its
+  // status ({ status: 'pending' | 'notext' | 'failed' }); asking for one that isn't made yet starts it.
+  app.get('/files/:id/flat', async (req, reply) => {
+    const { id } = parse(idParams, req.params);
+    const row = await one<{ workspace_id: string; filename: string; mime_type: string }>('select workspace_id, filename, mime_type from files where id = $1', [id]);
+    if (!row) throw new HttpError(404, 'File not found');
+    await requireRefAccess(req.user.id, row.workspace_id, 'file', id);
+    if (!isPdf(row)) throw new HttpError(400, 'Not a PDF');
+    let status = await flatStatus(id);
+    if (status === 'none') {
+      queueFlat(id, true);
+      status = 'pending';
+    }
+    // ?status=1 only asks whether it's ready, without sending the PDF.
+    if (status !== 'ready' || (req.query as Record<string, string> | undefined)?.status === '1') return reply.header('Cache-Control', 'no-store').send({ status });
+    const file = flatPath(id);
+    const info = await stat(file);
+    const etag = `"flat-${info.size}-${Math.round(info.mtimeMs)}"`;
+    reply.header('ETag', etag).header('Cache-Control', 'private, no-cache');
+    if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Length', String(info.size))
+      .header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(row.filename.replace(/\.pdf$/i, '') + ' (without text).pdf')}`)
+      .header('X-Content-Type-Options', 'nosniff')
+      .send(createReadStream(file));
   });
 
   app.get('/files/:id', async (req, reply) => {
