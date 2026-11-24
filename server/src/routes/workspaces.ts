@@ -1,4 +1,5 @@
 import { tokenWorkspace } from '../scope.js';
+import { removeFlat } from '../pdfFlat.js';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -66,7 +67,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     await requireOwner(req.user.id, id);
     const files = await query<{ id: string }>('select id from files where workspace_id = $1', [id]);
     await query('delete from workspaces where id = $1', [id]);
-    await Promise.allSettled(files.map((f) => unlink(path.join(config.uploadDir, f.id))));
+    await Promise.allSettled(files.flatMap((f) => [unlink(path.join(config.uploadDir, f.id)), removeFlat(f.id)]));
     return { ok: true };
   });
 

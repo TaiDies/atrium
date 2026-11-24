@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { backfillFileText } from './fileText.js';
+import { backfillFlat } from './pdfFlat.js';
 import { attachCollab, hocuspocus } from './collab.js';
 import { config } from './config.js';
 import { migrate, pool } from './db.js';
@@ -158,6 +159,7 @@ await migrate();
 // Record which pages use which files, events and whiteboards, and every dated card and block; runs in the background.
 backfillDocIndex().catch((err) => app.log.error(err, 'Could not index documents'));
 backfillFileText().catch((err) => app.log.error(err, 'Could not read file text'));
+backfillFlat().catch((err) => app.log.error(err, 'Could not queue picture copies of PDFs'));
 // Imports interrupted by a restart leave temporary files behind.
 cleanImportLeftovers().catch(() => {});
 // Old page history is thinned out once a day.

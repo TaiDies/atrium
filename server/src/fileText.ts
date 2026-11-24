@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { convert, converterAvailable, kindOfName } from './convert.js';
 import { one, query } from './db.js';
 import type { PdfJob, PdfResult } from './fileTextWorker.js';
+import { queueFlat } from './pdfFlat.js';
 
 // The words inside uploaded files (PDFs, Word, Excel, PowerPoint, text…), kept for search. Scanned
 // PDFs have no text layer, so only their names are searchable.
@@ -122,6 +123,8 @@ let queue: Promise<void> = Promise.resolve();
 /** Indexes a file in the background, one at a time (conversions are heavy). */
 export function queueFileText(fileId: string) {
   queue = queue.then(() => indexFileText(fileId)).catch((err) => console.error('Could not read the text of a file', fileId, err));
+  // A PDF also gets its picture copy (pdfFlat.ts); anything else is skipped there.
+  queueFlat(fileId);
 }
 
 /** Files uploaded before text search existed. */

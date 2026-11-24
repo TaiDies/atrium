@@ -379,9 +379,47 @@ function useInk(doc: Y.Doc | null) {
   return { items, extraPages };
 }
 
+type FlatState = 'ready' | 'pending' | 'notext' | 'failed' | 'unknown';
+
+/**
+ * Whether the server's "without text" copy of a PDF is ready. Asked once when the viewer opens (so the
+ * setting can say), and every few seconds while it's wanted and still being made.
+ */
+function useFlatCopy(fileUrl: string | null, wanted: boolean): FlatState {
+  const [state, setState] = useState<FlatState>('unknown');
+  useEffect(() => {
+    if (!fileUrl) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async () => {
+      try {
+        const res = await fetch(`${fileUrl}/flat?status=1`, { credentials: 'same-origin', cache: 'no-store' });
+        const s = res.ok ? ((await res.json()) as { status: FlatState }).status : 'failed';
+        if (!alive) return;
+        setState(s);
+        if (s === 'pending' && wanted) timer = setTimeout(ask, 4000);
+      } catch {
+        if (alive && wanted) timer = setTimeout(ask, 8000);
+      }
+    };
+    void ask();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [fileUrl, wanted]);
+  return state;
+}
+
 /** A PDF, with handwriting when `ink` is given. `src` shows another PDF of the file (e.g. an office file's exact layout). */
 function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | null; src?: string }) {
-  const url = src ?? file.url;
+  // "Without text": the server's copy of the PDF with every page as a picture (server/src/pdfFlat.ts),
+  // much lighter to show for big books full of text. Chosen per file on this device; only one of the
+  // two is loaded at a time.
+  const flatKey = `atrium-pdf-flat:${file.id}`;
+  const [textless, setTextlessState] = useState<boolean>(() => !src && getLocal<boolean>(flatKey, false));
+  const flat = useFlatCopy(src ? null : file.url, textless);
+  const url = src ?? (textless && flat === 'ready' ? `${file.url}/flat` : file.url);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState(false);
   const [zoom, setZoom] = useState<Zoom>('fit');
@@ -446,9 +484,22 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     } catch {}
   }, [prefs]);
 
+  const shownUrl = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     let loading: { destroy: () => Promise<void> } | null = null;
+    // Switching between the original and the copy: the other one is dropped completely (the previous
+    // load's cleanup destroyed it), and the new one opens on the same page.
+    if (shownUrl.current && shownUrl.current !== url) {
+      const el = scroller.current;
+      const at = el && view.layout !== 'book' ? pageAt(el.scrollTop + 8) : null;
+      const n = at?.page ?? pageNow.current;
+      restoreTo.current = { kind: 'page', page: n, pages: total, offset: at ? at.offset : 0 };
+      restored.current = false;
+      touched.current = false;
+      setDoc(null);
+    }
+    shownUrl.current = url;
     (async () => {
       try {
         const pdfjs = await loadPdfjs();
@@ -648,23 +699,10 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book, shown[0], shown.length, view.preload, view.ahead, view.unload, total]);
 
-  // The mouse wheel flips (when the pages fit on screen), and so does swiping sideways in reading mode.
+  // Swiping sideways in reading mode flips. (In the book view the mouse wheel zooms: see below.)
   useEffect(() => {
     const el = scroller.current;
     if (!el || !book) return;
-    let wheel = 0;
-    let quietUntil = 0;
-    const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey || el.scrollHeight > el.clientHeight + 2) return;
-      e.preventDefault();
-      if (Date.now() < quietUntil) return;
-      wheel += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : rtl ? -e.deltaX : e.deltaX;
-      if (Math.abs(wheel) >= 60) {
-        flip(wheel > 0 ? 1 : -1);
-        wheel = 0;
-        quietUntil = Date.now() + 350;
-      }
-    };
     let start: { x: number; y: number } | null = null;
     const onStart = (e: TouchEvent) => {
       start = e.touches.length === 1 && mode === 'read' ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
@@ -678,15 +716,13 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       // A swipe to the left brings in the page on the right.
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) flipSide(dx < 0 ? 'right' : 'left');
     };
-    el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('touchstart', onStart, { passive: true });
     el.addEventListener('touchend', onEnd);
     return () => {
-      el.removeEventListener('wheel', onWheel);
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchend', onEnd);
     };
-  }, [book, flip, flipSide, rtl, mode]);
+  }, [book, flipSide, mode]);
 
   // Arrow keys, Page Up/Down and space flip; Home and End go to the covers.
   useEffect(() => {
@@ -806,7 +842,8 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     const first = pageEl(1);
     return first && firstSize ? first.offsetWidth / firstSize.w / (96 / 72) : 1;
   }, [zoom, firstSize, pageEl]);
-  const anchor = useRef<{ page: number; fy: number; fx: number } | null>(null);
+  /** What to keep in place across a zoom: a point on a page, kept in the middle of the screen or, with `at`, under the pointer. */
+  const anchor = useRef<{ page: number; fy: number; fx: number; at?: { x: number; y: number } } | null>(null);
   /** Zooms keeping what's in the middle of the screen in the middle. */
   const zoomTo = useCallback(
     (next: Zoom) => {
@@ -820,6 +857,17 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     [pageAt],
   );
   const zoomBy = (factor: number) => zoomTo(zoomNow() * factor);
+  /** Zooms keeping the point under the pointer (screen coordinates) where it is. */
+  const zoomAt = useCallback(
+    (next: number, x: number, y: number) => {
+      const hit = document.elementsFromPoint(x, y).map((e) => e.closest<HTMLElement>('[id^="ink-page-"]')).find(Boolean);
+      if (!hit || !scroller.current?.contains(hit)) return zoomTo(next);
+      const r = hit.getBoundingClientRect();
+      anchor.current = { page: Number(hit.id.slice('ink-page-'.length)), fx: (x - r.left) / r.width, fy: (y - r.top) / r.height, at: { x, y } };
+      setZoom(Math.min(4, Math.max(0.25, next)));
+    },
+    [zoomTo],
+  );
   /** Changes how pages are shown, keeping the page in the middle of the screen in view. */
   const setView = useCallback(
     (patch: Partial<ViewPrefs>) => {
@@ -843,27 +891,38 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     if (!a || !el) return;
     const page = pageEl(a.page);
     if (!page) return;
+    if (a.at) {
+      const r = page.getBoundingClientRect();
+      el.scrollLeft += r.left + a.fx * r.width - a.at.x;
+      el.scrollTop += r.top + a.fy * r.height - a.at.y;
+      return;
+    }
     el.scrollTop = page.offsetTop + a.fy * page.offsetHeight - el.clientHeight / 2;
     el.scrollLeft = page.offsetLeft + a.fx * page.offsetWidth - el.clientWidth / 2;
   }, [zoom, pageEl, view.layout, view.cover, view.fit]);
 
-  // Ctrl + mouse wheel (and pinching a touchpad) zooms the pages; pinching with two fingers too.
+  // Ctrl + mouse wheel (and pinching a touchpad) zooms the pages where the pointer is; in the book view
+  // the wheel alone does. Pinching with two fingers zooms too.
   const content = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     let factor = 1;
     let frame = 0;
+    let point = { x: 0, y: 0 };
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      if (!e.ctrlKey && !e.metaKey && !book) return;
       e.preventDefault();
-      factor *= Math.exp(-e.deltaY * 0.0025);
+      // Lines or pages of scrolling (some mice) count as about 40 or 800 pixels.
+      const dy = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+      factor *= Math.exp(-dy * 0.0025);
+      point = { x: e.clientX, y: e.clientY };
       if (!frame)
         frame = requestAnimationFrame(() => {
           frame = 0;
           const f = factor;
           factor = 1;
-          zoomTo(zoomNow() * f);
+          zoomAt(zoomNow() * f, point.x, point.y);
         });
     };
     let pinch: { d: number; f: number } | null = null;
@@ -900,7 +959,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };
-  }, [zoomTo, zoomNow]);
+  }, [zoomTo, zoomAt, zoomNow, book]);
 
   if (error) return <Message text="This PDF couldn't be displayed. Use Download to save it." />;
 
@@ -1108,7 +1167,14 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
           </div>
         )}
         <Popover anchor={settingsAnchor} onClose={() => setSettingsAnchor(null)} align="end">
-          <ViewSettings view={view} onChange={setView} dark={darkPages} onDark={setDarkPages} detectedRtl={rtlText} />
+          <ViewSettings
+            view={view}
+            onChange={setView}
+            dark={darkPages}
+            onDark={setDarkPages}
+            detectedRtl={rtlText}
+            copy={src ? null : { textless, flat, onChange: (v) => (setTextlessState(v), setLocal(flatKey, v)) }}
+          />
         </Popover>
       </div>
       {/* The bar stays put at the bottom however the pages are zoomed or scrolled. */}
@@ -1165,12 +1231,15 @@ function ViewSettings({
   dark,
   onDark,
   detectedRtl,
+  copy,
 }: {
   view: ViewPrefs;
   onChange: (patch: Partial<ViewPrefs>) => void;
   dark: boolean;
   onDark: (v: boolean) => void;
   detectedRtl: boolean;
+  /** The original PDF or its "without text" copy (null: not offered, e.g. an office file's layout). */
+  copy: { textless: boolean; flat: FlatState; onChange: (textless: boolean) => void } | null;
 }) {
   const [ahead, setAhead] = useState(String(view.ahead));
   useEffect(() => setAhead(String(view.ahead)), [view.ahead]);
@@ -1182,6 +1251,26 @@ function ViewSettings({
   return (
     <div className="w-80 max-w-[calc(100vw-2rem)] space-y-4 p-3 text-sm">
       <div className="font-medium">View settings</div>
+
+      {copy && copy.flat !== 'notext' && (
+        <Setting label="File">
+          <Choice
+            value={copy.textless ? 'flat' : 'original'}
+            onChange={(v) => copy.onChange(v === 'flat')}
+            options={[
+              { value: 'original', label: 'Original' },
+              { value: 'flat', label: 'Without text' },
+            ]}
+          />
+          <p className="text-xs text-muted">
+            {copy.textless && copy.flat === 'pending'
+              ? 'The copy without text is being made — it opens by itself when it’s ready. Big books take a minute or two.'
+              : copy.textless && copy.flat === 'failed'
+                ? 'The copy without text couldn’t be made for this file, so the original is shown.'
+                : 'Without text: every page as a picture. Much lighter for big books full of text, but text can’t be selected or searched. Only one of the two is loaded at a time.'}
+          </p>
+        </Setting>
+      )}
 
       <Setting label="Pages">
         <Choice
@@ -1210,7 +1299,7 @@ function ViewSettings({
       </Setting>
 
       {view.layout === 'book' ? (
-        <p className="text-xs text-muted">Two pages at a time, fitted to the screen. Flip with the arrows at the sides, the arrow keys, the mouse wheel or by swiping.</p>
+        <p className="text-xs text-muted">Two pages at a time, fitted to the screen. Flip with the arrows at the sides, the arrow keys or by swiping; the mouse wheel zooms where the pointer is.</p>
       ) : (
         <Setting label="Fit shows">
           <Choice
