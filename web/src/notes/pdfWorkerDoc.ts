@@ -92,12 +92,12 @@ export class WorkerDoc {
 
   /**
    * Draws page `n`; `urgent` for pages on screen (drawn before pages fetched ahead). Returns the
-   * bitmap (null if it couldn't be drawn) and a cancel function for when the page is no longer wanted.
+   * bitmap (null if it couldn't be drawn) with where its pictures are, and a cancel function for when the page is no longer wanted.
    */
-  render(n: number, scale: number, ratio: number, urgent: boolean): { done: Promise<ImageBitmap | null>; cancel: () => void } {
+  render(n: number, scale: number, ratio: number, urgent: boolean): { done: Promise<{ bitmap: ImageBitmap | null; images: number[] }>; cancel: () => void } {
     const id = this.nextId++;
     let cancelled = false;
-    const done = this.ask<Extract<FromWorker, { type: 'rendered' }>>({ type: 'render', id, page: n, scale, ratio, urgent }).then((m) => m.bitmap);
+    const done = this.ask<Extract<FromWorker, { type: 'rendered' }>>({ type: 'render', id, page: n, scale, ratio, urgent }).then((m) => ({ bitmap: m.bitmap, images: m.images ?? [] }));
     return {
       done,
       cancel: () => {
