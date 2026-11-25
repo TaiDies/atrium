@@ -26,7 +26,6 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { HttpError, idParams, parse } from '../util.js';
 import { positionsFor, type SavedPosition } from '../filePositions.js';
-import { removeFlat } from '../pdfFlat.js';
 
 /** Deletes a file: its blocks everywhere, its notes layer, and the stored file. */
 export async function deleteFile(access: Map<string, Access>, id: string) {
@@ -34,7 +33,6 @@ export async function deleteFile(access: Map<string, Access>, id: string) {
   closeFileDoc(id);
   await query('delete from files where id = $1', [id]);
   await unlink(path.join(config.uploadDir, id)).catch(() => {});
-  await removeFlat(id);
 }
 
 /** Files of a workspace nothing uses (only `uploadedBy`'s, if given). New uploads (under 10 minutes) are left alone. */
