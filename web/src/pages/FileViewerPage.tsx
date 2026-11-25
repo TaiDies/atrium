@@ -32,6 +32,10 @@ import {
   Undo2,
 } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { isWorkerDoc, WorkerDoc, workerDrawingSupported } from '../notes/pdfWorkerDoc';
+
+/** The PDF being shown: drawn in a background worker, or by PDF.js on the page. */
+type PdfDoc = PDFDocumentProxy | WorkerDoc;
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
@@ -388,7 +392,7 @@ function useInk(doc: Y.Doc | null) {
 /** A PDF, with handwriting when `ink` is given. `src` shows another PDF of the file (e.g. an office file's exact layout). */
 function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | null; src?: string }) {
   const url = src ?? file.url;
-  const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
+  const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState(false);
   const [zoom, setZoom] = useState<Zoom>('fit');
   // Dark pages: the PDF drawn with its colours inverted (works for scanned pages too). Starts on in dark mode.
@@ -469,6 +473,23 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     }
     shownUrl.current = url;
     (async () => {
+      // Pages are drawn in a background worker where the browser can (pdfWorkerDoc.ts), so drawing never
+      // holds up the app; otherwise (or if the worker can't open the file) PDF.js draws them here.
+      if (workerDrawingSupported()) {
+        try {
+          const opening = WorkerDoc.open(url);
+          loading = { destroy: async () => void opening.then((d) => d.destroy(), () => {}) };
+          const d = await opening;
+          if (cancelled) return;
+          setLastSize({ w: d.last.width, h: d.last.height });
+          setFirstSize({ w: d.first.width, h: d.first.height });
+          setDoc(d);
+          return;
+        } catch (err) {
+          if (cancelled) return;
+          console.warn('Drawing the PDF in a worker failed; drawing it on the page instead', err);
+        }
+      }
       try {
         const pdfjs = await loadPdfjs();
         const task = pdfjs.getDocument({ url, withCredentials: true, ...pdfAssets() });
@@ -1478,7 +1499,7 @@ function RoundButton({ label, onClick, children }: { label: string; onClick: (e:
 }
 
 interface PageProps {
-  doc: PDFDocumentProxy;
+  doc: PdfDoc;
   index: number;
   /** Kept on hand but not shown (the book view's pages ahead): drawn, not displayed. */
   hidden?: boolean;
@@ -1585,9 +1606,39 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
     let cancelled = false;
     let task: { cancel: () => void } | null = null;
     let text: { cancel: () => void } | null = null;
+    if (isWorkerDoc(doc)) {
+      // Drawn in the worker; the finished picture is put on the canvas without copying it.
+      const ratio = sharp ? window.devicePixelRatio || 1 : 1;
+      const job = doc.render(index, drawScale, ratio, onScreen);
+      task = job;
+      (async () => {
+        const bitmap = await job.done;
+        if (cancelled || !bitmap) return bitmap?.close();
+        const c = canvas.current;
+        const bctx = c?.getContext('bitmaprenderer');
+        if (!c || !bctx) return bitmap.close();
+        c.width = bitmap.width;
+        c.height = bitmap.height;
+        bctx.transferFromImageBitmap(bitmap);
+        const [pdfjs, content, info] = await Promise.all([loadPdfjs(), doc.text(index), doc.info(index)]);
+        if (cancelled || !info || !textLayer.current) return;
+        const layer = textLayer.current;
+        layer.replaceChildren();
+        for (const [k, v] of [['--scale-factor', String(drawScale)], ['--total-scale-factor', String(drawScale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
+        const viewport = { scale: drawScale, rotation: info.rotation, rawDims: info.rawDims };
+        const tl = new pdfjs.TextLayer({ textContentSource: content as never, container: layer, viewport: viewport as never });
+        text = tl;
+        await tl.render().catch(() => {});
+      })().catch(() => {});
+      return () => {
+        cancelled = true;
+        task?.cancel();
+        text?.cancel();
+      };
+    }
     (async () => {
       const pdfjs = await loadPdfjs();
-      const p = await doc.getPage(index);
+      const p = await (doc as PDFDocumentProxy).getPage(index);
       if (cancelled) return;
       const viewport = p.getViewport({ scale: drawScale });
       const ratio = sharp ? window.devicePixelRatio || 1 : 1;
@@ -1617,7 +1668,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
   const h = known ? known.h * scale : w * 1.3;
   return (
     <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h, display: hidden ? 'none' : undefined }}>
-      {!blank && <canvas ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}
+      {!blank && <canvas key={isWorkerDoc(doc) ? 'worker' : 'page'} ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}
       {!blank && <div ref={textLayer} className="textLayer" style={drawScale !== scale ? { transform: `scale(${scale / drawScale})`, transformOrigin: '0 0' } : undefined} />}
       <InkLayer page={index - 1} aspect={h / w} pxWidth={w} items={items} ink={ink} actions={actions} onPen={onPen} />
     </div>
