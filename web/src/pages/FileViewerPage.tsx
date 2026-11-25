@@ -237,13 +237,12 @@ function Media({ file, kind, className }: { file: FileInfo; kind: 'video' | 'aud
 
 function DownloadLink({ file }: { file: FileInfo }) {
   return (
-    <a
-      href={downloadUrl(file.url)}
-      download={file.name}
+    <button
+      onClick={() => void saveUrl(file.url, file.name)}
       className="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 text-sm font-medium text-white hover:brightness-110"
     >
       <Download size={15} /> <span className="max-sm:hidden">Download</span>
-    </a>
+    </button>
   );
 }
 
@@ -292,9 +291,15 @@ interface ViewPrefs {
   quality: 'sharp' | 'fast';
   /** What Fit fits on screen: the page's width, or the whole page. */
   fit: 'width' | 'page';
+  /**
+   * Quality when zoomed in. Fit: pages keep the drawing made for Fit and zooming just shows it bigger
+   * (fastest, softer when zoomed in). Sharper / Sharpest: once zooming stops, the pages on screen are
+   * drawn again with up to 2× / 3× the detail.
+   */
+  zoomQuality: 'fit' | 'sharper' | 'sharpest';
 }
 const VIEW_KEY = 'atrium-pdf-view';
-const VIEW_DEFAULTS: ViewPrefs = { layout: 'scroll', cover: true, direction: 'auto', preload: true, ahead: 2, unload: false, snap: false, quality: 'sharp', fit: 'width' };
+const VIEW_DEFAULTS: ViewPrefs = { layout: 'scroll', cover: true, direction: 'auto', preload: true, ahead: 2, unload: false, snap: false, quality: 'sharp', fit: 'width', zoomQuality: 'fit' };
 const MAX_AHEAD = 50;
 /**
  * Pages already drawn stay drawn while they're this close to the page being read (or the pages drawn
@@ -662,6 +667,15 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     return Math.min(Math.min(width - sidePad, 1100) / firstSize.w, view.fit === 'page' && height - 32 > 100 ? (height - 32) / firstSize.h : Infinity);
   }, [firstSize, width, height, book, view.fit, sidePad]);
   const zoomF = zoom === 'fit' ? 1 : (zoom * (96 / 72)) / fitBase;
+  // With a sharper zoom quality, pages are drawn again with more detail once zooming has stopped for a
+  // moment (not at every step), in steps of a quarter so small changes don't redraw anything.
+  const [settledZoom, setSettledZoom] = useState(zoomF);
+  useEffect(() => {
+    const t = setTimeout(() => setSettledZoom(zoomF), 300);
+    return () => clearTimeout(t);
+  }, [zoomF]);
+  const maxDetail = view.zoomQuality === 'sharpest' ? 3 : view.zoomQuality === 'sharper' ? 2 : 1;
+  const detail = Math.min(maxDetail, Math.max(1, Math.ceil(settledZoom * 4) / 4));
   /** Where the scaled pages sit in the scroll area, and the scale (for turning scroll positions into page positions). */
   const view0 = useRef({ x: 0, y: 0, f: 1 });
   const rtl = view.direction === 'rtl' || (view.direction === 'auto' && rtlText);
@@ -692,7 +706,8 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   useEffect(() => {
     if (!book || !shown.length) return;
     setPage(shown[0]);
-    scroller.current?.scrollTo({ top: 0, left: 0 });
+    const sc = scroller.current;
+    if (sc && (sc.scrollTop || sc.scrollLeft)) sc.scrollTo({ top: 0, left: 0 });
     if (restored.current && total > 0) savePlace({ kind: 'page', page: shown[0], pages: total, offset: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book, shown[0], total]);
@@ -1002,20 +1017,27 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   const sizerStyle: React.CSSProperties = { position: 'relative', width: Math.max(vw, natural.w * zoomF), height: Math.max(book ? vh - 64 : 0, natural.h * zoomF + zy) };
   const contentStyle: React.CSSProperties = { position: 'absolute', left: zx, top: zy, transform: `scale(${zoomF})`, transformOrigin: '0 0', willChange: 'transform' };
 
-  if (error) return <Message text="This PDF couldn't be displayed. Use Download to save it." />;
-
   const strokeSizes = mode === 'highlighter' ? HIGHLIGHTER_SIZES : PEN_SIZES;
   const strokePrefs = mode === 'highlighter' ? prefs.highlighter : mode === 'shape' ? prefs.shape : prefs.pen;
-  const inkSettings: InkSettings = {
-    mode,
-    color: strokePrefs.color,
-    width: strokeSizes[Math.min(strokeSizes.length - 1, strokePrefs.size)],
-    finger: prefs.finger,
-    shape: prefs.shape.kind,
-    detectShapes: prefs.detectShapes,
-    textColor: prefs.text.color,
-    textSize: TEXT_SIZES[Math.min(TEXT_SIZES.length - 1, prefs.text.size)],
-  };
+  // Kept the same object while nothing in it changes: every page gets it, and a new object on each render
+  // (each page change while scrolling, each zoom step) made all the pages and their handwriting re-render.
+  const strokeColor = strokePrefs.color;
+  const strokeWidth = strokeSizes[Math.min(strokeSizes.length - 1, strokePrefs.size)];
+  const inkSettings = useMemo<InkSettings>(
+    () => ({
+      mode,
+      color: strokeColor,
+      width: strokeWidth,
+      finger: prefs.finger,
+      shape: prefs.shape.kind,
+      detectShapes: prefs.detectShapes,
+      textColor: prefs.text.color,
+      textSize: TEXT_SIZES[Math.min(TEXT_SIZES.length - 1, prefs.text.size)],
+    }),
+    [mode, strokeColor, strokeWidth, prefs.finger, prefs.shape.kind, prefs.detectShapes, prefs.text.color, prefs.text.size],
+  );
+
+  if (error) return <Message text="This PDF couldn't be displayed. Use Download to save it." />;
 
   return (
     <div className="flex h-full flex-col">
@@ -1169,6 +1191,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                 wanted
                 unload={view.unload || Math.abs(n - shown[0]) > Math.max(KEEP_NEAR, view.ahead)}
                 sharp={view.quality === 'sharp'}
+                detail={detail}
                 items={byPage.get(n - 1) ?? EMPTY}
                 ink={ink ? inkSettings : null}
                 actions={actions}
@@ -1199,6 +1222,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                     wanted={view.preload && Math.abs(n - page) <= view.ahead}
                     unload={view.unload || Math.abs(n - page) > Math.max(KEEP_NEAR, view.ahead)}
                     sharp={view.quality === 'sharp'}
+                    detail={detail}
                     items={byPage.get(n - 1) ?? EMPTY}
                     ink={ink ? inkSettings : null}
                     actions={actions}
@@ -1378,6 +1402,21 @@ function ViewSettings({
           ]}
         />
         <p className="text-xs text-muted">Faster draws fewer pixels: a little softer on sharp screens, quicker on slow devices.</p>
+        <div className="pt-1 text-xs text-muted">When zoomed in</div>
+        <Choice
+          value={view.zoomQuality}
+          onChange={(zoomQuality) => onChange({ zoomQuality })}
+          options={[
+            { value: 'fit', label: 'Fastest' },
+            { value: 'sharper', label: 'Sharper' },
+            { value: 'sharpest', label: 'Sharpest' },
+          ]}
+        />
+        <p className="text-xs text-muted">
+          {view.zoomQuality === 'fit'
+            ? 'Zooming shows the pages as drawn for Fit, just bigger: never redraws, softer when zoomed in.'
+            : `Once you stop zooming, the pages on screen are drawn again with up to ${view.zoomQuality === 'sharpest' ? '3' : '2'}× the detail. Uses more memory and takes a moment on big pages.`}
+        </p>
       </Setting>
     </div>
   );
@@ -1519,6 +1558,8 @@ interface PageProps {
   unload: boolean;
   /** Full screen resolution (off: fewer pixels, faster). */
   sharp: boolean;
+  /** How many times the Fit detail to draw the page with (zoomed in with a sharper zoom quality); 1 = Fit. */
+  detail?: number;
   items: InkItem[];
   ink: InkSettings | null;
   actions: InkActions;
@@ -1528,7 +1569,7 @@ interface PageProps {
 }
 
 /** One page: sized up front from its viewport, drawn only once it scrolls near the screen, with its handwriting on top. */
-const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoom, fit, available, fitCap, availableHeight, wanted, unload, sharp, items, ink, actions, onPen, dark }: PageProps) {
+const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoom, fit, available, fitCap, availableHeight, wanted, unload, sharp, items, ink, actions, onPen, dark, detail = 1 }: PageProps) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textLayer = useRef<HTMLDivElement>(null);
@@ -1582,6 +1623,41 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
     return () => io.disconnect();
   }, [index]);
 
+  // The selectable text over a page drawn in the worker is laid out only once the page is on screen and
+  // has stayed there a moment, in idle time: laying it out takes the main thread a while (measuring every
+  // line), so doing it for each page as it's drawn, or for pages flipped past or drawn ahead out of
+  // sight, made flipping and scrolling stutter.
+  const [painted, setPainted] = useState(0);
+  const paintedScale = useRef(1);
+  useEffect(() => {
+    if (!isWorkerDoc(doc) || !painted || hidden || !onScreen || !near || !textLayer.current) return;
+    const layer = textLayer.current;
+    let cancelled = false;
+    let tl: { cancel: () => void } | null = null;
+    let idle = 0;
+    const idleCall = (cb: () => void) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(cb, { timeout: 1500 }) : window.setTimeout(cb, 0));
+    const timer = window.setTimeout(() => {
+      idle = idleCall(async () => {
+        const scale = paintedScale.current;
+        const [pdfjs, content, info] = await Promise.all([loadPdfjs(), doc.text(index), doc.info(index)]);
+        if (cancelled || !info) return;
+        layer.replaceChildren();
+        for (const [k, v] of [['--scale-factor', String(scale)], ['--total-scale-factor', String(scale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
+        const viewport = { scale, rotation: info.rotation, rawDims: info.rawDims };
+        const t = new pdfjs.TextLayer({ textContentSource: content as never, container: layer, viewport: viewport as never });
+        tl = t;
+        await t.render().catch(() => {});
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (typeof cancelIdleCallback === 'function') cancelIdleCallback(idle);
+      else clearTimeout(idle);
+      tl?.cancel();
+    };
+  }, [painted, hidden, onScreen, near, doc, index]);
+
   // Zooming redraws only pages on screen or drawn ahead. Others keep their old drawing (stretched to the
   // new size) until they come into view; redrawing every kept page at each zoom step froze the viewer.
   const active = onScreen || wanted;
@@ -1593,6 +1669,18 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
   useEffect(() => {
     if ((active || !everDrawn) && drawScale !== target) setDrawScale(target);
   }, [active, everDrawn, target, drawScale]);
+  // Extra detail for a sharper zoom quality: only pages on screen (or drawn ahead) get it; others keep
+  // what they have until they come into view.
+  const [drawDetail, setDrawDetail] = useState(detail);
+  useEffect(() => {
+    if ((active || !everDrawn) && drawDetail !== detail) setDrawDetail(detail);
+  }, [active, everDrawn, detail, drawDetail]);
+  /** Pixels per CSS pixel to draw with: the screen's (when sharp) times the extra detail, kept under ~40 million pixels a page. */
+  const pixelRatio = () => {
+    const base = (sharp ? window.devicePixelRatio || 1 : 1) * drawDetail;
+    const area = (size ? size.w * size.h : 0) * drawScale * drawScale;
+    return area > 0 ? Math.min(base, Math.sqrt(40_000_000 / area)) : base;
+  };
 
   useEffect(() => {
     if (blank || !size || !canvas.current || !textLayer.current) return;
@@ -1608,7 +1696,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
     let text: { cancel: () => void } | null = null;
     if (isWorkerDoc(doc)) {
       // Drawn in the worker; the finished picture is put on the canvas without copying it.
-      const ratio = sharp ? window.devicePixelRatio || 1 : 1;
+      const ratio = pixelRatio();
       const job = doc.render(index, drawScale, ratio, onScreen);
       task = job;
       (async () => {
@@ -1620,15 +1708,8 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
         c.width = bitmap.width;
         c.height = bitmap.height;
         bctx.transferFromImageBitmap(bitmap);
-        const [pdfjs, content, info] = await Promise.all([loadPdfjs(), doc.text(index), doc.info(index)]);
-        if (cancelled || !info || !textLayer.current) return;
-        const layer = textLayer.current;
-        layer.replaceChildren();
-        for (const [k, v] of [['--scale-factor', String(drawScale)], ['--total-scale-factor', String(drawScale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
-        const viewport = { scale: drawScale, rotation: info.rotation, rawDims: info.rawDims };
-        const tl = new pdfjs.TextLayer({ textContentSource: content as never, container: layer, viewport: viewport as never });
-        text = tl;
-        await tl.render().catch(() => {});
+        paintedScale.current = drawScale;
+        setPainted((n) => n + 1);
       })().catch(() => {});
       return () => {
         cancelled = true;
@@ -1641,7 +1722,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       const p = await (doc as PDFDocumentProxy).getPage(index);
       if (cancelled) return;
       const viewport = p.getViewport({ scale: drawScale });
-      const ratio = sharp ? window.devicePixelRatio || 1 : 1;
+      const ratio = pixelRatio();
       const c = canvas.current!;
       c.width = Math.floor(viewport.width * ratio);
       c.height = Math.floor(viewport.height * ratio);
@@ -1662,7 +1743,7 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       task?.cancel();
       text?.cancel();
     };
-  }, [near, size, drawScale, doc, index, blank, sharp]);
+  }, [near, size, drawScale, drawDetail, doc, index, blank, sharp]);
 
   const w = known ? known.w * scale : Math.min(available, 800);
   const h = known ? known.h * scale : w * 1.3;
