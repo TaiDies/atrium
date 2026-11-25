@@ -266,9 +266,9 @@ fn session_from_cookie(value: &str) -> Option<String> {
     Some(if expired { String::new() } else { token.trim().to_string() })
 }
 
-/// Request headers passed on to the server.
-/// Request headers passed on to the server ("prefer" asks for background AI jobs).
-const FORWARDED: [&str; 7] = ["content-type", "accept", "range", "if-none-match", "if-modified-since", "accept-language", "prefer"];
+/// Request headers passed on to the server ("prefer" asks for background AI jobs; "x-atrium-fetch"
+/// marks files the app loads for itself, which the server sends so download managers leave them alone).
+const FORWARDED: [&str; 8] = ["content-type", "accept", "range", "if-none-match", "if-modified-since", "accept-language", "prefer", "x-atrium-fetch"];
 
 /// Passes a request on to the chosen server.
 async fn proxy(state: &AppState, method: &str, path_and_query: &str, headers: &[(String, String)], body: Vec<u8>) -> Response<Vec<u8>> {

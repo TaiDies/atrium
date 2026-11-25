@@ -24,5 +24,7 @@ export function pdfAssets() {
     standardFontDataUrl: `${base}standard_fonts/`,
     iccUrl: `${base}iccs/`,
     useSystemFonts: false,
+    // Marks the file requests as the app's own, so download managers (IDM…) don't take them over (appFetch.ts).
+    httpHeaders: { 'X-Atrium-Fetch': '1' },
   };
 }

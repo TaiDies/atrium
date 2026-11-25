@@ -5,6 +5,7 @@ import { ApiError } from '../lib/api';
 import { saveBlob } from '../lib/save';
 import type { CollabSession } from '../lib/collab';
 import { sendFile } from '../lib/upload';
+import { typedBlob } from '../lib/appFetch';
 
 // Shared by the document, spreadsheet and presentation editors. Each file's live content is a Yjs
 // document ("file:<id>"), filled from the file once — by whoever opens it first — and then edited by
@@ -54,7 +55,7 @@ async function sendBody(url: string, method: 'POST' | 'PUT', data: Blob, name: s
 export async function convertBytes(workspaceId: string, kind: OfficeKind, from: string, to: string, data: Blob | ArrayBuffer | Uint8Array, name: string): Promise<Blob> {
   const res = await sendBody(`/api/workspaces/${workspaceId}/convert?kind=${kind}&from=${from}&to=${to}&name=${encodeURIComponent(name)}`, 'POST', data instanceof Blob ? data : new Blob([data as BlobPart]), name);
   if (!res.ok) throw await failed(res, `Could not make a .${to} file`);
-  return res.blob();
+  return typedBlob(res);
 }
 
 /** Writes new contents into the stored file (optionally under a new name, e.g. .doc → .docx). */

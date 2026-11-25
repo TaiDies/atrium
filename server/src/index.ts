@@ -72,6 +72,23 @@ app.addHook('onSend', async (_req, reply) => {
   reply.header('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), geolocation=()');
   if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=15552000');
 });
+// Files the app loads for itself (a PDF in the viewer, a document for an editor, a download it saves)
+// are asked for with "X-Atrium-Fetch: 1". Download managers such as IDM watch the browser's traffic
+// and take over anything that looks like a file to download (by its type or name), leaving the app an
+// empty reply: PDFs wouldn't open and download prompts would pop up. Those replies are sent as plain
+// data with no file name, which they leave alone; the real type travels in X-Atrium-Type.
+app.addHook('onSend', async (req, reply) => {
+  reply.header('Vary', 'X-Atrium-Fetch');
+  if (req.headers['x-atrium-fetch'] !== '1') return;
+  const type = String(reply.getHeader('content-type') ?? '');
+  // Pictures, text and API answers are left as they are: download managers don't take those.
+  if (!type || /^(application\/(json|problem\+json)|text\/|image\/)/i.test(type)) return;
+  reply.header('X-Atrium-Type', type);
+  reply.header('Content-Type', 'application/x-atrium-data');
+  const disposition = reply.getHeader('content-disposition');
+  if (disposition) reply.header('X-Atrium-Disposition', String(disposition));
+  reply.removeHeader('Content-Disposition');
+});
 
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: config.maxUploadBytes, files: 1 } });

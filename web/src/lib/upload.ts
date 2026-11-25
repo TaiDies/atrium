@@ -5,6 +5,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { checkConnection, OfflineError, trackedFetch } from './offline';
+import { APP_FETCH_HEADER } from './appFetch';
 
 /** What a file is for: the server refuses one it won't accept before any of it is sent. */
 export type UploadKind = 'file' | 'content' | 'import';
@@ -173,6 +174,8 @@ function sendWithProgress(url: string, method: string, body: Blob | FormData, he
     xhr.open(method, url);
     xhr.withCredentials = true;
     xhr.responseType = 'blob';
+    // The app's own request (see appFetch.ts): converted files come back as plain data download managers leave alone.
+    if (url.startsWith('/api/')) xhr.setRequestHeader(APP_FETCH_HEADER, '1');
     for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded);

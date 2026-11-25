@@ -1,4 +1,5 @@
 import { toast, toastError } from '../components/ui';
+import { typedBlob } from './appFetch';
 import { downloadUrl } from './api';
 import { androidCall, hasAndroidBridge } from './androidBridge';
 
@@ -73,7 +74,7 @@ export async function saveBlob(blob: Blob, name: string) {
 
 /** The file name a response suggests (Content-Disposition), if any. */
 function suggestedName(res: Response): string | null {
-  const cd = res.headers.get('content-disposition') ?? '';
+  const cd = res.headers.get('content-disposition') ?? res.headers.get('x-atrium-disposition') ?? '';
   const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
   if (star) {
     try {
@@ -89,6 +90,22 @@ function suggestedName(res: Response): string | null {
 export async function saveUrl(url: string, name?: string) {
   const bridge = android();
   if (!bridge) {
+    // Fetched by the app and saved from memory, so download managers (IDM…) don't take it over and leave
+    // an empty file (see appFetch.ts). Very big files go as a plain link instead, to spare memory.
+    try {
+      const stop = new AbortController();
+      const res = await fetch(url, { credentials: 'same-origin', signal: stop.signal });
+      const size = Number(res.headers.get('content-length') ?? 0);
+      if (res.ok && size <= 1536 * 1024 * 1024) {
+        if (size > 20 * 1024 * 1024) toast('Downloading…');
+        const blob = await typedBlob(res);
+        return saveBlob(blob, name || suggestedName(res) || decodeURIComponent(url.split('?')[0].split('/').pop() ?? '') || 'download');
+      }
+      stop.abort();
+      if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? 'Could not download the file');
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) return toastError(err);
+    }
     const a = document.createElement('a');
     a.href = downloadUrl(url);
     if (name) a.download = name;
@@ -101,7 +118,7 @@ export async function saveUrl(url: string, name?: string) {
     toast('Downloading…');
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? 'Could not download the file');
-    const blob = await res.blob();
+    const blob = await typedBlob(res);
     await saveOnAndroid(bridge, blob, name || suggestedName(res) || decodeURIComponent(url.split('?')[0].split('/').pop() ?? '') || 'download');
   } catch (err) {
     toastError(err);

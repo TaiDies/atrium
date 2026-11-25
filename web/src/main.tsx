@@ -1,3 +1,4 @@
+import { markAppFetches } from './lib/appFetch';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { useIsRestoring } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
@@ -24,6 +25,9 @@ import { ServerPicker } from './app/ServerPicker';
 import { getLocal, LAST_WORKSPACE_KEY } from './lib/storage';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/mantine/style.css';
+
+// Before anything loads: the app's own requests are marked, so download managers leave them alone.
+markAppFetches();
 
 // The interface language (and right-to-left layout for Arabic).
 startTranslating();

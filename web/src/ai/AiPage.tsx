@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { typedBlob } from '../lib/appFetch';
 import clsx from 'clsx';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -615,7 +616,7 @@ export function Conversation({
             try {
               const res = await fetch(f.url, { credentials: 'same-origin' });
               if (!res.ok) throw new Error('Could not download the file');
-              await addFile(await res.blob(), f.name);
+              await addFile(await typedBlob(res), f.name);
             } catch (err) {
               toastError(err);
             }
