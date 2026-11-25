@@ -5,6 +5,7 @@
 // request for a page that's no longer wanted is dropped, or stopped if it's being drawn.
 
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import { imageRects } from './pdfImageRects';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 export type ToWorker =
@@ -28,7 +29,7 @@ export type FromWorker =
   | { type: 'failed'; error: string }
   | { type: 'size'; id: number; info: PageInfo | null }
   | { type: 'text'; id: number; content: unknown }
-  | { type: 'rendered'; id: number; bitmap: ImageBitmap | null; error?: string };
+  | { type: 'rendered'; id: number; bitmap: ImageBitmap | null; images?: number[]; error?: string };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -81,6 +82,7 @@ class NoFilterFactory {
   destroy() {}
 }
 
+let OPS: Record<string, number> | null = null;
 let loading: PDFDocumentLoadingTask | null = null;
 let doc: PDFDocumentProxy | null = null;
 let opened: Promise<PDFDocumentProxy> | null = null;
@@ -112,6 +114,7 @@ async function pump() {
   current = run;
   let bitmap: ImageBitmap | null = null;
   let error: string | undefined;
+  let images: number[] = [];
   try {
     const page = await doc.getPage(job.page);
     if (!run.cancelled) {
@@ -125,14 +128,24 @@ async function pump() {
         transform: job.ratio !== 1 ? [job.ratio, 0, 0, job.ratio, 0, 0] : undefined,
       });
       await run.task.promise;
-      if (!run.cancelled) bitmap = canvas.transferToImageBitmap();
+      if (!run.cancelled) {
+        // Where the pictures are, so dark pages can leave them in their own colours.
+        try {
+          const vt = viewport.transform as [number, number, number, number, number, number];
+          const r = job.ratio;
+          images = imageRects(await page.getOperatorList(), OPS!, [vt[0] * r, vt[1] * r, vt[2] * r, vt[3] * r, vt[4] * r, vt[5] * r], canvas.width, canvas.height);
+        } catch {
+          images = [];
+        }
+        if (!run.cancelled) bitmap = canvas.transferToImageBitmap();
+      }
     }
   } catch (err) {
     // Stopped, or the page couldn't be drawn.
     error = err instanceof Error ? `${err.message} ${err.stack ?? ''}`.slice(0, 600) : String(err);
   }
   current = null;
-  if (!run.cancelled) post({ type: 'rendered', id: job.id, bitmap, error }, bitmap ? [bitmap] : []);
+  if (!run.cancelled) post({ type: 'rendered', id: job.id, bitmap, images, error }, bitmap ? [bitmap] : []);
   void pump();
 }
 
@@ -142,6 +155,7 @@ ctx.onmessage = async (e: MessageEvent<ToWorker>) => {
     try {
       const pdfjs = await import('pdfjs-dist');
       pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+      OPS = pdfjs.OPS as unknown as Record<string, number>;
       loading = pdfjs.getDocument({
         url: msg.url,
         withCredentials: true,

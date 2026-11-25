@@ -33,10 +33,11 @@ import {
 } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { isWorkerDoc, WorkerDoc, workerDrawingSupported } from '../notes/pdfWorkerDoc';
+import { imageRects, paintImages } from '../notes/pdfImageRects';
 
 /** The PDF being shown: drawn in a background worker, or by PDF.js on the page. */
 type PdfDoc = PDFDocumentProxy | WorkerDoc;
-import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import * as Y from 'yjs';
@@ -400,7 +401,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState(false);
   const [zoom, setZoom] = useState<Zoom>('fit');
-  // Dark pages: the PDF drawn with its colours inverted (works for scanned pages too). Starts on in dark mode.
+  // Dark pages: the PDF drawn with its colours inverted, pictures excepted (scanned pages turn dark too). Starts on in dark mode.
   const { resolved: appTheme } = useTheme();
   const [darkPages, setDarkPagesState] = useState<boolean>(() => getLocal<boolean | null>('atrium-pdf-dark', null) ?? appTheme === 'dark');
   const setDarkPages = (v: boolean) => {
@@ -667,15 +668,9 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     return Math.min(Math.min(width - sidePad, 1100) / firstSize.w, view.fit === 'page' && height - 32 > 100 ? (height - 32) / firstSize.h : Infinity);
   }, [firstSize, width, height, book, view.fit, sidePad]);
   const zoomF = zoom === 'fit' ? 1 : (zoom * (96 / 72)) / fitBase;
-  // With a sharper zoom quality, pages are drawn again with more detail once zooming has stopped for a
-  // moment (not at every step), in steps of a quarter so small changes don't redraw anything.
-  const [settledZoom, setSettledZoom] = useState(zoomF);
-  useEffect(() => {
-    const t = setTimeout(() => setSettledZoom(zoomF), 300);
-    return () => clearTimeout(t);
-  }, [zoomF]);
-  const maxDetail = view.zoomQuality === 'sharpest' ? 3 : view.zoomQuality === 'sharper' ? 2 : 1;
-  const detail = Math.min(maxDetail, Math.max(1, Math.ceil(settledZoom * 4) / 4));
+  // The zoom quality is fixed detail: pages are drawn once with 1x, 2x or 3x the pixels of the Fit size,
+  // whatever the zoom, so zooming in or out never redraws a page.
+  const detail = view.zoomQuality === 'sharpest' ? 3 : view.zoomQuality === 'sharper' ? 2 : 1;
   /** Where the scaled pages sit in the scroll area, and the scale (for turning scroll positions into page positions). */
   const view0 = useRef({ x: 0, y: 0, f: 1 });
   const rtl = view.direction === 'rtl' || (view.direction === 'auto' && rtlText);
@@ -846,6 +841,72 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       for (const t of ['wheel', 'touchstart', 'pointerdown', 'keydown']) el.removeEventListener(t, touch);
     };
   }, [pageAt, savePlace, total, book]);
+
+  // Snap to pages: once scrolling stops, settle on the top of the page just ahead in the direction you
+  // were going, if it's close. The browser's own snapping pulled you back to a page's top whenever you
+  // scrolled a little past it, so pages taller than the screen couldn't be scrolled slowly.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !view.snap || book) return;
+    let last = el.scrollTop;
+    let dir = 0;
+    let held = false;
+    // Scrolled while the button was held (dragging the scrollbar): settle once it's let go. A plain
+    // click scrolls nothing, so it never moves the view.
+    let movedWhileHeld = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const topOf = (n: number) => {
+      const page = pageEl(n);
+      return page ? view0.current.y + page.offsetTop * view0.current.f - 12 : null;
+    };
+    const settle = () => {
+      if (held) return;
+      const y = el.scrollTop;
+      const at = pageAt(y + 13);
+      if (!at) return;
+      const above = topOf(at.page);
+      const below = topOf(at.page + 1);
+      const near = el.clientHeight * 0.25;
+      const close = 24;
+      let to: number | null = null;
+      if (dir > 0) {
+        if (below !== null && below - y < near) to = below;
+        else if (above !== null && y - above < close) to = above;
+      } else if (dir < 0) {
+        if (above !== null && y - above < near) to = above;
+        else if (below !== null && below - y < close) to = below;
+      }
+      if (to !== null && Math.abs(to - y) > 1) el.scrollTo({ top: Math.max(0, to), behavior: 'smooth' });
+    };
+    const onScroll = () => {
+      const y = el.scrollTop;
+      if (y !== last) dir = y > last ? 1 : -1;
+      if (held && y !== last) movedWhileHeld = true;
+      last = y;
+      clearTimeout(timer);
+      timer = setTimeout(settle, 160);
+    };
+    const down = () => {
+      held = true;
+      movedWhileHeld = false;
+    };
+    const up = () => {
+      if (!held) return;
+      held = false;
+      if (!movedWhileHeld) return;
+      clearTimeout(timer);
+      timer = setTimeout(settle, 160);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('pointerdown', down, { passive: true });
+    window.addEventListener('pointerup', up, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', up);
+    };
+  }, [view.snap, book, pageAt, pageEl]);
 
   // The page you're on: the one in the middle of the screen (works however tall the pages are). It
   // drives the page counter and which pages are drawn ahead.
@@ -1164,7 +1225,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       <div
         ref={scroller}
         className="absolute inset-0 overflow-auto"
-        style={{ touchAction: 'pan-x pan-y', scrollSnapType: view.snap && !book ? 'y proximity' : undefined }}
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         {!doc && <Spinner />}
         {doc && width > 0 && book && (
@@ -1206,7 +1267,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
           <div style={sizerStyle}>
           <div ref={content} className="flex w-max flex-col items-center gap-3 px-2 pt-4 pb-20 sm:px-6" style={contentStyle}>
             {rows.map((row) => (
-              <div key={`${view.layout}-${row[0]}`} className={clsx('flex items-start gap-3', rtl && 'flex-row-reverse')} style={view.snap ? { scrollSnapAlign: 'start', scrollMarginTop: 12 } : undefined}>
+              <div key={`${view.layout}-${row[0]}`} className={clsx('flex items-start gap-3', rtl && 'flex-row-reverse')}>
                 {row.map((n) => (
                   <PdfPage
                     key={n}
@@ -1391,8 +1452,8 @@ function ViewSettings({
       </Setting>
 
       <Setting label="Display">
-        {view.layout !== 'book' && <Check label="Snap to pages" help="Scrolling settles on the top of a page." checked={view.snap} onChange={(snap) => onChange({ snap })} />}
-        <Check label="Dark pages" help="Pages drawn with their colours turned dark; handwriting keeps its colours." checked={dark} onChange={onDark} />
+        {view.layout !== 'book' && <Check label="Snap to pages" help="When you stop scrolling near the top of a page, the view settles on it." checked={view.snap} onChange={(snap) => onChange({ snap })} />}
+        <Check label="Dark pages" help="Pages drawn with their colours turned dark; pictures and handwriting keep their colours." checked={dark} onChange={onDark} />
         <Choice
           value={view.quality}
           onChange={(quality) => onChange({ quality })}
@@ -1402,7 +1463,7 @@ function ViewSettings({
           ]}
         />
         <p className="text-xs text-muted">Faster draws fewer pixels: a little softer on sharp screens, quicker on slow devices.</p>
-        <div className="pt-1 text-xs text-muted">When zoomed in</div>
+        <div className="pt-1 text-xs text-muted">Zoom quality</div>
         <Choice
           value={view.zoomQuality}
           onChange={(zoomQuality) => onChange({ zoomQuality })}
@@ -1414,8 +1475,8 @@ function ViewSettings({
         />
         <p className="text-xs text-muted">
           {view.zoomQuality === 'fit'
-            ? 'Zooming shows the pages as drawn for Fit, just bigger: never redraws, softer when zoomed in.'
-            : `Once you stop zooming, the pages on screen are drawn again with up to ${view.zoomQuality === 'sharpest' ? '3' : '2'}× the detail. Uses more memory and takes a moment on big pages.`}
+            ? 'Pages are drawn for Fit and zooming just shows them bigger: softer when zoomed in, lightest on memory.'
+            : `Pages are always drawn with ${view.zoomQuality === 'sharpest' ? '3' : '2'}× the detail, so they stay sharp when zoomed in. Zooming never redraws them. Uses more memory and pages take a little longer to appear.`}
         </p>
       </Setting>
     </div>
@@ -1564,15 +1625,37 @@ interface PageProps {
   ink: InkSettings | null;
   actions: InkActions;
   onPen: () => void;
-  /** Draw the page dark (colours inverted; the handwriting keeps its own colours). */
+  /** Draw the page dark (colours inverted; pictures and handwriting keep their own colours). */
   dark: boolean;
 }
 
 /** One page: sized up front from its viewport, drawn only once it scrolls near the screen, with its handwriting on top. */
+// A page's selectable text (for selecting, copying and Ctrl+F) is built only when it's needed: when
+// you press on the page, or press Ctrl+F. Building it makes the browser style and lay out every line
+// of the page, and doing that while reading showed as small hitches.
+/** Pages that build their text when Ctrl+F is pressed (every page that's drawn). */
+const textOnFind = new Set<() => void>();
+if (typeof window !== 'undefined')
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') for (const build of textOnFind) build();
+    },
+    { capture: true },
+  );
+
 const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoom, fit, available, fitCap, availableHeight, wanted, unload, sharp, items, ink, actions, onPen, dark, detail = 1 }: PageProps) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textLayer = useRef<HTMLDivElement>(null);
+  // The page's pictures copied out of its drawing, shown over dark pages so pictures keep their colours.
+  const pictures = useRef<HTMLCanvasElement>(null);
+  /** Where the pictures copy sits, as fractions of the page: [left, top, width, height]. */
+  const [picturesAt, setPicturesAt] = useState<[number, number, number, number] | null>(null);
+  const showPictures = (source: CanvasImageSource, rects: number[], cw: number, ch: number) => {
+    const u = pictures.current ? paintImages(pictures.current, source, rects) : null;
+    setPicturesAt(u && cw && ch ? [u[0] / cw, u[1] / ch, u[2] / cw, u[3] / ch] : null);
+  };
   const [size, setSize] = useState<{ w: number; h: number } | null>(blank);
   const [onScreen, setOnScreen] = useState(index <= 2);
   const [everDrawn, setEverDrawn] = useState(false);
@@ -1623,40 +1706,97 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
     return () => io.disconnect();
   }, [index]);
 
-  // The selectable text over a page drawn in the worker is laid out only once the page is on screen and
-  // has stayed there a moment, in idle time: laying it out takes the main thread a while (measuring every
-  // line), so doing it for each page as it's drawn, or for pages flipped past or drawn ahead out of
-  // sight, made flipping and scrolling stutter.
+  // The selectable text over a page drawn in the worker: its words are fetched once the page is drawn
+  // (no work on screen), and laid out only when needed (see textOnFind).
   const [painted, setPainted] = useState(0);
   const paintedScale = useRef(1);
-  useEffect(() => {
-    if (!isWorkerDoc(doc) || !painted || hidden || !onScreen || !near || !textLayer.current) return;
+  /** The drawing scale the text layer was built for (null while it isn't built). */
+  const textBuilt = useRef<number | null>(null);
+  /** What building the text needs, once fetched. */
+  const textReady = useRef<{ pdfjs: Awaited<ReturnType<typeof loadPdfjs>>; content: unknown; info: NonNullable<Awaited<ReturnType<WorkerDoc['info']>>> } | null>(null);
+  /** Asked for before its words arrived: built as soon as they do. */
+  const textWanted = useRef(false);
+  /** Builds the text layer; true if it was built just now (false if it was there already or isn't ready). */
+  const buildText = useCallback(() => {
     const layer = textLayer.current;
-    let cancelled = false;
-    let tl: { cancel: () => void } | null = null;
-    let idle = 0;
-    const idleCall = (cb: () => void) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(cb, { timeout: 1500 }) : window.setTimeout(cb, 0));
-    const timer = window.setTimeout(() => {
-      idle = idleCall(async () => {
-        const scale = paintedScale.current;
-        const [pdfjs, content, info] = await Promise.all([loadPdfjs(), doc.text(index), doc.info(index)]);
-        if (cancelled || !info) return;
-        layer.replaceChildren();
+    const ready = textReady.current;
+    if (!layer || !ready) {
+      textWanted.current = true;
+      return false;
+    }
+    const scale = paintedScale.current;
+    if (textBuilt.current === scale && layer.childElementCount) return false;
+    const viewport = { scale, rotation: ready.info.rotation, rawDims: ready.info.rawDims };
+    // Built off the page, then put in all at once. PDF.js measures each line with a canvas kept in the
+    // page, and while the page has just changed, setting that canvas's font makes the browser restyle
+    // the whole page first; adding the lines to the page one by one did that for every line (seconds
+    // on a page view, where restyling costs more). Off the page nothing changes until the end.
+    const offPage = document.createElement('div');
+    const t = new ready.pdfjs.TextLayer({ textContentSource: ready.content as never, container: offPage, viewport: viewport as never });
+    textBuilt.current = scale;
+    t.render()
+      .then(() => {
+        if (textLayer.current !== layer || textBuilt.current !== scale) return;
         for (const [k, v] of [['--scale-factor', String(scale)], ['--total-scale-factor', String(scale)], ['--scale-round-x', '1px'], ['--scale-round-y', '1px']]) layer.style.setProperty(k, v);
-        const viewport = { scale, rotation: info.rotation, rawDims: info.rawDims };
-        const t = new pdfjs.TextLayer({ textContentSource: content as never, container: layer, viewport: viewport as never });
-        tl = t;
-        await t.render().catch(() => {});
-      });
-    }, 250);
+        const min = offPage.style.getPropertyValue('--min-font-size');
+        if (min) layer.style.setProperty('--min-font-size', min);
+        const lines = document.createDocumentFragment();
+        lines.append(...offPage.childNodes);
+        layer.replaceChildren(lines);
+      })
+      .catch(() => {});
+    return true;
+  }, []);
+  // Pressing on the page builds its text. The browser picks where a selection starts from what was
+  // under the pointer when the press began (before the text existed), so the start is put on the word
+  // under the pointer by hand, and dragging carries on from there.
+  const onPagePress = useCallback(
+    (e: ReactPointerEvent) => {
+      if (!buildText() || e.button !== 0 || e.pointerType === 'touch') return;
+      const { clientX: x, clientY: y } = e;
+      const startAt = () => {
+        const doc2 = document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null };
+        const pos = doc2.caretPositionFromPoint?.(x, y);
+        if (pos && textLayer.current?.contains(pos.offsetNode)) window.getSelection()?.collapse(pos.offsetNode, pos.offset);
+        else {
+          const range = document.caretRangeFromPoint?.(x, y);
+          if (range && textLayer.current?.contains(range.startContainer)) window.getSelection()?.collapse(range.startContainer, range.startOffset);
+        }
+      };
+      setTimeout(startAt, 0);
+    },
+    [buildText],
+  );
+  useEffect(() => {
+    if (!isWorkerDoc(doc) || !painted || !near) return;
+    // Drawn again at another size: text built for the old size goes, and is built again when needed.
+    if (textBuilt.current !== null && textBuilt.current !== paintedScale.current) {
+      textLayer.current?.replaceChildren();
+      textBuilt.current = null;
+    }
+    if (textReady.current) return;
+    let cancelled = false;
+    Promise.all([loadPdfjs(), doc.text(index), doc.info(index)])
+      .then(([pdfjs, content, info]) => {
+        if (cancelled || !info) return;
+        textReady.current = { pdfjs, content, info };
+        if (textWanted.current) {
+          textWanted.current = false;
+          buildText();
+        }
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
-      clearTimeout(timer);
-      if (typeof cancelIdleCallback === 'function') cancelIdleCallback(idle);
-      else clearTimeout(idle);
-      tl?.cancel();
     };
-  }, [painted, hidden, onScreen, near, doc, index]);
+  }, [painted, near, doc, index, buildText]);
+  useEffect(() => {
+    if (!isWorkerDoc(doc) || !near) return;
+    textOnFind.add(buildText);
+    return () => {
+      textOnFind.delete(buildText);
+    };
+  }, [doc, near, buildText]);
 
   // Zooming redraws only pages on screen or drawn ahead. Others keep their old drawing (stretched to the
   // new size) until they come into view; redrawing every kept page at each zoom step froze the viewer.
@@ -1688,7 +1828,10 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       // Far from view with "free far pages" on: give back the canvas's memory (it's drawn again on return).
       canvas.current.width = 0;
       canvas.current.height = 0;
+      if (pictures.current) pictures.current.width = pictures.current.height = 0;
+      setPicturesAt(null);
       textLayer.current.replaceChildren();
+      textBuilt.current = null;
       return;
     }
     let cancelled = false;
@@ -1700,13 +1843,14 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       const job = doc.render(index, drawScale, ratio, onScreen);
       task = job;
       (async () => {
-        const bitmap = await job.done;
+        const { bitmap, images } = await job.done;
         if (cancelled || !bitmap) return bitmap?.close();
         const c = canvas.current;
         const bctx = c?.getContext('bitmaprenderer');
         if (!c || !bctx) return bitmap.close();
         c.width = bitmap.width;
         c.height = bitmap.height;
+        showPictures(bitmap, images, bitmap.width, bitmap.height);
         bctx.transferFromImageBitmap(bitmap);
         paintedScale.current = drawScale;
         setPainted((n) => n + 1);
@@ -1730,6 +1874,13 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
       task = render;
       await render.promise.catch(() => {});
       if (cancelled) return;
+      try {
+        const vt = viewport.transform as [number, number, number, number, number, number];
+        showPictures(c, imageRects(await p.getOperatorList(), pdfjs.OPS as unknown as Record<string, number>, [vt[0] * ratio, vt[1] * ratio, vt[2] * ratio, vt[3] * ratio, vt[4] * ratio, vt[5] * ratio], c.width, c.height), c.width, c.height);
+      } catch {
+        // Pictures stay inverted on dark pages.
+      }
+      if (cancelled) return;
       // Selectable text over the page, so text can be copied and found with Ctrl+F.
       const layer = textLayer.current!;
       layer.replaceChildren();
@@ -1748,9 +1899,16 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
   const w = known ? known.w * scale : Math.min(available, 800);
   const h = known ? known.h * scale : w * 1.3;
   return (
-    <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h, display: hidden ? 'none' : undefined }}>
+    <div id={`ink-page-${index}`} ref={box} className={clsx('relative shrink-0 shadow-pop', dark ? 'pdf-dark bg-[#1e1e1e]' : 'bg-white')} style={{ width: w, height: h, display: hidden ? 'none' : undefined }} onPointerDownCapture={isWorkerDoc(doc) ? onPagePress : undefined}>
       {!blank && <canvas key={isWorkerDoc(doc) ? 'worker' : 'page'} ref={canvas} className="absolute inset-0" style={{ width: w, height: h, filter: dark ? 'invert(0.88) hue-rotate(180deg) saturate(1.7) contrast(1.05)' : undefined }} />}
-      {!blank && <div ref={textLayer} className="textLayer" style={drawScale !== scale ? { transform: `scale(${scale / drawScale})`, transformOrigin: '0 0' } : undefined} />}
+      {!blank && (
+        <canvas
+          ref={pictures}
+          className="pointer-events-none absolute"
+          style={picturesAt && dark ? { left: `${picturesAt[0] * 100}%`, top: `${picturesAt[1] * 100}%`, width: `${picturesAt[2] * 100}%`, height: `${picturesAt[3] * 100}%` } : { display: 'none' }}
+        />
+      )}
+      {!blank && <div ref={textLayer} className="textLayer" style={{ contain: 'strict', ...(drawScale !== scale ? { transform: `scale(${scale / drawScale})`, transformOrigin: '0 0' } : {}) }} />}
       <InkLayer page={index - 1} aspect={h / w} pxWidth={w} items={items} ink={ink} actions={actions} onPen={onPen} />
     </div>
   );
