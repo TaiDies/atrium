@@ -385,47 +385,9 @@ function useInk(doc: Y.Doc | null) {
   return { items, extraPages };
 }
 
-type FlatState = 'ready' | 'pending' | 'notext' | 'failed' | 'unknown';
-
-/**
- * Whether the server's "without text" copy of a PDF is ready. Asked once when the viewer opens (so the
- * setting can say), and every few seconds while it's wanted and still being made.
- */
-function useFlatCopy(fileUrl: string | null, wanted: boolean): FlatState {
-  const [state, setState] = useState<FlatState>('unknown');
-  useEffect(() => {
-    if (!fileUrl) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const ask = async () => {
-      try {
-        const res = await fetch(`${fileUrl}/flat?status=1`, { credentials: 'same-origin', cache: 'no-store' });
-        const s = res.ok ? ((await res.json()) as { status: FlatState }).status : 'failed';
-        if (!alive) return;
-        setState(s);
-        if (s === 'pending' && wanted) timer = setTimeout(ask, 4000);
-      } catch {
-        if (alive && wanted) timer = setTimeout(ask, 8000);
-      }
-    };
-    void ask();
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [fileUrl, wanted]);
-  return state;
-}
-
 /** A PDF, with handwriting when `ink` is given. `src` shows another PDF of the file (e.g. an office file's exact layout). */
 function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | null; src?: string }) {
-  // "Without text": the server's copy of the PDF with every page as a picture (server/src/pdfFlat.ts),
-  // much lighter to show for big books full of text. Chosen per file on this device; only one of the
-  // two is loaded at a time.
-  const flatKey = `atrium-pdf-flat:${file.id}`;
-  const [textless, setTextlessState] = useState<boolean>(() => !src && getLocal<boolean>(flatKey, false));
-  const flat = useFlatCopy(src ? null : file.url, textless);
-  const url = src ?? (textless && flat === 'ready' ? `${file.url}/flat` : file.url);
+  const url = src ?? file.url;
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState(false);
   const [zoom, setZoom] = useState<Zoom>('fit');
@@ -494,7 +456,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   useEffect(() => {
     let cancelled = false;
     let loading: { destroy: () => Promise<void> } | null = null;
-    // Switching between the original and the copy: the other one is dropped completely (the previous
+    // Another PDF in the same viewer (e.g. a new exact layout of an office file): the previous one is dropped completely (its
     // load's cleanup destroyed it), and the new one opens on the same page.
     if (shownUrl.current && shownUrl.current !== url) {
       const el = scroller.current;
@@ -528,18 +490,27 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     };
   }, [url]);
 
+  // The room the pages have at Fit. Measured on the box around the scroll area, so scrollbars appearing
+  // when zoomed in don't change it (which would redraw every page): the scrolling view always has its
+  // vertical scrollbar, so that's taken off; the book view has none at Fit.
+  const layoutBook = view.layout === 'book';
   useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    setHeight(el.clientHeight);
-    const ro = new ResizeObserver(() => {
-      setWidth(el.clientWidth);
-      setHeight(el.clientHeight);
-    });
-    ro.observe(el);
+    const box = scroller.current?.parentElement;
+    if (!box) return;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;visibility:hidden;overflow:scroll;width:100px;height:100px;top:0';
+    document.body.append(probe);
+    const bar = probe.offsetWidth - probe.clientWidth;
+    probe.remove();
+    const read = () => {
+      setWidth(Math.max(0, box.clientWidth - (layoutBook ? 0 : bar)));
+      setHeight(box.clientHeight);
+    };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(box);
     return () => ro.disconnect();
-  }, []);
+  }, [layoutBook]);
 
   const tool = mode === 'pen' || mode === 'highlighter' || mode === 'shape' || mode === 'text' ? mode : null;
   const colors = tool === 'highlighter' ? HIGHLIGHTER_COLORS : PEN_COLORS;
@@ -659,6 +630,19 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
 
   const total = (doc?.numPages ?? 0) + extraPages;
   const book = view.layout === 'book';
+  // The scrolling view's padding at each side (px-2, or sm:px-6 on wider screens), so pages at Fit fit without scrolling sideways.
+  const sidePad = typeof window !== 'undefined' && window.innerWidth >= 640 ? 48 : 16;
+  // Zooming only scales the view: pages are laid out and drawn once, at the size Fit gives them, and the
+  // zoom shows that bigger or smaller (a CSS transform). Nothing on the page is drawn again, and neither
+  // is the handwriting. `fitBase` is the first page's scale at Fit; `zoomF` how much the view is scaled.
+  const fitBase = useMemo(() => {
+    if (!firstSize || !width) return 1;
+    if (book) return Math.min((width - (width < 640 ? 16 : 96) - 12) / 2 / firstSize.w, (height - 64 - 24) / firstSize.h);
+    return Math.min(Math.min(width - sidePad, 1100) / firstSize.w, view.fit === 'page' && height - 32 > 100 ? (height - 32) / firstSize.h : Infinity);
+  }, [firstSize, width, height, book, view.fit, sidePad]);
+  const zoomF = zoom === 'fit' ? 1 : (zoom * (96 / 72)) / fitBase;
+  /** Where the scaled pages sit in the scroll area, and the scale (for turning scroll positions into page positions). */
+  const view0 = useRef({ x: 0, y: 0, f: 1 });
   const rtl = view.direction === 'rtl' || (view.direction === 'auto' && rtlText);
   /** The pages, one per row, or in pairs for the book layout (the cover alone when chosen). */
   const rows = useMemo(() => {
@@ -757,7 +741,9 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
   const pageEl = useCallback((n: number) => scroller.current?.querySelector<HTMLElement>(`#ink-page-${n}`) ?? null, []);
   /** The page at a point down the pages (in scroll coordinates), and how far down it that point is. */
   const pageAt = useCallback(
-    (y: number) => {
+    (scrollY: number) => {
+      // Scroll position → position in the (unzoomed) pages.
+      const y = (scrollY - view0.current.y) / view0.current.f;
       const count = scroller.current?.querySelectorAll('[id^="ink-page-"]').length ?? 0;
       let lo = 1;
       let hi = count;
@@ -790,7 +776,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       const el = scroller.current;
       const page = pageEl(Math.min(target.page, total));
       if (!el || !page || touched.current) return;
-      el.scrollTop = page.offsetTop + target.offset * page.offsetHeight - 8;
+      el.scrollTop = view0.current.y + (page.offsetTop + target.offset * page.offsetHeight) * view0.current.f - 8;
     };
     const timers = [0, 150, 400, 900, 1600].map((ms) => setTimeout(apply, ms));
     const done = setTimeout(() => (restored.current = true), 1700);
@@ -849,10 +835,8 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
 
   /** The zoom as a number, even when fitting the width (so zooming from Fit doesn't jump). */
   const zoomNow = useCallback(() => {
-    if (zoom !== 'fit') return zoom;
-    const first = pageEl(1);
-    return first && firstSize ? first.offsetWidth / firstSize.w / (96 / 72) : 1;
-  }, [zoom, firstSize, pageEl]);
+    return zoom === 'fit' ? fitBase / (96 / 72) : zoom;
+  }, [zoom, fitBase]);
   /** What to keep in place across a zoom: a point on a page, kept in the middle of the screen or, with `at`, under the pointer. */
   const anchor = useRef<{ page: number; fy: number; fx: number; at?: { x: number; y: number } } | null>(null);
   /** Zooms keeping what's in the middle of the screen in the middle. */
@@ -861,7 +845,8 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       const el = scroller.current;
       if (el) {
         const at = pageAt(el.scrollTop + el.clientHeight / 2);
-        if (at) anchor.current = { page: at.page, fy: at.offset, fx: Math.min(1, Math.max(0, (el.scrollLeft + el.clientWidth / 2 - at.el.offsetLeft) / at.el.offsetWidth)) };
+        const o = view0.current;
+        if (at) anchor.current = { page: at.page, fy: at.offset, fx: Math.min(1, Math.max(0, (el.scrollLeft + el.clientWidth / 2 - o.x - at.el.offsetLeft * o.f) / (at.el.offsetWidth * o.f))) };
       }
       setZoom(typeof next === 'number' ? Math.min(4, Math.max(0.25, next)) : next);
     },
@@ -908,13 +893,24 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       el.scrollTop += r.top + a.fy * r.height - a.at.y;
       return;
     }
-    el.scrollTop = page.offsetTop + a.fy * page.offsetHeight - el.clientHeight / 2;
-    el.scrollLeft = page.offsetLeft + a.fx * page.offsetWidth - el.clientWidth / 2;
+    const o = view0.current;
+    el.scrollTop = o.y + (page.offsetTop + a.fy * page.offsetHeight) * o.f - el.clientHeight / 2;
+    el.scrollLeft = o.x + (page.offsetLeft + a.fx * page.offsetWidth) * o.f - el.clientWidth / 2;
   }, [zoom, pageEl, view.layout, view.cover, view.fit]);
 
   // Ctrl + mouse wheel (and pinching a touchpad) zooms the pages where the pointer is; in the book view
   // the wheel alone does. Pinching with two fingers zooms too.
   const content = useRef<HTMLDivElement>(null);
+  const [natural, setNatural] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = content.current;
+    if (!el) return;
+    const read = () => setNatural((n) => (n.w === el.offsetWidth && n.h === el.offsetHeight ? n : { w: el.offsetWidth, h: el.offsetHeight }));
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [doc, book, width > 0]);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -942,19 +938,23 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       if (e.touches.length !== 2) return;
       pinch = { d: dist(e.touches), f: 1 };
       const c = content.current;
-      if (c) c.style.transformOrigin = `${el.scrollLeft + el.clientWidth / 2}px ${el.scrollTop + el.clientHeight / 2}px`;
+      const o = view0.current;
+      if (c) c.style.transformOrigin = `${(el.scrollLeft + el.clientWidth / 2 - o.x) / o.f}px ${(el.scrollTop + el.clientHeight / 2 - o.y) / o.f}px`;
     };
     const onMove = (e: TouchEvent) => {
       if (!pinch || e.touches.length !== 2) return;
       e.preventDefault();
       pinch.f = dist(e.touches) / pinch.d;
-      if (content.current) content.current.style.transform = `scale(${pinch.f})`;
+      if (content.current) content.current.style.transform = `scale(${view0.current.f * pinch.f})`;
     };
     const onEnd = () => {
       if (!pinch) return;
       const f = pinch.f;
       pinch = null;
-      if (content.current) content.current.style.transform = '';
+      if (content.current) {
+        content.current.style.transform = `scale(${view0.current.f})`;
+        content.current.style.transformOrigin = '0 0';
+      }
       if (Math.abs(f - 1) > 0.02) zoomTo(zoomNow() * f);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -971,6 +971,15 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
       el.removeEventListener('touchcancel', onEnd);
     };
   }, [zoomTo, zoomAt, zoomNow, book]);
+
+  // The pages' own size (unaffected by the zoom transform), so the scroll area can be sized to the zoomed view.
+  const vw = width;
+  const vh = height;
+  const zx = Math.max(0, (vw - natural.w * zoomF) / 2);
+  const zy = book ? Math.max(0, (vh - 64 - natural.h * zoomF) / 2) : 0;
+  view0.current = { x: zx, y: zy, f: zoomF };
+  const sizerStyle: React.CSSProperties = { position: 'relative', width: Math.max(vw, natural.w * zoomF), height: Math.max(book ? vh - 64 : 0, natural.h * zoomF + zy) };
+  const contentStyle: React.CSSProperties = { position: 'absolute', left: zx, top: zy, transform: `scale(${zoomF})`, transformOrigin: '0 0', willChange: 'transform' };
 
   if (error) return <Message text="This PDF couldn't be displayed. Use Download to save it." />;
 
@@ -1117,10 +1126,11 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
         {!doc && <Spinner />}
         {doc && width > 0 && book && (
           // Book view: the open pair fills the screen; the pages ahead wait hidden, already drawn.
+          <div style={sizerStyle}>
           <div
             ref={content}
-            className={clsx('flex w-max min-w-full items-center justify-center gap-3 px-2 py-3 sm:px-12', rtl && 'flex-row-reverse')}
-            style={{ minHeight: 'calc(100% - 64px)' }}
+            className={clsx('flex w-max items-center justify-center gap-3 px-2 py-3 sm:px-12', rtl && 'flex-row-reverse')}
+            style={contentStyle}
           >
             {bookPages.map((n) => (
               <PdfPage
@@ -1130,7 +1140,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                 hidden={!shown.includes(n)}
                 blank={n > doc.numPages ? lastSize : null}
                 estimate={firstSize}
-                zoom={zoom}
+                zoom="fit"
                 fit="page"
                 available={(width - (width < 640 ? 16 : 96) - 12) / 2}
                 fitCap={4000}
@@ -1146,9 +1156,11 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
               />
             ))}
           </div>
+          </div>
         )}
         {doc && width > 0 && !book && (
-          <div ref={content} className="flex w-max min-w-full flex-col items-center gap-3 px-2 pt-4 pb-20 sm:px-6">
+          <div style={sizerStyle}>
+          <div ref={content} className="flex w-max flex-col items-center gap-3 px-2 pt-4 pb-20 sm:px-6" style={contentStyle}>
             {rows.map((row) => (
               <div key={`${view.layout}-${row[0]}`} className={clsx('flex items-start gap-3', rtl && 'flex-row-reverse')} style={view.snap ? { scrollSnapAlign: 'start', scrollMarginTop: 12 } : undefined}>
                 {row.map((n) => (
@@ -1158,9 +1170,9 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
                     index={n}
                     blank={n > doc.numPages ? lastSize : null}
                     estimate={firstSize}
-                    zoom={zoom}
+                    zoom="fit"
                     fit={view.fit}
-                    available={book ? (width - 16 - 12) / 2 : width - 16}
+                    available={width - sidePad}
                     fitCap={book ? 900 : 1100}
                     availableHeight={height - 32}
                     wanted={view.preload && Math.abs(n - page) <= view.ahead}
@@ -1176,6 +1188,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
               </div>
             ))}
           </div>
+          </div>
         )}
         <Popover anchor={settingsAnchor} onClose={() => setSettingsAnchor(null)} align="end">
           <ViewSettings
@@ -1184,7 +1197,6 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
             dark={darkPages}
             onDark={setDarkPages}
             detectedRtl={rtlText}
-            copy={src ? null : { textless, flat, onChange: (v) => (setTextlessState(v), setLocal(flatKey, v)) }}
           />
         </Popover>
       </div>
@@ -1242,15 +1254,12 @@ function ViewSettings({
   dark,
   onDark,
   detectedRtl,
-  copy,
 }: {
   view: ViewPrefs;
   onChange: (patch: Partial<ViewPrefs>) => void;
   dark: boolean;
   onDark: (v: boolean) => void;
   detectedRtl: boolean;
-  /** The original PDF or its "without text" copy (null: not offered, e.g. an office file's layout). */
-  copy: { textless: boolean; flat: FlatState; onChange: (textless: boolean) => void } | null;
 }) {
   const [ahead, setAhead] = useState(String(view.ahead));
   useEffect(() => setAhead(String(view.ahead)), [view.ahead]);
@@ -1263,25 +1272,6 @@ function ViewSettings({
     <div className="w-80 max-w-[calc(100vw-2rem)] space-y-4 p-3 text-sm">
       <div className="font-medium">View settings</div>
 
-      {copy && copy.flat !== 'notext' && (
-        <Setting label="File">
-          <Choice
-            value={copy.textless ? 'flat' : 'original'}
-            onChange={(v) => copy.onChange(v === 'flat')}
-            options={[
-              { value: 'original', label: 'Original' },
-              { value: 'flat', label: 'Without text' },
-            ]}
-          />
-          <p className="text-xs text-muted">
-            {copy.textless && copy.flat === 'pending'
-              ? 'The copy without text is being made — it opens by itself when it’s ready. Big books take a minute or two.'
-              : copy.textless && copy.flat === 'failed'
-                ? 'The copy without text couldn’t be made for this file, so the original is shown.'
-                : 'Without text: every page as a picture. Much lighter for big books full of text, but text can’t be selected or searched. Only one of the two is loaded at a time.'}
-          </p>
-        </Setting>
-      )}
 
       <Setting label="Pages">
         <Choice
@@ -1574,10 +1564,14 @@ const PdfPage = memo(function PdfPage({ doc, index, hidden, blank, estimate, zoo
   // Zooming redraws only pages on screen or drawn ahead. Others keep their old drawing (stretched to the
   // new size) until they come into view; redrawing every kept page at each zoom step froze the viewer.
   const active = onScreen || wanted;
-  const [drawScale, setDrawScale] = useState(scale);
+  // Pages are always drawn at the Fit size, and zooming only shows that drawing bigger or smaller: text,
+  // pictures and everything else keep the same quality, and zooming never redraws a page (a little
+  // softer when zoomed far in, much faster).
+  const target = known ? Math.min(Math.min(available, fitCap) / known.w, fit === 'page' && availableHeight > 100 ? availableHeight / known.h : Infinity) : scale;
+  const [drawScale, setDrawScale] = useState(target);
   useEffect(() => {
-    if ((active || !everDrawn) && drawScale !== scale) setDrawScale(scale);
-  }, [active, everDrawn, scale, drawScale]);
+    if ((active || !everDrawn) && drawScale !== target) setDrawScale(target);
+  }, [active, everDrawn, target, drawScale]);
 
   useEffect(() => {
     if (blank || !size || !canvas.current || !textLayer.current) return;

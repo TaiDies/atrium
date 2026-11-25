@@ -1,5 +1,4 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { removeFlat } from './pdfFlat.js';
 import { existsSync } from 'node:fs';
 import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -91,7 +90,7 @@ function setAdminCookie(reply: FastifyReply) {
 async function deleteWorkspace(workspaceId: string) {
   const files = await query<{ id: string }>('select id from files where workspace_id = $1', [workspaceId]);
   await query('delete from workspaces where id = $1', [workspaceId]);
-  await Promise.allSettled(files.flatMap((f) => [unlink(path.join(config.uploadDir, f.id)), removeFlat(f.id)]));
+  await Promise.allSettled(files.map((f) => unlink(path.join(config.uploadDir, f.id))));
 }
 
 const aiBody = z.object({
