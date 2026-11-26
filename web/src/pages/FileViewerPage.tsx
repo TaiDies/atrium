@@ -1008,6 +1008,23 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     ro.observe(el);
     return () => ro.disconnect();
   }, [doc, book, width > 0]);
+  // When scrolling through the pages, a middle-click switches the mouse wheel between scrolling and
+  // zooming (where the pointer is). The book view always zooms with the wheel.
+  const [wheelZooms, setWheelZooms] = useState(false);
+  const wheelZoomsNow = useRef(false);
+  wheelZoomsNow.current = wheelZooms && !book;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || book) return;
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 1) return;
+      // Instead of the browser's own middle-click autoscroll.
+      e.preventDefault();
+      setWheelZooms((v) => !v);
+    };
+    el.addEventListener('mousedown', onDown);
+    return () => el.removeEventListener('mousedown', onDown);
+  }, [book]);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -1015,7 +1032,7 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
     let frame = 0;
     let point = { x: 0, y: 0 };
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey && !book) return;
+      if (!e.ctrlKey && !e.metaKey && !book && !wheelZoomsNow.current) return;
       e.preventDefault();
       // Lines or pages of scrolling (some mice) count as about 40 or 800 pixels.
       const dy = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
@@ -1306,6 +1323,17 @@ function PdfViewer({ file, ink, src }: { file: FileInfo; ink: CollabSession | nu
           />
         </Popover>
       </div>
+      {/* What the mouse wheel does when scrolling through the pages (a middle-click switches it). */}
+      {doc && !book && (
+        <div
+          className={clsx(
+            'pointer-events-none absolute bottom-16 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border px-3 py-0.5 text-xs shadow-pop backdrop-blur',
+            wheelZooms ? 'border-accent bg-accent text-white' : 'border-line bg-surface/95 text-muted',
+          )}
+        >
+          {wheelZooms ? 'Wheel zooms' : 'Wheel scrolls'} · middle-click to switch
+        </div>
+      )}
       {/* The bar stays put at the bottom however the pages are zoomed or scrolled. */}
       {doc && (
         <div className="absolute bottom-4 left-1/2 z-10 flex w-max max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-surface/95 px-2 py-1 text-sm shadow-pop backdrop-blur">
